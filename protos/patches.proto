@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package d2bot;
+
+option csharp_namespace = "D2BotNG.Core.Protos";
+
+enum D2Module {
+  D2MODULE_D2CLIENT = 0;
+  D2MODULE_D2COMMON = 1;
+  D2MODULE_D2GFX = 2;
+  D2MODULE_D2LANG = 3;
+  D2MODULE_D2WIN = 4;
+  D2MODULE_D2NET = 5;
+  D2MODULE_D2GAME = 6;
+  D2MODULE_D2LAUNCH = 7;
+  D2MODULE_FOG = 8;
+  D2MODULE_BNCLIENT = 9;
+  D2MODULE_STORM = 10;
+  D2MODULE_D2CMP = 11;
+  D2MODULE_D2MULTI = 12;
+  D2MODULE_D2MCPCLIENT = 13;
+  D2MODULE_GAME = 14;
+}
+
+message Patch {
+  string name = 1;
+  string version = 2;
+  D2Module module = 3;
+  int32 offset = 4;
+  bytes data = 5;
+}
+
+message PatchList {
+  repeated Patch patches = 1;
+}

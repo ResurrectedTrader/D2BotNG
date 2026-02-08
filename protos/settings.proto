@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+package d2bot;
+
+option csharp_namespace = "D2BotNG.Core.Protos";
+
+import "google/protobuf/empty.proto";
+
+// Settings service - Update returns Empty, new value arrives via events
+service SettingsService {
+  rpc Update(Settings) returns (google.protobuf.Empty);
+  rpc TestDiscord(DiscordSettings) returns (TestDiscordResponse);
+}
+
+message TestDiscordResponse {
+  bool success = 1;
+  string message = 2;  // Success message or error details
+}
+
+// File browser service (for remote D2 path selection)
+service FileService {
+  rpc ListDirectory(ListDirectoryRequest) returns (DirectoryListing);
+}
+
+// Action when user clicks close button
+enum CloseAction {
+  CLOSE_ACTION_ASK = 0;            // Show prompt asking what to do
+  CLOSE_ACTION_MINIMIZE_TO_TRAY = 1; // Always minimize to tray
+  CLOSE_ACTION_EXIT = 2;           // Always exit the application
+}
+
+// Available font options for item rendering
+enum ItemFont {
+  ITEM_FONT_EXOCET = 0;      // Exocet (Diablo II title font)
+  ITEM_FONT_CONSOLAS = 1;    // Consolas (monospace)
+  ITEM_FONT_SYSTEM = 2;      // System default
+}
+
+message Settings {
+  bool start_minimized = 1;
+  ServerSettings server = 2;
+  DiscordSettings discord = 3;
+  CloseAction close_action = 4;
+  DisplaySettings display = 5;
+  LimedropSettings limedrop = 6;
+  GameSettings game = 7;
+  string base_path = 8; // Application base directory. Settings/profiles etc., will be created in data/ subdirectory. Expects to have a d2bs directory and d2bs.ini file inside.
+  WindowSettings window = 9;
+}
+
+message WindowSettings {
+  int32 x = 1;
+  int32 y = 2;
+  int32 width = 3;
+  int32 height = 4;
+  bool is_maximized = 5;
+}
+
+message GameSettings {
+  string d2_install_path = 1;  // Diablo II installation path (defaults to registry or desktop)
+  string game_version = 2;     // D2 version for patch selection (e.g., "1.14d", "1.13c"). Defaults to "1.14d".
+}
+
+message DisplaySettings {
+  ItemFont item_font = 1;
+  bool show_item_header = 2;  // Show profile info header on item images
+}
+
+message ServerSettings {
+  string host = 1;
+  uint32 port = 2;
+  optional string password = 3;
+}
+
+message DiscordSettings {
+  bool enabled = 1;
+  string token = 2;
+  string server_id = 3;
+}
+
+message LimedropSettings {
+  bool enabled = 1;
+  string ip = 2;
+  int32 port = 3;
+  repeated string profiles = 4;
+  repeated LimedropUser users = 5;
+}
+
+message LimedropUser {
+  string name = 1;
+  string api_key = 2;
+  int32 flag = 3;
+}
+
+message ListDirectoryRequest {
+  string path = 1;
+}
+
+message DirectoryListing {
+  string current_path = 1;
+  repeated DirectoryEntry entries = 2;
+}
+
+message DirectoryEntry {
+  string name = 1;
+  bool is_directory = 2;
+}

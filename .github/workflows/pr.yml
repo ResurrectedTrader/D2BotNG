@@ -1,0 +1,159 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      ts: ${{ steps.filter.outputs.ts }}
+      cs: ${{ steps.filter.outputs.cs }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            ts:
+              - 'src/D2BotNG.UI/**'
+              - 'protos/**'
+            cs:
+              - 'src/D2BotNG/**'
+              - 'protos/**'
+              - '*.sln'
+
+  build-ts:
+    name: Build TS
+    needs: changes
+    if: needs.changes.outputs.ts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/D2BotNG.UI/package-lock.json
+      - run: npm ci
+        working-directory: src/D2BotNG.UI
+      - run: npm run build
+        working-directory: src/D2BotNG.UI
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-dist
+          path: src/D2BotNG/wwwroot
+          retention-days: 1
+
+  build-cs:
+    name: Build C#
+    needs: [changes, build-ts]
+    if: always() && needs.changes.outputs.cs == 'true' && (needs.build-ts.result == 'success' || needs.build-ts.result == 'skipped')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.x
+      - uses: actions/download-artifact@v4
+        if: needs.build-ts.result == 'success'
+        with:
+          name: ui-dist
+          path: src/D2BotNG/wwwroot
+      - name: Build
+        shell: bash
+        run: dotnet build src/D2BotNG/D2BotNG.csproj -c Release -p:SkipUIBuild=true
+
+  format-ts:
+    name: Format TS
+    needs: changes
+    if: needs.changes.outputs.ts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/D2BotNG.UI/package-lock.json
+      - run: npm ci
+        working-directory: src/D2BotNG.UI
+      - run: npx prettier --check "src/**/*.{ts,tsx,css}"
+        working-directory: src/D2BotNG.UI
+
+  format-cs:
+    name: Format C#
+    needs: changes
+    if: needs.changes.outputs.cs == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.x
+      - name: Check formatting
+        shell: bash
+        run: dotnet format D2BotNG.sln --verify-no-changes --verbosity diagnostic
+
+  lint-ts:
+    name: Lint TS
+    needs: changes
+    if: needs.changes.outputs.ts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/D2BotNG.UI/package-lock.json
+      - run: npm ci
+        working-directory: src/D2BotNG.UI
+      - run: npx eslint src --max-warnings 0
+        working-directory: src/D2BotNG.UI
+
+  lint-cs:
+    name: Lint C#
+    needs: changes
+    if: needs.changes.outputs.cs == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.x
+      - name: Restore tools
+        shell: bash
+        run: dotnet tool restore
+      - name: Build
+        shell: bash
+        run: dotnet build src/D2BotNG/D2BotNG.csproj -c Release -p:SkipUIBuild=true
+      - name: Run InspectCode
+        shell: bash
+        run: dotnet jb inspectcode D2BotNG.sln --properties:SkipUIBuild=true --output=inspect.sarif --format=Sarif --severity=WARNING --include="**/*.cs"
+      - name: Check for issues
+        shell: bash
+        run: |
+          count=$(python3 -c "
+          import json, sys
+          with open('inspect.sarif') as f:
+              sarif = json.load(f)
+          issues = sum(len(run.get('results', [])) for run in sarif.get('runs', []))
+          print(issues)
+          ")
+          echo "Found $count issue(s)"
+          if [ "$count" -gt 0 ]; then
+            echo "::error::InspectCode found $count issue(s)"
+            exit 1
+          fi
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: inspect.sarif

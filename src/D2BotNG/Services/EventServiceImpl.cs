@@ -1,0 +1,214 @@
+using D2BotNG.Core.Protos;
+using D2BotNG.Data;
+using D2BotNG.Engine;
+using Google.Protobuf.WellKnownTypes;
+using Grpc.Core;
+
+namespace D2BotNG.Services;
+
+public class EventServiceImpl : EventService.EventServiceBase
+{
+    private readonly ILogger<EventServiceImpl> _logger;
+    private readonly EventBroadcaster _eventBroadcaster;
+    private readonly ProfileRepository _profileRepository;
+    private readonly KeyListRepository _keyListRepository;
+    private readonly ScheduleRepository _scheduleRepository;
+    private readonly SettingsRepository _settingsRepository;
+    private readonly ProfileEngine _profileEngine;
+    private readonly UpdateManager _updateManager;
+    private readonly MessageService _messageService;
+
+    public EventServiceImpl(
+        ILogger<EventServiceImpl> logger,
+        EventBroadcaster eventBroadcaster,
+        ProfileRepository profileRepository,
+        KeyListRepository keyListRepository,
+        ScheduleRepository scheduleRepository,
+        SettingsRepository settingsRepository,
+        ProfileEngine profileEngine,
+        UpdateManager updateManager,
+        MessageService messageService)
+    {
+        _logger = logger;
+        _eventBroadcaster = eventBroadcaster;
+        _profileRepository = profileRepository;
+        _keyListRepository = keyListRepository;
+        _scheduleRepository = scheduleRepository;
+        _settingsRepository = settingsRepository;
+        _profileEngine = profileEngine;
+        _updateManager = updateManager;
+        _messageService = messageService;
+    }
+
+    public override async Task StreamEvents(Empty request, IServerStreamWriter<Event> responseStream, ServerCallContext context)
+    {
+        var clientId = _eventBroadcaster.AddClient();
+        _logger.LogDebug("Client {ClientId} connected to event stream", clientId);
+
+        try
+        {
+            // Send snapshots first
+            await SendSnapshotsAsync(responseStream);
+
+            // Then stream events
+            await foreach (var evt in _eventBroadcaster.Subscribe(clientId, context.CancellationToken))
+            {
+                await responseStream.WriteAsync(evt);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug("Client {ClientId} disconnected from event stream", clientId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error streaming events to client {ClientId}", clientId);
+            throw;
+        }
+        finally
+        {
+            _eventBroadcaster.RemoveClient(clientId);
+        }
+    }
+
+    private async Task SendSnapshotsAsync(IServerStreamWriter<Event> responseStream)
+    {
+        var now = Timestamp.FromDateTime(DateTime.UtcNow);
+
+        // 1. Profiles snapshot with status
+        var profilesSnapshot = await BuildProfilesSnapshotAsync();
+        await responseStream.WriteAsync(new Event
+        {
+            Timestamp = now,
+            ProfilesSnapshot = profilesSnapshot
+        });
+
+        // 2. KeyLists snapshot with usage
+        var keyListsSnapshot = await BuildKeyListsSnapshotAsync();
+        await responseStream.WriteAsync(new Event
+        {
+            Timestamp = now,
+            KeyListsSnapshot = keyListsSnapshot
+        });
+
+        // 3. Schedules snapshot
+        var schedulesSnapshot = await BuildSchedulesSnapshotAsync();
+        await responseStream.WriteAsync(new Event
+        {
+            Timestamp = now,
+            SchedulesSnapshot = schedulesSnapshot
+        });
+
+        // 4. Settings
+        var settings = await _settingsRepository.GetAsync();
+        await responseStream.WriteAsync(new Event
+        {
+            Timestamp = now,
+            Settings = settings
+        });
+
+        // 5. Update status
+        var updateStatus = _updateManager.GetStatus();
+        await responseStream.WriteAsync(new Event
+        {
+            Timestamp = now,
+            UpdateStatus = updateStatus
+        });
+
+        // 6. Console message history
+        await SendConsoleHistoryAsync(responseStream, now);
+    }
+
+    private async Task SendConsoleHistoryAsync(IServerStreamWriter<Event> responseStream, Timestamp now)
+    {
+        // Send all messages from history
+        foreach (var msg in _messageService.GetHistory())
+        {
+            await responseStream.WriteAsync(new Event
+            {
+                Timestamp = now,
+                Message = msg
+            });
+        }
+    }
+
+    private async Task<ProfilesSnapshot> BuildProfilesSnapshotAsync()
+    {
+        var snapshot = new ProfilesSnapshot();
+        var profiles = await _profileRepository.GetAllAsync();
+
+        foreach (var profile in profiles)
+        {
+            var instance = _profileEngine.GetInstance(profile.Name);
+            var status = instance?.GetStatus() ?? new ProfileStatus
+            {
+                ProfileName = profile.Name,
+                State = ProfileState.Stopped,
+                Status = ""
+            };
+
+            snapshot.Profiles.Add(new ProfileWithStatus
+            {
+                Profile = profile,
+                Status = status
+            });
+        }
+
+        return snapshot;
+    }
+
+    private async Task<KeyListsSnapshot> BuildKeyListsSnapshotAsync()
+    {
+        var snapshot = new KeyListsSnapshot();
+        var keyLists = await _keyListRepository.GetAllAsync();
+        var profiles = await _profileRepository.GetAllAsync();
+
+        foreach (var keyList in keyLists)
+        {
+            var keyListWithUsage = new KeyListWithUsage
+            {
+                KeyList = keyList
+            };
+
+            // Build usage info for each key
+            foreach (var key in keyList.Keys)
+            {
+                var profileUsingKey = profiles.FirstOrDefault(p =>
+                {
+                    if (p.KeyList != keyList.Name) return false;
+                    var instance = _profileEngine.GetInstance(p.Name);
+                    return instance?.CurrentKeyName == key.Name;
+                });
+
+                keyListWithUsage.Usage.Add(new KeyUsage
+                {
+                    KeyName = key.Name,
+                    ProfileName = profileUsingKey?.Name ?? ""
+                });
+            }
+
+            snapshot.KeyLists.Add(keyListWithUsage);
+        }
+
+        return snapshot;
+    }
+
+    private async Task<SchedulesSnapshot> BuildSchedulesSnapshotAsync()
+    {
+        var snapshot = new SchedulesSnapshot();
+        var schedules = await _scheduleRepository.GetAllAsync();
+
+        foreach (var schedule in schedules)
+        {
+            snapshot.Schedules.Add(schedule);
+        }
+
+        return snapshot;
+    }
+
+    public override Task<Empty> ClearMessages(ClearMessagesRequest request, ServerCallContext context)
+    {
+        _messageService.ClearMessages(request.Source);
+        return Task.FromResult(new Empty());
+    }
+}

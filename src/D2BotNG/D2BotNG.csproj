@@ -1,0 +1,144 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>default</LangVersion>
+    <PlatformTarget>x86</PlatformTarget>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <RootNamespace>D2BotNG</RootNamespace>
+    <Version>0.0.0</Version>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <BuildVariant Condition="'$(BuildVariant)' == ''">standalone</BuildVariant>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>BuildVariant</_Parameter1>
+      <_Parameter2>$(BuildVariant)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="app.ico" />
+  </ItemGroup>
+
+  <!-- Embedded resources for item rendering (all under /assets/rendering/) -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\Resources\*.dc6" LinkBase="wwwroot\assets\rendering\dc6" />
+    <EmbeddedResource Include="..\..\Resources\*.dat" LinkBase="wwwroot\assets\rendering" />
+    <EmbeddedResource Include="..\..\Resources\*.png" LinkBase="wwwroot\assets\rendering" />
+    <EmbeddedResource Include="..\..\Resources\*.PL2" LinkBase="wwwroot\assets\rendering" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- gRPC -->
+    <PackageReference Include="Grpc.AspNetCore" Version="2.76.0" />
+    <PackageReference Include="Grpc.AspNetCore.Web" Version="2.76.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.76.0" PrivateAssets="All" />
+    <PackageReference Include="JetBrains.Annotations" Version="2025.2.4" />
+
+    <!-- Logging -->
+    <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
+    <PackageReference Include="Serilog.Sinks.Async" Version="2.1.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+
+    <!-- Discord -->
+    <PackageReference Include="Discord.Net" Version="3.18.0" />
+
+    <!-- WebView2 for GUI mode -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3650.58" />
+  </ItemGroup>
+
+  <!-- Proto files for server-side code generation -->
+  <ItemGroup>
+    <Protobuf Include="..\..\protos\*.proto" GrpcServices="Server" ProtoRoot="..\..\protos" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="..\..\docs\">
+      <Link>docs</Link>
+    </Folder>
+  </ItemGroup>
+
+  <!-- Embed wwwroot files as resources for single-file deployment -->
+  <!-- Exclude rendering assets (explicitly included from Resources folder) -->
+  <ItemGroup>
+    <EmbeddedResource Include="wwwroot\**\*" Exclude="wwwroot\assets\rendering\**" LinkBase="wwwroot" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <WebView2LoaderPreference>Static</WebView2LoaderPreference>
+    <!-- Disable static web assets - we use embedded resources instead -->
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
+  </PropertyGroup>
+
+  <!-- Publish: dotnet publish -c Release (with self-contained or no-self-contained flag) -->
+  <PropertyGroup>
+    <RuntimeIdentifier>win-x86</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- Clean publish output: no IIS web.config, no XML docs, embed PDB -->
+    <IsTransformWebConfigDisabled>true</IsTransformWebConfigDisabled>
+    <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <!-- wwwroot is already embedded as EmbeddedResource, don't also publish as content -->
+  <ItemGroup>
+    <Content Remove="wwwroot\**\*" />
+    <_ContentIncludedByDefault Remove="wwwroot\**\*" />
+  </ItemGroup>
+
+  <!--
+    Build UI before C# build.
+    Skip with: dotnet build -p:SkipUIBuild=true
+
+    Outputs=".ui-build-always-run" - non-existent file forces target to run every build,
+    not just when C# files change.
+  -->
+  <Target Name="BuildUI" BeforeTargets="PrepareForBuild" Condition="'$(SkipUIBuild)' != 'true'" Outputs=".ui-build-always-run">
+    <!--
+      Vite outputs files with content hashes (e.g., index-abc123.js).
+      MSBuild caches glob results (wwwroot\**\*) in .cache files.
+      When Vite creates new hashed files, the stale cache causes build errors.
+      Delete .cache files BEFORE npm build so MSBuild re-evaluates globs with new files.
+    -->
+    <ItemGroup>
+      <CacheFiles Include="$(BaseIntermediateOutputPath)**\*.cache" />
+    </ItemGroup>
+    <Delete Files="@(CacheFiles)" ContinueOnError="true" />
+    <Exec Command="npm run build" WorkingDirectory="..\D2BotNG.UI" />
+  </Target>
+
+  <!--
+    Auto-format C# code before compilation.
+    Enable with: dotnet build -p:RunFormat=true
+  -->
+  <Target Name="FormatCode" BeforeTargets="BeforeBuild" Condition="'$(RunFormat)' == 'true'" Outputs=".format-always-run">
+    <Exec Command="dotnet format $(MSBuildProjectFullPath) --verbosity quiet --no-restore" ContinueOnError="true" />
+  </Target>
+
+  <!--
+    ReSharper code inspection after build.
+    Requires: dotnet tool install -g jetbrains.resharper.globaltools
+    Enable with: dotnet build -p:RunInspect=true
+  -->
+  <Target Name="InspectCode" AfterTargets="Build" Condition="'$(RunInspect)' == 'true'" Outputs=".inspect-always-run">
+    <!-- Restore local tool from manifest (works on local clones, may fail on network drives) -->
+    <Exec Command="dotnet tool restore" ContinueOnError="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low" />
+    <!-- Try local tool first (from dotnet tool restore) -->
+    <Exec Command="dotnet jb inspectcode $(MSBuildThisFileDirectory)..\..\D2BotNG.sln --properties:SkipUIBuild=true --output=$(BaseIntermediateOutputPath)inspect.sarif --format=Sarif --severity=WARNING --include=**/*.cs" ContinueOnError="true" IgnoreStandardErrorWarningFormat="true">
+      <Output TaskParameter="ExitCode" PropertyName="_JbLocalExitCode" />
+    </Exec>
+    <!-- Fall back to global tool if local tool not available -->
+    <Exec Command="jb inspectcode $(MSBuildThisFileDirectory)..\..\D2BotNG.sln --properties:SkipUIBuild=true --output=$(BaseIntermediateOutputPath)inspect.sarif --format=Sarif --severity=WARNING --include=**/*.cs" ContinueOnError="true" Condition="'$(_JbLocalExitCode)' != '0'" />
+    <Message Text="ReSharper inspection report: $(BaseIntermediateOutputPath)inspect.sarif" Importance="high" Condition="Exists('$(BaseIntermediateOutputPath)inspect.sarif')" />
+  </Target>
+
+</Project>

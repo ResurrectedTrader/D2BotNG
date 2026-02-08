@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package d2bot;
+
+option csharp_namespace = "D2BotNG.Core.Protos";
+
+import "google/protobuf/empty.proto";
+
+// Update service for auto-update functionality
+// All status updates arrive via EventService.StreamEvents (UpdateStatus)
+service UpdateService {
+  // Trigger an update check - status arrives via events
+  rpc CheckForUpdate(google.protobuf.Empty) returns (google.protobuf.Empty);
+
+  // Start the update process - status arrives via events
+  rpc StartUpdate(google.protobuf.Empty) returns (google.protobuf.Empty);
+}
+
+message UpdateStatus {
+  string current_version = 1;
+  string latest_version = 2;
+  bool update_available = 3;
+  string release_notes = 4;
+  string download_url = 5;
+  int64 download_size = 6;
+  UpdateState state = 7;
+  int32 download_progress = 8;  // 0-100 percentage
+  string error_message = 9;
+}
+
+enum UpdateState {
+  UPDATE_STATE_UNKNOWN = 0;
+  UPDATE_STATE_CHECKING = 1;
+  UPDATE_STATE_UP_TO_DATE = 2;
+  UPDATE_STATE_UPDATE_AVAILABLE = 3;
+  UPDATE_STATE_DOWNLOADING = 4;
+  UPDATE_STATE_READY_TO_INSTALL = 5;
+  UPDATE_STATE_INSTALLING = 6;
+  UPDATE_STATE_ERROR = 7;
+}

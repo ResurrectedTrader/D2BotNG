@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package d2bot;
+
+option csharp_namespace = "D2BotNG.Core.Protos";
+
+import "google/protobuf/empty.proto";
+import "common.proto";
+
+// Profile service
+service ProfileService {
+  // CRUD operations - mutations return Empty, data arrives via events
+  rpc Create(Profile) returns (google.protobuf.Empty);
+  rpc Update(UpdateProfileRequest) returns (google.protobuf.Empty);
+  rpc Delete(ProfileName) returns (google.protobuf.Empty);
+
+  // Profile actions (accepts list of profile names)
+  rpc Start(ProfileNames) returns (google.protobuf.Empty);
+  rpc Stop(ProfileNames) returns (google.protobuf.Empty);
+  rpc Restart(RestartRequest) returns (google.protobuf.Empty);
+
+  // Window control (accepts list of profile names)
+  rpc ShowWindow(ProfileNames) returns (google.protobuf.Empty);
+  rpc HideWindow(ProfileNames) returns (google.protobuf.Empty);
+
+  // Stats and keys
+  rpc ResetStats(ProfileName) returns (google.protobuf.Empty);
+  rpc TriggerMule(ProfileName) returns (google.protobuf.Empty);
+  rpc RotateKey(ProfileName) returns (google.protobuf.Empty);
+  rpc ReleaseKey(ProfileName) returns (google.protobuf.Empty);
+  rpc SetScheduleEnabled(SetScheduleEnabledRequest) returns (google.protobuf.Empty);
+
+  // Reordering
+  rpc Reorder(ReorderProfileRequest) returns (google.protobuf.Empty);
+}
+
+message Profile {
+  // Basic Info
+  string name = 1;
+  string group = 2;
+  string d2_path = 10;
+  string parameters = 22;       // Command line params (e.g., "-w -sleepy -ftj")
+  bool visible = 40;            // Window visibility on start
+  optional WindowLocation window_location = 52;
+
+  // Account Settings
+  string character = 13;
+  Realm realm = 14;
+  string account = 11;
+  string password = 12;
+
+  // Game Settings
+  Difficulty difficulty = 15;
+  GameMode mode = 16;
+  string game_name = 20;
+  string game_pass = 21;
+
+  // Script Settings
+  string entry_script = 23;
+  string info_tag = 24;         // Info tag for scripts
+
+  // Key Management
+  string key_list = 30;
+  uint32 runs_per_key = 50;
+  bool switch_keys_on_restart = 51;
+
+  // Schedule
+  string schedule = 31;
+  bool schedule_enabled = 41;
+
+  // Statistics (persisted)
+  uint32 runs = 60;
+  uint32 chickens = 61;
+  uint32 deaths = 62;
+  uint32 crashes = 63;
+  uint32 restarts = 64;
+  uint32 key_runs = 65;
+}
+
+message WindowLocation {
+  int32 x = 1;
+  int32 y = 2;
+}
+
+message ProfileStatus {
+  string profile_name = 1;
+  ProfileState state = 2;
+  string status = 3;  // Human-readable status text (state description or error message)
+
+  // Current key
+  string current_key = 20;
+
+  // Window visibility
+  bool window_visible = 30;
+}
+
+message ProfileStatusUpdate {
+  repeated ProfileStatus statuses = 1;
+}
+
+message RestartRequest {
+  string profile_name = 1;
+  bool rotate_key = 2;
+}
+
+message SetScheduleEnabledRequest {
+  string profile_name = 1;
+  bool enabled = 2;
+}
+
+message ReorderProfileRequest {
+  string profile_name = 1;
+  int32 new_index = 2;
+  optional string new_group = 3;
+}
+
+message UpdateProfileRequest {
+  Profile profile = 1;
+  optional string original_name = 2;  // Used when renaming - if set, looks up by this name instead of profile.name
+}

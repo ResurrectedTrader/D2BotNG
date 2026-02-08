@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package d2bot;
+
+option csharp_namespace = "D2BotNG.Core.Protos";
+
+// Item and entity service
+service ItemService {
+  // List available entities (characters/directories) for tree browser
+  rpc ListEntities(ListEntitiesRequest) returns (ListEntitiesResponse);
+
+  // Search items within selected entity path
+  rpc Search(SearchItemsRequest) returns (SearchItemsResponse);
+}
+
+message ListEntitiesRequest {
+  string path_prefix = 1;  // Optional: filter to subdirectory (e.g., "USWest/MyAccount")
+}
+
+// Game mode flags parsed from filename suffix (.sel, .hcl, etc)
+message EntityMode {
+  bool hardcore = 1;   // h vs s
+  bool expansion = 2;  // e vs c
+  bool ladder = 3;     // l vs n
+}
+
+message Entity {
+  string path = 1;          // Relative path: "USWest/MyAccount/Sorc.sel"
+  string display_name = 2;  // Display name: "Sorc"
+  bool is_leaf = 3;         // true = character file, false = directory
+  EntityMode mode = 4;      // Only set for leaf entities (parsed from suffix)
+}
+
+message ListEntitiesResponse {
+  repeated Entity entities = 1;
+}
+
+// Optional filters for game mode
+message ModeFilter {
+  optional bool hardcore = 1;
+  optional bool expansion = 2;
+  optional bool ladder = 3;
+}
+
+message SearchItemsRequest {
+  string entity_path = 1;      // Path to search in (empty = root/all)
+  string query = 2;            // Search query (regex on name/description)
+  ModeFilter mode_filter = 3;  // Optional game mode filter
+}
+
+message SearchItemsResponse {
+  repeated Item items = 1;
+}
+
+message Item {
+  string header = 1;
+  string code = 2;
+  string name = 3;
+  string description = 4;
+  uint32 item_color = 5;
+  uint32 text_color = 6;
+  repeated Item sockets = 7;
+}

@@ -1,0 +1,97 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+/* Exocet Blizzard font - Diablo 2 style */
+@font-face {
+  font-family: "Exocet Blizzard OT Light";
+  src: url("/assets/exocet-blizzard-light.eot");
+  src:
+    url("/assets/exocet-blizzard-light.eot?#iefix") format("embedded-opentype"),
+    url("/assets/exocet-blizzard-light.woff") format("woff"),
+    url("/assets/exocet-blizzard-light.ttf") format("truetype");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: theme("colors.zinc.900");
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: theme("colors.zinc.700");
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: theme("colors.zinc.600");
+  }
+
+  [data-focus] {
+    @apply outline-none ring-2 ring-d2-gold ring-offset-2 ring-offset-zinc-950;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-d2-gold focus:ring-offset-2 focus:ring-offset-zinc-950 disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply btn bg-d2-gold text-zinc-950 hover:bg-d2-gold-light;
+  }
+
+  .btn-secondary {
+    @apply btn bg-zinc-800 text-zinc-100 hover:bg-zinc-700;
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100;
+  }
+
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-700;
+  }
+
+  .card {
+    @apply rounded-xl bg-zinc-900 p-6 ring-1 ring-zinc-800;
+  }
+
+  .input {
+    @apply block w-full rounded-lg border-0 bg-zinc-800 px-3 py-2 text-zinc-100 ring-1 ring-inset ring-zinc-700 placeholder:text-zinc-500 focus:ring-2 focus:ring-inset focus:ring-d2-gold sm:text-sm sm:leading-6;
+  }
+
+  .label {
+    @apply block text-sm font-medium text-zinc-400;
+  }
+
+  .badge {
+    @apply inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ring-1 ring-inset;
+  }
+
+  .badge-gold {
+    @apply badge bg-d2-gold/10 text-d2-gold ring-d2-gold/20;
+  }
+
+  .badge-green {
+    @apply badge bg-green-500/10 text-green-400 ring-green-500/20;
+  }
+
+  .badge-red {
+    @apply badge bg-red-500/10 text-red-400 ring-red-500/20;
+  }
+
+  .badge-yellow {
+    @apply badge bg-yellow-500/10 text-yellow-400 ring-yellow-500/20;
+  }
+
+  .badge-gray {
+    @apply badge bg-zinc-500/10 text-zinc-400 ring-zinc-500/20;
+  }
+}

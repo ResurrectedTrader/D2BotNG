@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package d2bot;
+
+option csharp_namespace = "D2BotNG.Core.Protos";
+
+import "google/protobuf/empty.proto";
+import "common.proto";
+
+// Key management service
+service KeyService {
+  // KeyList CRUD - mutations return Empty, data arrives via events
+  rpc CreateKeyList(KeyList) returns (google.protobuf.Empty);
+  rpc UpdateKeyList(UpdateKeyListRequest) returns (google.protobuf.Empty);
+  rpc DeleteKeyList(KeyListName) returns (google.protobuf.Empty);
+
+  // Key operations
+  rpc HoldKey(KeyIdentity) returns (google.protobuf.Empty);
+  rpc ReleaseHeldKey(KeyIdentity) returns (google.protobuf.Empty);
+}
+
+message CDKey {
+  string name = 1;
+  string classic = 2;
+  string expansion = 3;
+  bool held = 4;
+  uint32 realm_downs = 5;
+}
+
+message KeyList {
+  string name = 1;
+  repeated CDKey keys = 2;
+}
+
+message KeyIdentity {
+  string key_list_name = 1;
+  string key_name = 2;
+}
+
+message UpdateKeyListRequest {
+  KeyList key_list = 1;
+  optional string original_name = 2;  // Used when renaming
+}

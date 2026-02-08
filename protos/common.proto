@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package d2bot;
+
+option csharp_namespace = "D2BotNG.Core.Protos";
+
+// Common enums
+enum Realm {
+  REALM_UNSPECIFIED = 0;
+  REALM_US_WEST = 1;
+  REALM_US_EAST = 2;
+  REALM_EUROPE = 3;
+  REALM_ASIA = 4;
+}
+
+enum Difficulty {
+  DIFFICULTY_UNSPECIFIED = 0;
+  DIFFICULTY_NORMAL = 1;
+  DIFFICULTY_NIGHTMARE = 2;
+  DIFFICULTY_HELL = 3;
+  DIFFICULTY_HIGHEST = 4;
+}
+
+enum GameMode {
+  GAME_MODE_UNSPECIFIED = 0;
+  GAME_MODE_BATTLE_NET = 1;        // Battle.net (default)
+  GAME_MODE_SINGLE_PLAYER = 2;    // Single Player
+  GAME_MODE_OPEN_BATTLE_NET = 3;   // Open Battle.net
+  GAME_MODE_TCP_HOST = 4;         // Host TCP/IP Game
+  GAME_MODE_TCP_JOIN = 5;         // Join TCP/IP Game
+}
+
+enum ProfileState {
+  PROFILE_STATE_STOPPED = 0;
+  PROFILE_STATE_STARTING = 1;
+  PROFILE_STATE_RUNNING = 2;
+  PROFILE_STATE_BUSY = 3;
+  PROFILE_STATE_ERROR = 4;
+  PROFILE_STATE_STOPPING = 5;
+}
+
+// Common request/response types
+message ProfileName {
+  string name = 1;
+}
+
+message ProfileNames {
+  repeated string names = 1;
+}
+
+message KeyListName {
+  string name = 1;
+}
+
+message ScheduleName {
+  string name = 1;
+}

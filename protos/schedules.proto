@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package d2bot;
+
+option csharp_namespace = "D2BotNG.Core.Protos";
+
+import "google/protobuf/empty.proto";
+import "common.proto";
+
+// Schedule management service - mutations return Empty, data arrives via events
+service ScheduleService {
+  rpc Create(Schedule) returns (google.protobuf.Empty);
+  rpc Update(UpdateScheduleRequest) returns (google.protobuf.Empty);
+  rpc Delete(ScheduleName) returns (google.protobuf.Empty);
+}
+
+message Schedule {
+  string name = 1;
+  repeated TimePeriod periods = 2;
+}
+
+message TimePeriod {
+  uint32 start_hour = 1;
+  uint32 start_minute = 2;
+  uint32 end_hour = 3;
+  uint32 end_minute = 4;
+}
+
+message UpdateScheduleRequest {
+  Schedule schedule = 1;
+  optional string original_name = 2;  // Used when renaming
+}

@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package d2bot;
+
+option csharp_namespace = "D2BotNG.Core.Protos";
+
+import "profiles.proto";
+import "keys.proto";
+import "schedules.proto";
+
+// Simple list wrappers for file storage (no runtime state like ProfileStatus/KeyUsage)
+message ProfileList {
+  repeated Profile profiles = 1;
+}
+
+message KeyListCollection {
+  repeated KeyList key_lists = 1;
+}
+
+message ScheduleList {
+  repeated Schedule schedules = 1;
+}

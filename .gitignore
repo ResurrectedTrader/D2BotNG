@@ -1,0 +1,45 @@
+# Build outputs
+bin/
+obj/
+dist/
+wwwroot/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Angular
+.angular/
+
+# Claude
+.claude
+docs/plans
+
+# IDE
+.idea/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+/reference
+
+# Generated files
+src/D2BotNG.UI/src/app/generated/
+
+# Local runtime data (at root level only)
+/data/
+src/D2BotNG.UI/src/generated/
+
+# TypeScript build artifacts
+*.tsbuildinfo
+vite.config.d.ts
+vite.config.js
