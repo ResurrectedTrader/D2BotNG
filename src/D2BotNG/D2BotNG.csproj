@@ -102,6 +102,10 @@
     Outputs=".ui-build-always-run" - non-existent file forces target to run every build,
     not just when C# files change.
   -->
+  <Target Name="FormatUI" BeforeTargets="BuildUI" Condition="'$(SkipUIBuild)' != 'true' And '$(RunFormat)' == 'true'" Outputs=".ui-format-always-run">
+    <Exec Command="npm run format" WorkingDirectory="..\D2BotNG.UI" ContinueOnError="true" />
+  </Target>
+
   <Target Name="BuildUI" BeforeTargets="PrepareForBuild" Condition="'$(SkipUIBuild)' != 'true'" Outputs=".ui-build-always-run">
     <!--
       Vite outputs files with content hashes (e.g., index-abc123.js).

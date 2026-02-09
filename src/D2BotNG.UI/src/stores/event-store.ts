@@ -237,9 +237,7 @@ export function useProfile(
 }
 
 /** Get profile status by name */
-export function useProfileState(
-  profileName: string,
-): ProfileState | undefined {
+export function useProfileState(profileName: string): ProfileState | undefined {
   return useEventStore((state) => state.profiles.get(profileName)?.status);
 }
 

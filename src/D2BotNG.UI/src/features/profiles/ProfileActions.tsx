@@ -43,8 +43,7 @@ export function useProfileActionItems({
   const isLocalhost = useIsLocalhost();
 
   const isRunning =
-    status?.state === RunState.STARTING ||
-    status?.state === RunState.RUNNING;
+    status?.state === RunState.STARTING || status?.state === RunState.RUNNING;
   const isStopped = !status || status.state === RunState.STOPPED;
   const windowVisible = status?.windowVisible ?? false;
   const scheduleEnabled = profile.scheduleEnabled;

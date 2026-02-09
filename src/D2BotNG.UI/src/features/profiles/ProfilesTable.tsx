@@ -188,8 +188,7 @@ function SortableProfileRow({
     ? { transform: CSS.Transform.toString(transform), transition }
     : {};
   const state = status?.state ?? RunState.STOPPED;
-  const isRunning =
-    state === RunState.RUNNING;
+  const isRunning = state === RunState.RUNNING;
   const isStopped = state === RunState.STOPPED;
   const windowVisible = status?.windowVisible ?? false;
 
@@ -228,8 +227,7 @@ function SortableProfileRow({
             className={clsx(
               "h-2 w-2 rounded-full flex-shrink-0",
               state === RunState.RUNNING && "bg-green-500",
-              (state === RunState.STARTING ||
-                state === RunState.STOPPING) &&
+              (state === RunState.STARTING || state === RunState.STOPPING) &&
                 "bg-amber-500",
               state === RunState.STOPPED && "bg-zinc-500",
               state === RunState.ERROR && "bg-red-500",
