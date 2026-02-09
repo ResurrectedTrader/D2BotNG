@@ -137,12 +137,9 @@ jobs:
       - name: Restore tools
         shell: bash
         run: dotnet tool restore
-      - name: Build
-        shell: bash
-        run: dotnet build src/D2BotNG/D2BotNG.csproj -c Release -p:SkipUIBuild=true
       - name: Run InspectCode
         shell: bash
-        run: dotnet jb inspectcode D2BotNG.sln --properties:SkipUIBuild=true --output=inspect.sarif --format=Sarif --severity=WARNING --include="**/*.cs"
+        run: dotnet jb inspectcode D2BotNG.sln --project=D2BotNG --properties:SkipUIBuild=true --output=inspect.sarif --format=Sarif --severity=WARNING
       - name: Check for issues
         shell: bash
         run: |

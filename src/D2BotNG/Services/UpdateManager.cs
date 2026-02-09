@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json.Serialization;
 using D2BotNG.Core.Protos;
+using D2BotNG.Engine;
 using Google.Protobuf.WellKnownTypes;
 using JetBrains.Annotations;
 
@@ -14,6 +15,7 @@ namespace D2BotNG.Services;
 public class UpdateManager
 {
     private readonly ILogger<UpdateManager> _logger;
+    private readonly ProfileEngine _profileEngine;
     private readonly EventBroadcaster _eventBroadcaster;
     private readonly HttpClient _httpClient;
     private readonly string _currentVersion;
@@ -26,9 +28,11 @@ public class UpdateManager
 
     public UpdateManager(
         ILogger<UpdateManager> logger,
+        ProfileEngine profileEngine,
         EventBroadcaster eventBroadcaster)
     {
         _logger = logger;
+        _profileEngine = profileEngine;
         _eventBroadcaster = eventBroadcaster;
         _httpClient = new HttpClient();
         _httpClient.DefaultRequestHeaders.Add("User-Agent", "D2BotNG");
@@ -257,6 +261,9 @@ rd /s /q ""{tempDir}"" 2>nul
             };
 
             UpdateStatusAndBroadcast(s => s.State = UpdateState.Installing);
+
+            _logger.LogInformation("Stopping all profiles before update");
+            await _profileEngine.StopAllAsync();
 
             Process.Start(startInfo);
 

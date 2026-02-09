@@ -137,11 +137,11 @@
     <!-- Restore local tool from manifest (works on local clones, may fail on network drives) -->
     <Exec Command="dotnet tool restore" ContinueOnError="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low" />
     <!-- Try local tool first (from dotnet tool restore) -->
-    <Exec Command="dotnet jb inspectcode $(MSBuildThisFileDirectory)..\..\D2BotNG.sln --properties:SkipUIBuild=true --output=$(BaseIntermediateOutputPath)inspect.sarif --format=Sarif --severity=WARNING --include=**/*.cs" ContinueOnError="true" IgnoreStandardErrorWarningFormat="true">
+    <Exec Command="dotnet jb inspectcode $(MSBuildThisFileDirectory)..\..\D2BotNG.sln --project=D2BotNG --properties:SkipUIBuild=true --output=$(BaseIntermediateOutputPath)inspect.sarif --format=Sarif --severity=WARNING" ContinueOnError="true" IgnoreStandardErrorWarningFormat="true">
       <Output TaskParameter="ExitCode" PropertyName="_JbLocalExitCode" />
     </Exec>
     <!-- Fall back to global tool if local tool not available -->
-    <Exec Command="jb inspectcode $(MSBuildThisFileDirectory)..\..\D2BotNG.sln --properties:SkipUIBuild=true --output=$(BaseIntermediateOutputPath)inspect.sarif --format=Sarif --severity=WARNING --include=**/*.cs" ContinueOnError="true" Condition="'$(_JbLocalExitCode)' != '0'" />
+    <Exec Command="jb inspectcode $(MSBuildThisFileDirectory)..\..\D2BotNG.sln --project=D2BotNG --properties:SkipUIBuild=true --output=$(BaseIntermediateOutputPath)inspect.sarif --format=Sarif --severity=WARNING" ContinueOnError="true" Condition="'$(_JbLocalExitCode)' != '0'" />
     <Message Text="ReSharper inspection report: $(BaseIntermediateOutputPath)inspect.sarif" Importance="high" Condition="Exists('$(BaseIntermediateOutputPath)inspect.sarif')" />
   </Target>
 
