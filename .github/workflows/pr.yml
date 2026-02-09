@@ -154,7 +154,7 @@ jobs:
           fi
       - name: Review comments
         if: always()
-        uses: HollowMan6/sarif4reviewdog@v1
+        uses: HollowMan6/sarif4reviewdog@v1.0.1
         with:
           file: inspect.sarif
           reporter: github-pr-review
