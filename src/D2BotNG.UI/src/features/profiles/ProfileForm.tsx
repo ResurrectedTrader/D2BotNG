@@ -235,8 +235,7 @@ export function ProfileForm({
   // Check if name is a duplicate (for new profiles, or renames to an existing name)
   const trimmedNameLower = name.trim().toLowerCase();
   const isSameName = profile && profile.name.toLowerCase() === trimmedNameLower;
-  const isDuplicateName =
-    !isSameName && existingNames.has(trimmedNameLower);
+  const isDuplicateName = !isSameName && existingNames.has(trimmedNameLower);
 
   // Validation errors (only shown when field is touched)
   const errors = {

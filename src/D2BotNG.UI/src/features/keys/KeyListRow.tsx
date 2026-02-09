@@ -41,7 +41,10 @@ function maskKey(key: string): string {
 /**
  * Get the status of a key
  */
-function getKeyStatus(key: CDKey, usedByProfile: string): "available" | "in-use" | "held" {
+function getKeyStatus(
+  key: CDKey,
+  usedByProfile: string,
+): "available" | "in-use" | "held" {
   if (key.held) return "held";
   if (usedByProfile) return "in-use";
   return "available";
@@ -92,7 +95,9 @@ export function KeyListRow({
   );
 
   const keyCount = keyList.keys.length;
-  const availableCount = keyList.keys.filter((k) => !k.held && !usageMap.get(k.name)).length;
+  const availableCount = keyList.keys.filter(
+    (k) => !k.held && !usageMap.get(k.name),
+  ).length;
 
   return (
     <>

@@ -105,7 +105,8 @@ export function KeyListDialog({ open, onClose, keyList }: KeyListDialogProps) {
 
       // Check for duplicate name (allow keeping the same name when editing)
       const trimmedName = name.trim().toLowerCase();
-      const isSameName = isEditing && keyList?.name.toLowerCase() === trimmedName;
+      const isSameName =
+        isEditing && keyList?.name.toLowerCase() === trimmedName;
       if (!isSameName && existingNames.has(trimmedName)) {
         setNameError("A key list with this name already exists");
         return;

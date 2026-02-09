@@ -25,7 +25,9 @@ export function KeysPage() {
   const isLoading = useIsLoading();
   const keyListsData = useKeyLists();
   const keyLists = keyListsData.map((k) => k.keyList);
-  const usageByKeyList = new Map(keyListsData.map((k) => [k.keyList.name, k.usage]));
+  const usageByKeyList = new Map(
+    keyListsData.map((k) => [k.keyList.name, k.usage]),
+  );
   const deleteKeyList = useDeleteKeyList();
 
   // Dialog states

@@ -128,7 +128,8 @@ export function ScheduleDialog({
 
       // Check for duplicate name (allow keeping the same name when editing)
       const trimmedName = name.trim().toLowerCase();
-      const isSameName = isEditing && schedule?.name.toLowerCase() === trimmedName;
+      const isSameName =
+        isEditing && schedule?.name.toLowerCase() === trimmedName;
       if (!isSameName && existingNames.has(trimmedName)) {
         setNameError("A schedule with this name already exists");
         return;

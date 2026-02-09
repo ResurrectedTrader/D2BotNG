@@ -20,10 +20,7 @@ export const PathInput = forwardRef<HTMLInputElement, PathInputProps>(
       <div className="w-full">
         {label && (
           <div className="mb-1.5 flex items-center gap-1.5">
-            <label
-              htmlFor={id}
-              className="text-sm font-medium text-zinc-400"
-            >
+            <label htmlFor={id} className="text-sm font-medium text-zinc-400">
               {label}
             </label>
             {tooltip && <HelpTooltip text={tooltip} />}

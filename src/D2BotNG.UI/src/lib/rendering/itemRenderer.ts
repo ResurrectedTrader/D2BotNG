@@ -165,9 +165,7 @@ export async function renderItemToDataUrl(
 /**
  * Gets frame info without rendering (for layout calculations)
  */
-export async function getItemFrameInfo(
-  code: string,
-): Promise<{
+export async function getItemFrameInfo(code: string): Promise<{
   width: number;
   height: number;
   gridSize: { x: number; y: number };
