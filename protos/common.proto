@@ -30,13 +30,12 @@ enum GameMode {
   GAME_MODE_TCP_JOIN = 5;         // Join TCP/IP Game
 }
 
-enum ProfileState {
-  PROFILE_STATE_STOPPED = 0;
-  PROFILE_STATE_STARTING = 1;
-  PROFILE_STATE_RUNNING = 2;
-  PROFILE_STATE_BUSY = 3;
-  PROFILE_STATE_ERROR = 4;
-  PROFILE_STATE_STOPPING = 5;
+enum RunState {
+  RUN_STATE_STOPPED = 0;
+  RUN_STATE_STARTING = 1;
+  RUN_STATE_RUNNING = 2;
+  RUN_STATE_ERROR = 3;
+  RUN_STATE_STOPPING = 4;
 }
 
 // Common request/response types

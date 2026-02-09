@@ -10,27 +10,27 @@ namespace D2BotNG.Engine;
 /// </summary>
 public class ProfileInstance : IDisposable
 {
-    public string ProfileName { get; private set; }
-    public ProfileState State { get; private set; } = ProfileState.Stopped;
+    public string ProfileName { get; set; }
+    public RunState State { get; private set; } = RunState.Stopped;
     public Process? Process { get; private set; }
-    public string Status { get; private set; } = "";
+    public string Status { get; set; } = "";
     public DateTime? StartedAt { get; private set; }
     public DateTime? LastHeartbeat { get; private set; }
-    public int CrashCount { get; private set; }
-    public int MissedHeartbeats { get; private set; }
+    public int CrashCount { get; set; }
+    public int MissedHeartbeats { get; set; }
 
     private readonly SemaphoreSlim _stateLock = new(1, 1);
     private CancellationTokenSource? _runCts;
 
     // Key tracking
-    public string? CurrentKeyName { get; private set; }
+    public string? KeyName { get; set; }
 
     public ProfileInstance(string profileName)
     {
         ProfileName = profileName;
     }
 
-    public async Task<bool> TransitionToAsync(ProfileState newState)
+    public async Task<bool> TransitionToAsync(RunState newState)
     {
         await _stateLock.WaitAsync();
         try
@@ -63,32 +63,12 @@ public class ProfileInstance : IDisposable
         MissedHeartbeats = 0;
     }
 
-    public void IncrementCrashes()
-    {
-        CrashCount++;
-    }
-
-    public void ResetCrashCount()
-    {
-        CrashCount = 0;
-    }
-
-    public void IncrementMissedHeartbeats()
-    {
-        MissedHeartbeats++;
-    }
-
-    public void SetStatus(string status)
-    {
-        Status = status;
-    }
-
     public async Task SetErrorAsync(string error)
     {
         await _stateLock.WaitAsync();
         try
         {
-            State = ProfileState.Error;
+            State = RunState.Error;
             Status = error;
         }
         finally
@@ -97,30 +77,15 @@ public class ProfileInstance : IDisposable
         }
     }
 
-    public void SetKey(string keyName)
-    {
-        CurrentKeyName = keyName;
-    }
-
-    public void ClearKey()
-    {
-        CurrentKeyName = null;
-    }
-
-    public void Rename(string newName)
-    {
-        ProfileName = newName;
-    }
-
-    public ProfileStatus GetStatus()
+    public ProfileState GetState()
     {
         nint hwnd = Process?.MainWindowHandle ?? 0;
-        return new ProfileStatus
+        return new ProfileState
         {
             ProfileName = ProfileName,
             State = State,
             Status = Status,
-            CurrentKey = CurrentKeyName ?? "",
+            KeyName = KeyName ?? "",
             WindowVisible = hwnd != 0 && IsWindowVisible(hwnd)
         };
     }
@@ -137,23 +102,19 @@ public class ProfileInstance : IDisposable
         _runCts?.Cancel();
     }
 
-    private static bool IsValidTransition(ProfileState from, ProfileState to)
+    private static bool IsValidTransition(RunState from, RunState to)
     {
         return (from, to) switch
         {
-            (ProfileState.Stopped, ProfileState.Starting) => true,
-            (ProfileState.Starting, ProfileState.Running) => true,
-            (ProfileState.Starting, ProfileState.Error) => true,
-            (ProfileState.Running, ProfileState.Busy) => true,
-            (ProfileState.Running, ProfileState.Stopping) => true,
-            (ProfileState.Running, ProfileState.Error) => true,
-            (ProfileState.Busy, ProfileState.Running) => true,
-            (ProfileState.Busy, ProfileState.Stopping) => true,
-            (ProfileState.Busy, ProfileState.Error) => true,
-            (ProfileState.Stopping, ProfileState.Stopped) => true,
-            (ProfileState.Error, ProfileState.Stopping) => true,
-            (ProfileState.Error, ProfileState.Stopped) => true,
-            (ProfileState.Error, ProfileState.Starting) => true,
+            (RunState.Stopped, RunState.Starting) => true,
+            (RunState.Starting, RunState.Running) => true,
+            (RunState.Starting, RunState.Error) => true,
+            (RunState.Running, RunState.Stopping) => true,
+            (RunState.Running, RunState.Error) => true,
+            (RunState.Stopping, RunState.Stopped) => true,
+            (RunState.Error, RunState.Stopping) => true,
+            (RunState.Error, RunState.Stopped) => true,
+            (RunState.Error, RunState.Starting) => true,
             _ => false
         };
     }

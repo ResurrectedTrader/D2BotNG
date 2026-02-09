@@ -9,7 +9,7 @@ import { useCallback, useMemo } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { Button, EmptyState } from "@/components/ui";
 import { useCreateProfile, useUpdateProfile } from "@/hooks";
-import { useProfile, useProfileStatus } from "@/stores/event-store";
+import { useProfile, useProfileState } from "@/stores/event-store";
 import type { ProfileInput } from "@/hooks/useProfiles";
 import { ProfileForm } from "./ProfileForm";
 import { ProfileStatusBadge } from "./ProfileStatusBadge";
@@ -28,7 +28,7 @@ export function ProfileDetailPage() {
   // Get profile data from event store
   const profileData = useProfile(decodedName);
   const profile = profileData?.profile;
-  const status = useProfileStatus(decodedName);
+  const status = useProfileState(decodedName);
 
   // Get source profile for cloning
   const sourceProfileData = useProfile(cloneSource ?? "");

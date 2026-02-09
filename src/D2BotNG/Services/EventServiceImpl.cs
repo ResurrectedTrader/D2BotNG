@@ -76,11 +76,10 @@ public class EventServiceImpl : EventService.EventServiceBase
         var now = Timestamp.FromDateTime(DateTime.UtcNow);
 
         // 1. Profiles snapshot with status
-        var profilesSnapshot = await BuildProfilesSnapshotAsync();
         await responseStream.WriteAsync(new Event
         {
             Timestamp = now,
-            ProfilesSnapshot = profilesSnapshot
+            ProfilesSnapshot = await _profileEngine.BuildProfilesSnapshotAsync()
         }, ct);
 
         // 2. KeyLists snapshot with usage
@@ -132,31 +131,6 @@ public class EventServiceImpl : EventService.EventServiceBase
         }
     }
 
-    private async Task<ProfilesSnapshot> BuildProfilesSnapshotAsync()
-    {
-        var snapshot = new ProfilesSnapshot();
-        var profiles = await _profileRepository.GetAllAsync();
-
-        foreach (var profile in profiles)
-        {
-            var instance = _profileEngine.GetInstance(profile.Name);
-            var status = instance?.GetStatus() ?? new ProfileStatus
-            {
-                ProfileName = profile.Name,
-                State = ProfileState.Stopped,
-                Status = ""
-            };
-
-            snapshot.Profiles.Add(new ProfileWithStatus
-            {
-                Profile = profile,
-                Status = status
-            });
-        }
-
-        return snapshot;
-    }
-
     private async Task<KeyListsSnapshot> BuildKeyListsSnapshotAsync()
     {
         var snapshot = new KeyListsSnapshot();
@@ -177,7 +151,7 @@ public class EventServiceImpl : EventService.EventServiceBase
                 {
                     if (p.KeyList != keyList.Name) return false;
                     var instance = _profileEngine.GetInstance(p.Name);
-                    return instance?.CurrentKeyName == key.Name;
+                    return instance?.KeyName == key.Name;
                 });
 
                 keyListWithUsage.Usage.Add(new KeyUsage

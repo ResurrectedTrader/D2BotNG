@@ -72,12 +72,12 @@ public class ScheduleEngine : IDisposable
 
             if (instance == null) continue;
 
-            if (shouldRun && instance.State == ProfileState.Stopped)
+            if (shouldRun && instance.State == RunState.Stopped)
             {
                 _logger.LogInformation("Schedule starting profile {Name}", profile.Name);
                 await _profileEngine.StartProfileAsync(profile.Name);
             }
-            else if (!shouldRun && instance.State is ProfileState.Running or ProfileState.Busy)
+            else if (!shouldRun && instance.State is RunState.Running)
             {
                 _logger.LogInformation("Schedule stopping profile {Name}", profile.Name);
                 await _profileEngine.StopProfileAsync(profile.Name);

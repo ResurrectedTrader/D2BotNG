@@ -39,15 +39,15 @@ import {
   type DropdownItem,
   useContextMenu,
 } from "@/components/ui";
-import { useAllProfileStatuses } from "@/stores/event-store";
+import { useAllProfileStates } from "@/stores/event-store";
 import {
   useProfileActions,
   useProfileTableColumns,
   PROFILE_COLUMNS,
 } from "@/hooks";
 import type { ProfileColumnKey } from "@/hooks";
-import { ProfileState } from "@/generated/common_pb";
-import type { Profile, ProfileStatus } from "@/generated/profiles_pb";
+import { RunState } from "@/generated/common_pb";
+import type { Profile, ProfileState } from "@/generated/profiles_pb";
 import { ProfileStatusBadge } from "./ProfileStatusBadge";
 import { useProfileActionItems } from "./ProfileActions";
 import {
@@ -111,7 +111,7 @@ function getColumnAlignedInlineClass(columnCount: number): string {
 function getColumnValue(
   key: ProfileColumnKey,
   profile: Profile,
-  status?: ProfileStatus,
+  status?: ProfileState,
 ): string | number {
   switch (key) {
     case "runs":
@@ -125,7 +125,7 @@ function getColumnValue(
     case "restarts":
       return profile.restarts;
     case "key":
-      return status?.currentKey || "-";
+      return status?.keyName || "-";
     case "gamePath": {
       if (!profile.d2Path) return "-";
       // Extract last path component (filename)
@@ -143,7 +143,7 @@ const UNGROUPED_DROP_ID = "group:";
 
 interface SortableProfileRowProps {
   profile: Profile;
-  status?: ProfileStatus;
+  status?: ProfileState;
   visibleColumns: { key: ProfileColumnKey; label: string }[];
   actions: ReturnType<typeof useProfileActions>;
   isSelected: boolean;
@@ -187,10 +187,10 @@ function SortableProfileRow({
   const style = isDragging
     ? { transform: CSS.Transform.toString(transform), transition }
     : {};
-  const state = status?.state ?? ProfileState.STOPPED;
+  const state = status?.state ?? RunState.STOPPED;
   const isRunning =
-    state === ProfileState.RUNNING || state === ProfileState.BUSY;
-  const isStopped = state === ProfileState.STOPPED;
+    state === RunState.RUNNING;
+  const isStopped = state === RunState.STOPPED;
   const windowVisible = status?.windowVisible ?? false;
 
   const titleParts = [profile.account, profile.character].filter(Boolean);
@@ -227,15 +227,14 @@ function SortableProfileRow({
           <span
             className={clsx(
               "h-2 w-2 rounded-full flex-shrink-0",
-              state === ProfileState.RUNNING && "bg-green-500",
-              (state === ProfileState.BUSY ||
-                state === ProfileState.STARTING ||
-                state === ProfileState.STOPPING) &&
+              state === RunState.RUNNING && "bg-green-500",
+              (state === RunState.STARTING ||
+                state === RunState.STOPPING) &&
                 "bg-amber-500",
-              state === ProfileState.STOPPED && "bg-zinc-500",
-              state === ProfileState.ERROR && "bg-red-500",
+              state === RunState.STOPPED && "bg-zinc-500",
+              state === RunState.ERROR && "bg-red-500",
             )}
-            title={ProfileState[state]}
+            title={RunState[state]}
           />
           <span className="font-medium text-zinc-100" title={title}>
             {profile.name}
@@ -338,7 +337,7 @@ export function ProfilesTable({
   onDelete,
 }: ProfilesTableProps) {
   const navigate = useNavigate();
-  const statuses = useAllProfileStatuses();
+  const statuses = useAllProfileStates();
   const actions = useProfileActions();
   const { isColumnVisible, toggleColumn } = useProfileTableColumns();
 

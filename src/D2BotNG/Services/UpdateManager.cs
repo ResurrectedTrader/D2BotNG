@@ -124,8 +124,15 @@ public class UpdateManager
                 s.State = updateAvailable ? UpdateState.UpdateAvailable : UpdateState.UpToDate;
             });
 
-            _logger.LogInformation("Update check complete. Current: {Current}, Latest: {Latest}, UpdateAvailable: {Available}",
-                _currentVersion, latestVersion, updateAvailable);
+            if (!updateAvailable)
+            {
+                _logger.LogDebug("Update check complete. Current: {Current}, Latest: {Latest}, UpdateAvailable: {Available}",
+                    _currentVersion, latestVersion, updateAvailable);
+            }
+            else
+            {
+                _logger.LogInformation("New version {LatestVersion} available!", latestVersion);
+            }
         }
         catch (Exception ex)
         {

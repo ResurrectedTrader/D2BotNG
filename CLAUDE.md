@@ -136,7 +136,7 @@ Frontend uses a single gRPC server-stream for all real-time state:
 ## Frontend Architecture
 
 ### State Management
-- **Zustand event-store** - Central state: profiles (`Map<name, ProfileWithStatus>`), keyLists, schedules, messages (100k cap), settings, items, connection status
+- **Zustand event-store** - Central state: profiles (`Map<name, ProfileWithStatusData>`), keyLists, schedules, messages (100k cap), settings, items, connection status
 - **Zustand toast-store** - Toast notifications with auto-dismiss
 - **React Query** - Mutations only (no queries). All data comes through the event stream
 - **Selector hooks** - `useProfiles()`, `useKeyLists()`, `useSchedules()`, `useSettings()`, `useMessages(source)`, etc. using `useShallow`
@@ -215,6 +215,13 @@ Item/mule data lives in `d2bs/kolbot/mules/` (*.txt files, watched by FileSystem
 | GracefulShutdownPeriod | 5s | ProcessManager |
 | ViteDevPort | 4200 | vite.config.ts |
 | BackendPort | 5000 | Default in settings |
+
+## Workflow
+
+- **After making backend changes**, always build with format + inspect and check the SARIF output:
+  `dotnet build -p:RunFormat=true -p:RunInspect=true -p:SkipUIBuild=true --no-restore` then review `src/D2BotNG/obj/inspect.sarif`
+- **If no UI changes were made**, skip the UI build for faster iteration:
+  `dotnet build -p:SkipUIBuild=true`
 
 ## Notes
 

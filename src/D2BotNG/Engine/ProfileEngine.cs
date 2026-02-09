@@ -54,8 +54,8 @@ public class ProfileEngine : IDisposable
         var used = new HashSet<string>();
         foreach (var p in profiles.Where(p => p.KeyList == keyListName))
         {
-            if (_instances.TryGetValue(p.Name, out var inst) && inst.CurrentKeyName != null)
-                used.Add(inst.CurrentKeyName);
+            if (_instances.TryGetValue(p.Name, out var inst) && inst.KeyName != null)
+                used.Add(inst.KeyName);
         }
         return used;
     }
@@ -99,21 +99,25 @@ public class ProfileEngine : IDisposable
     {
         foreach (var instance in _instances.Values)
         {
-            if (instance is { State: ProfileState.Running, Process: not null })
+            if (instance is { State: RunState.Running, Process: not null })
             {
                 instance.Process.SendMessage(messageType, message);
             }
         }
     }
 
-    public void NotifyProfileChanged(string profileName)
+    public async Task NotifyProfileStateChangedAsync(string profileName, bool includeProfile = false)
     {
         if (_instances.TryGetValue(profileName, out var instance))
         {
+            var state = instance.GetState();
+            if (includeProfile)
+                state.Profile = await _profileRepository.GetByKeyAsync(profileName);
+
             _eventBroadcaster.Broadcast(new Event
             {
                 Timestamp = Timestamp.FromDateTime(DateTime.UtcNow),
-                ProfileStatus = instance.GetStatus()
+                ProfileState = state
             });
         }
     }
@@ -126,13 +130,13 @@ public class ProfileEngine : IDisposable
             return false;
         }
 
-        if (!await instance.TransitionToAsync(ProfileState.Starting))
+        if (!await instance.TransitionToAsync(RunState.Starting))
         {
             _logger.LogWarning("Cannot start profile {Name} in state {State}", profileName, instance.State);
             return false;
         }
 
-        NotifyProfileChanged(profileName);
+        await NotifyProfileStateChangedAsync(profileName);
 
         _ = RunProfileBackgroundAsync(instance);
         return true;
@@ -145,17 +149,17 @@ public class ProfileEngine : IDisposable
             return false;
         }
 
-        if (instance.State == ProfileState.Stopped)
+        if (instance.State == RunState.Stopped)
         {
             return true;
         }
 
-        if (!await instance.TransitionToAsync(ProfileState.Stopping))
+        if (!await instance.TransitionToAsync(RunState.Stopping))
         {
             if (!force) return false;
         }
 
-        NotifyProfileChanged(profileName);
+        await NotifyProfileStateChangedAsync(profileName);
 
         instance.CancelRun();
 
@@ -169,11 +173,11 @@ public class ProfileEngine : IDisposable
                 TimeSpan.FromSeconds(5));
         }
 
-        await instance.TransitionToAsync(ProfileState.Stopped);
-        instance.SetStatus("");
-        NotifyProfileChanged(profileName);
+        await instance.TransitionToAsync(RunState.Stopped);
+        instance.Status = "";
+        await NotifyProfileStateChangedAsync(profileName);
 
-        instance.ClearKey();
+        instance.KeyName = null;
 
         return true;
     }
@@ -182,7 +186,7 @@ public class ProfileEngine : IDisposable
     {
         foreach (var instance in _instances.Values)
         {
-            if (instance.State == ProfileState.Stopped)
+            if (instance.State == RunState.Stopped)
             {
                 await StartProfileAsync(instance.ProfileName);
             }
@@ -192,7 +196,7 @@ public class ProfileEngine : IDisposable
     public async Task StopAllAsync()
     {
         var tasks = _instances.Values
-            .Where(i => i.State != ProfileState.Stopped)
+            .Where(i => i.State != RunState.Stopped)
             .Select(i => StopProfileAsync(i.ProfileName))
             .ToList();
 
@@ -211,15 +215,15 @@ public class ProfileEngine : IDisposable
         else
             _processManager.ShowWindow(instance.Process!.MainWindowHandle);
 
-        NotifyProfileChanged(profileName);
+        await NotifyProfileStateChangedAsync(profileName);
     }
 
-    public void HideWindow(string profileName)
+    public async Task HideWindowAsync(string profileName)
     {
         if (!_instances.TryGetValue(profileName, out var instance) ||
             instance.Process?.MainWindowHandle == 0) return;
         _processManager.HideWindow(instance.Process!.MainWindowHandle);
-        NotifyProfileChanged(profileName);
+        await NotifyProfileStateChangedAsync(profileName);
     }
 
     public bool SendMessage(string profileName, MessageType messageType, string message)
@@ -247,7 +251,7 @@ public class ProfileEngine : IDisposable
         }
 
         // Clear current key first (frees it in runtime state)
-        instance.ClearKey();
+        instance.KeyName = null;
 
         // Get next available key
         var usedKeys = await GetUsedKeyNamesAsync(profile.KeyList);
@@ -257,7 +261,7 @@ public class ProfileEngine : IDisposable
             return false;
         }
 
-        instance.SetKey(key.Name);
+        instance.KeyName = key.Name;
 
         return true;
     }
@@ -266,7 +270,7 @@ public class ProfileEngine : IDisposable
     {
         if (_instances.TryGetValue(profileName, out var instance))
         {
-            instance.ClearKey();
+            instance.KeyName = null;
         }
     }
 
@@ -285,12 +289,12 @@ public class ProfileEngine : IDisposable
         profile.Restarts = 0;
         profile.KeyRuns = 0;
         await _profileRepository.UpdateAsync(profile);
-        await BroadcastProfilesSnapshotAsync();
+        await NotifyProfileStateChangedAsync(profileName, includeProfile: true);
 
         return true;
     }
 
-    public async Task BroadcastProfilesSnapshotAsync()
+    public async Task<ProfilesSnapshot> BuildProfilesSnapshotAsync()
     {
         var snapshot = new ProfilesSnapshot();
         var profiles = await _profileRepository.GetAllAsync();
@@ -298,24 +302,26 @@ public class ProfileEngine : IDisposable
         foreach (var profile in profiles)
         {
             var instance = GetInstance(profile.Name);
-            var status = instance?.GetStatus() ?? new ProfileStatus
+            var status = instance?.GetState() ?? new ProfileState
             {
                 ProfileName = profile.Name,
-                State = ProfileState.Stopped,
+                State = RunState.Stopped,
                 Status = ""
             };
 
-            snapshot.Profiles.Add(new ProfileWithStatus
-            {
-                Profile = profile,
-                Status = status
-            });
+            status.Profile = profile;
+            snapshot.Profiles.Add(status);
         }
 
+        return snapshot;
+    }
+
+    public async Task BroadcastProfilesSnapshotAsync()
+    {
         _eventBroadcaster.Broadcast(new Event
         {
             Timestamp = Timestamp.FromDateTime(DateTime.UtcNow),
-            ProfilesSnapshot = snapshot
+            ProfilesSnapshot = await BuildProfilesSnapshotAsync()
         });
     }
 
@@ -330,7 +336,7 @@ public class ProfileEngine : IDisposable
             if (profile == null)
             {
                 await instance.SetErrorAsync("Profile not found");
-                NotifyProfileChanged(profileName);
+                await NotifyProfileStateChangedAsync(profileName);
                 return;
             }
 
@@ -343,11 +349,11 @@ public class ProfileEngine : IDisposable
                 if (acquiredKey == null)
                 {
                     await instance.SetErrorAsync("No available keys");
-                    NotifyProfileChanged(profileName);
+                    await NotifyProfileStateChangedAsync(profileName);
                     return;
                 }
 
-                instance.SetKey(acquiredKey.Name);
+                instance.KeyName = acquiredKey.Name;
             }
 
             // Get current key info for command line
@@ -387,13 +393,13 @@ public class ProfileEngine : IDisposable
                 _handleToProfile[gameProcess.MainWindowHandle] = profileName;
             }
 
-            if (!await instance.TransitionToAsync(ProfileState.Running))
+            if (!await instance.TransitionToAsync(RunState.Running))
             {
                 throw new InvalidOperationException("Failed to transition to Running state");
             }
 
-            NotifyProfileChanged(profileName);
-            instance.ResetCrashCount();
+            await NotifyProfileStateChangedAsync(profileName);
+            instance.CrashCount = 0;
 
             // Monitor process
             await MonitorProcessAsync(instance, cancellationToken);
@@ -406,7 +412,7 @@ public class ProfileEngine : IDisposable
         {
             _logger.LogError(ex, "Error running profile {Name}", profileName);
             await instance.SetErrorAsync(ex.Message);
-            NotifyProfileChanged(profileName);
+            await NotifyProfileStateChangedAsync(profileName);
 
             // Handle crash recovery
             await HandleCrashAsync(instance);
@@ -435,8 +441,8 @@ public class ProfileEngine : IDisposable
                 }
                 else
                 {
-                    await instance.TransitionToAsync(ProfileState.Stopped);
-                    NotifyProfileChanged(instance.ProfileName);
+                    await instance.TransitionToAsync(RunState.Stopped);
+                    await NotifyProfileStateChangedAsync(instance.ProfileName);
                 }
                 return;
             }
@@ -454,7 +460,7 @@ public class ProfileEngine : IDisposable
                 if (elapsed > HeartbeatTimeoutSeconds)
                 {
                     process.SendMessage((MessageType)_messageWindow.Handle, "Handle");
-                    instance.IncrementMissedHeartbeats();
+                    instance.MissedHeartbeats++;
                     _logger.LogWarning("Profile {Name} missed heartbeat ({Count}/{Max})",
                         instance.ProfileName, instance.MissedHeartbeats, MaxMissedHeartbeats);
 
@@ -475,16 +481,17 @@ public class ProfileEngine : IDisposable
     private async Task HandleCrashAsync(ProfileInstance instance)
     {
         var profileName = instance.ProfileName;
-        instance.IncrementCrashes();
+        instance.CrashCount++;
 
         var profile = await _profileRepository.GetByKeyAsync(profileName);
         if (profile != null)
         {
             profile.Crashes++;
             await _profileRepository.UpdateAsync(profile);
+            await NotifyProfileStateChangedAsync(profileName, includeProfile: true);
         }
 
-        instance.ClearKey();
+        instance.KeyName = null;
 
         if (instance.CrashCount < MaxCrashRetries)
         {
@@ -493,9 +500,9 @@ public class ProfileEngine : IDisposable
 
             await Task.Delay(TimeSpan.FromSeconds(5));
 
-            if (await instance.TransitionToAsync(ProfileState.Starting))
+            if (await instance.TransitionToAsync(RunState.Starting))
             {
-                NotifyProfileChanged(profileName);
+                await NotifyProfileStateChangedAsync(profileName);
                 _ = RunProfileBackgroundAsync(instance);
             }
         }
@@ -512,8 +519,8 @@ public class ProfileEngine : IDisposable
                 _logger.LogWarning("Disabled schedule for profile {Name} due to repeated crashes", profileName);
             }
 
-            await instance.TransitionToAsync(ProfileState.Stopped);
-            NotifyProfileChanged(profileName);
+            await instance.TransitionToAsync(RunState.Stopped);
+            await NotifyProfileStateChangedAsync(profileName, includeProfile: true);
         }
     }
 
@@ -543,7 +550,7 @@ public class ProfileEngine : IDisposable
             }
         }
 
-        instance.Rename(newName);
+        instance.ProfileName = newName;
         _instances[newName] = instance;
     }
 

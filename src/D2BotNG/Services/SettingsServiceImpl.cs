@@ -90,7 +90,7 @@ public class SettingsServiceImpl : SettingsService.SettingsServiceBase
                 {
                     if (p.KeyList != keyList.Name) return false;
                     var instance = _profileEngine.GetInstance(p.Name);
-                    return instance?.CurrentKeyName == key.Name;
+                    return instance?.KeyName == key.Name;
                 });
 
                 keyListWithUsage.Usage.Add(new KeyUsage

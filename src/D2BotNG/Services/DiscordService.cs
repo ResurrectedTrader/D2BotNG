@@ -540,6 +540,7 @@ public class DiscordService : BackgroundService
         {
             profile.ScheduleEnabled = enabled;
             await _profileRepository.UpdateAsync(profile);
+            await _profileEngine.NotifyProfileStateChangedAsync(profile.Name, includeProfile: true);
         }
 
         var actionText = enabled ? "enabled" : "disabled";
@@ -581,13 +582,12 @@ public class DiscordService : BackgroundService
         return profile != null ? [profile] : [];
     }
 
-    private static string GetStateEmoji(ProfileState? state) => state switch
+    private static string GetStateEmoji(RunState? state) => state switch
     {
-        ProfileState.Running => "🟢",
-        ProfileState.Starting => "🟡",
-        ProfileState.Stopping => "🟡",
-        ProfileState.Busy => "🎮",
-        ProfileState.Error => "🔴",
+        RunState.Running => "🟢",
+        RunState.Starting => "🟡",
+        RunState.Stopping => "🟡",
+        RunState.Error => "🔴",
         _ => "⚫"
     };
 

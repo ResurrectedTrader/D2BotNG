@@ -16,7 +16,9 @@ public abstract class FileRepository<TItem, TList>
     protected readonly List<TItem> Data = [];
     private volatile bool _loaded;
 
+    // ReSharper disable once StaticMemberInGenericType
     private static readonly JsonFormatter JsonFormatter = new(JsonFormatter.Settings.Default.WithIndentation());
+    // ReSharper disable once StaticMemberInGenericType
     private static readonly JsonParser JsonParser = new(JsonParser.Settings.Default.WithIgnoreUnknownFields(true));
 
     private readonly Paths _paths;

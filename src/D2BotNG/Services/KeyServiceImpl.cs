@@ -41,7 +41,7 @@ public class KeyServiceImpl : KeyService.KeyServiceBase
                 {
                     if (p.KeyList != keyList.Name) return false;
                     var instance = _profileEngine.GetInstance(p.Name);
-                    return instance?.CurrentKeyName == key.Name;
+                    return instance?.KeyName == key.Name;
                 });
 
                 keyListWithUsage.Usage.Add(new KeyUsage
@@ -73,7 +73,7 @@ public class KeyServiceImpl : KeyService.KeyServiceBase
             if (string.IsNullOrEmpty(newName))
             {
                 var instance = _profileEngine.GetInstance(profile.Name);
-                instance?.ClearKey();
+                if (instance != null) instance.KeyName = null;
             }
         }
 
@@ -114,17 +114,17 @@ public class KeyServiceImpl : KeyService.KeyServiceBase
         foreach (var profile in profiles.Where(p => p.KeyList == newKeyList.Name))
         {
             var instance = _profileEngine.GetInstance(profile.Name);
-            if (instance?.CurrentKeyName == null)
+            if (instance?.KeyName == null)
                 continue;
 
-            if (renames.TryGetValue(instance.CurrentKeyName, out var renamedTo))
+            if (renames.TryGetValue(instance.KeyName, out var renamedTo))
             {
-                instance.SetKey(renamedTo);
+                instance.KeyName = renamedTo;
                 affected = true;
             }
-            else if (deletes.Contains(instance.CurrentKeyName))
+            else if (deletes.Contains(instance.KeyName))
             {
-                instance.ClearKey();
+                instance.KeyName = null;
                 affected = true;
             }
         }

@@ -76,7 +76,7 @@ public class D2BSMessageHandler : BackgroundService
 
             case "updateStatus":
                 if (args.Length > 0)
-                    HandleUpdateStatus(msg.SenderHandle, args[0]);
+                    await HandleUpdateStatusAsync(msg.SenderHandle, args[0]);
                 break;
 
             case "updateRuns":
@@ -198,7 +198,7 @@ public class D2BSMessageHandler : BackgroundService
         {
             handle = (ulong)_messageWindow.Handle,
             profile = profile.Name,
-            mpq = instance.CurrentKeyName ?? "",
+            mpq = instance.KeyName ?? "",
             gameName = profile.GameName,
             gamePass = profile.GamePass,
             difficulty = profile.Difficulty.ToString(),
@@ -223,12 +223,12 @@ public class D2BSMessageHandler : BackgroundService
         instance?.UpdateHeartbeat();
     }
 
-    private void HandleUpdateStatus(nint senderHandle, string status)
+    private async Task HandleUpdateStatusAsync(nint senderHandle, string status)
     {
         var instance = _profileEngine.GetInstanceByHandle(senderHandle);
         if (instance == null) return;
-        instance.SetStatus(status);
-        _profileEngine.NotifyProfileChanged(instance.ProfileName);
+        instance.Status = status;
+        await _profileEngine.NotifyProfileStateChangedAsync(instance.ProfileName);
     }
 
     private async Task HandleUpdateRunsAsync(Profile profile)
@@ -237,21 +237,21 @@ public class D2BSMessageHandler : BackgroundService
         if (profile.RunsPerKey > 0)
             profile.KeyRuns++;
         await _profileRepository.UpdateAsync(profile);
-        _profileEngine.NotifyProfileChanged(profile.Name);
+        await _profileEngine.NotifyProfileStateChangedAsync(profile.Name, includeProfile: true);
     }
 
     private async Task HandleUpdateChickensAsync(Profile profile)
     {
         profile.Chickens++;
         await _profileRepository.UpdateAsync(profile);
-        _profileEngine.NotifyProfileChanged(profile.Name);
+        await _profileEngine.NotifyProfileStateChangedAsync(profile.Name, includeProfile: true);
     }
 
     private async Task HandleUpdateDeathsAsync(Profile profile)
     {
         profile.Deaths++;
         await _profileRepository.UpdateAsync(profile);
-        _profileEngine.NotifyProfileChanged(profile.Name);
+        await _profileEngine.NotifyProfileStateChangedAsync(profile.Name, includeProfile: true);
     }
 
     private void HandlePrintToConsole(string profileName, string[] args)
@@ -312,6 +312,7 @@ public class D2BSMessageHandler : BackgroundService
             profile.D2Path = args[6];
 
         await _profileRepository.UpdateAsync(profile);
+        await _profileEngine.NotifyProfileStateChangedAsync(profile.Name, includeProfile: true);
     }
 
     private static Difficulty ParseDifficulty(string value)
@@ -365,7 +366,7 @@ public class D2BSMessageHandler : BackgroundService
             profile.ScheduleEnabled = false;
             await _profileRepository.UpdateAsync(profile);
             _messageService.AddMessage(profileName, "Schedule disabled", MessageColor.ColorGold);
-            _profileEngine.NotifyProfileChanged(profileName);
+            await _profileEngine.NotifyProfileStateChangedAsync(profileName, includeProfile: true);
         }
     }
 
@@ -377,7 +378,7 @@ public class D2BSMessageHandler : BackgroundService
             profile.ScheduleEnabled = true;
             await _profileRepository.UpdateAsync(profile);
             _messageService.AddMessage(profileName, "Schedule enabled", MessageColor.ColorGreen);
-            _profileEngine.NotifyProfileChanged(profileName);
+            await _profileEngine.NotifyProfileStateChangedAsync(profileName, includeProfile: true);
         }
     }
 }

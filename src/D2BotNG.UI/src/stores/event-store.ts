@@ -7,7 +7,7 @@
 
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
-import type { Profile, ProfileStatus } from "@/generated/profiles_pb";
+import type { Profile, ProfileState } from "@/generated/profiles_pb";
 import type { KeyList } from "@/generated/keys_pb";
 import type { Schedule } from "@/generated/schedules_pb";
 import type { Item } from "@/generated/items_pb";
@@ -30,7 +30,7 @@ export interface MessageEntry {
 /** Profile data combined with status */
 export interface ProfileWithStatusData {
   profile: Profile;
-  status: ProfileStatus | undefined;
+  status: ProfileState | undefined;
 }
 
 /** Key list data combined with usage */
@@ -107,7 +107,7 @@ export const useEventStore = create<EventState>((set, get) => ({
           if (p.profile) {
             profiles.set(p.profile.name, {
               profile: p.profile,
-              status: p.status,
+              status: p,
             });
           }
         }
@@ -142,14 +142,14 @@ export const useEventStore = create<EventState>((set, get) => ({
       }
 
       // Profile events
-      case "profileStatus": {
-        const status = event.event.value;
+      case "profileState": {
+        const state = event.event.value;
         const profiles = new Map(get().profiles);
-        const existing = profiles.get(status.profileName);
+        const existing = profiles.get(state.profileName);
         if (existing) {
-          profiles.set(status.profileName, {
-            profile: existing.profile,
-            status: status,
+          profiles.set(state.profileName, {
+            profile: state.profile ?? existing.profile,
+            status: state,
           });
           set({ profiles });
         }
@@ -237,17 +237,17 @@ export function useProfile(
 }
 
 /** Get profile status by name */
-export function useProfileStatus(
+export function useProfileState(
   profileName: string,
-): ProfileStatus | undefined {
+): ProfileState | undefined {
   return useEventStore((state) => state.profiles.get(profileName)?.status);
 }
 
 /** Get all profile statuses as a map (memoized with shallow equality) */
-export function useAllProfileStatuses(): Record<string, ProfileStatus> {
+export function useAllProfileStates(): Record<string, ProfileState> {
   return useEventStore(
     useShallow((state) => {
-      const statuses: Record<string, ProfileStatus> = {};
+      const statuses: Record<string, ProfileState> = {};
       for (const [id, data] of state.profiles) {
         if (data.status) {
           statuses[id] = data.status;

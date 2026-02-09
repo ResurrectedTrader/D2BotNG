@@ -22,7 +22,7 @@ import {
 } from "@/hooks";
 import { useProfiles, useIsLoading } from "@/stores/event-store";
 import type { Profile } from "@/generated/profiles_pb";
-import { ProfileState } from "@/generated/common_pb";
+import { RunState } from "@/generated/common_pb";
 import { ProfilesTable } from "./ProfilesTable";
 import {
   PlayIcon,
@@ -87,11 +87,10 @@ export function ProfilesPage() {
         // If we have a selection, only include selected profiles
         if (hasSelection && !selectedProfiles.has(profile.name)) continue;
 
-        const isStopped = !status || status.state === ProfileState.STOPPED;
+        const isStopped = !status || status.state === RunState.STOPPED;
         const isRunning =
-          status?.state === ProfileState.STARTING ||
-          status?.state === ProfileState.RUNNING ||
-          status?.state === ProfileState.BUSY;
+          status?.state === RunState.STARTING ||
+          status?.state === RunState.RUNNING;
 
         if (isStopped) stopped.push(profile.name);
         if (isRunning) running.push(profile.name);

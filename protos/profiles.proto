@@ -82,20 +82,20 @@ message WindowLocation {
   int32 y = 2;
 }
 
-message ProfileStatus {
+message ProfileState {
   string profile_name = 1;
-  ProfileState state = 2;
+  RunState state = 2;
   string status = 3;  // Human-readable status text (state description or error message)
 
-  // Current key
-  string current_key = 20;
+  string key_name = 20;
 
   // Window visibility
   bool window_visible = 30;
-}
 
-message ProfileStatusUpdate {
-  repeated ProfileStatus statuses = 1;
+  // Full profile data. Always set in snapshots. In events, set only when persisted
+  // profile fields changed (e.g. stats, key rotation, settings). When absent in
+  // events, clients should retain their cached profile data keyed by profile_name.
+  optional Profile profile = 40;
 }
 
 message RestartRequest {

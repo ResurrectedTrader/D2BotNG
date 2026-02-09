@@ -60,13 +60,14 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
             await _profileRepository.DeleteAsync(request.OriginalName);
             await _profileRepository.CreateAsync(profile);
             _profileEngine.RenameProfile(request.OriginalName, profile.Name);
+            // Rename changes the profile set — need full snapshot
+            await _profileEngine.BroadcastProfilesSnapshotAsync();
         }
         else
         {
             await _profileRepository.UpdateAsync(profile);
+            await _profileEngine.NotifyProfileStateChangedAsync(profile.Name, includeProfile: true);
         }
-
-        await _profileEngine.BroadcastProfilesSnapshotAsync();
 
         return new Empty();
     }
@@ -123,7 +124,7 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
         return new Empty();
     }
 
-    public override Task<Empty> HideWindow(ProfileNames request, ServerCallContext context)
+    public override async Task<Empty> HideWindow(ProfileNames request, ServerCallContext context)
     {
         var peer = context.Peer;
         if (!IsLocalhost(peer))
@@ -133,9 +134,9 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
 
         foreach (var name in request.Names)
         {
-            _profileEngine.HideWindow(name);
+            await _profileEngine.HideWindowAsync(name);
         }
-        return Task.FromResult(new Empty());
+        return new Empty();
     }
 
     public override async Task<Empty> ResetStats(ProfileName request, ServerCallContext context)
@@ -178,7 +179,7 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
 
         profile.ScheduleEnabled = request.Enabled;
         await _profileRepository.UpdateAsync(profile);
-        await _profileEngine.BroadcastProfilesSnapshotAsync();
+        await _profileEngine.NotifyProfileStateChangedAsync(request.ProfileName, includeProfile: true);
 
         return new Empty();
     }

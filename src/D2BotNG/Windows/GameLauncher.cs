@@ -55,6 +55,7 @@ public class GameLauncher
             // Step 4: Get fresh Process object after DACL overwrite (we now have access)
             process.Dispose();
             process = Process.GetProcessById(processId);
+            process.EnableRaisingEvents = true;
 
             // Step 5: Apply patches
             await ApplyPatchesAsync(process);

@@ -51,7 +51,7 @@ message Event {
     SchedulesSnapshot schedules_snapshot = 12;
 
     // Profile events
-    ProfileStatus profile_status = 23;
+    ProfileState profile_state = 23;
 
     // Console messages
     Message message = 60;
@@ -70,12 +70,7 @@ message EntitiesChanged {}
 
 // Snapshot messages
 message ProfilesSnapshot {
-  repeated ProfileWithStatus profiles = 1;
-}
-
-message ProfileWithStatus {
-  Profile profile = 1;
-  ProfileStatus status = 2;
+  repeated ProfileState profiles = 1;
 }
 
 message KeyListsSnapshot {

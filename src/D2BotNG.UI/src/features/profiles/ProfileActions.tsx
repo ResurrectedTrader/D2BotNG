@@ -7,8 +7,8 @@
 import { useNavigate } from "react-router-dom";
 import { Dropdown, type DropdownItem } from "@/components/ui";
 import { useProfileActions, useIsLocalhost } from "@/hooks";
-import { ProfileState } from "@/generated/common_pb";
-import type { Profile, ProfileStatus } from "@/generated/profiles_pb";
+import { RunState } from "@/generated/common_pb";
+import type { Profile, ProfileState } from "@/generated/profiles_pb";
 import {
   PlayIcon,
   StopIcon,
@@ -27,7 +27,7 @@ import {
 
 export interface ProfileActionsProps {
   profile: Profile;
-  status?: ProfileStatus;
+  status?: ProfileState;
   onClone: (profile: Profile) => void;
   onDelete: (profile: Profile) => void;
 }
@@ -43,10 +43,9 @@ export function useProfileActionItems({
   const isLocalhost = useIsLocalhost();
 
   const isRunning =
-    status?.state === ProfileState.STARTING ||
-    status?.state === ProfileState.RUNNING ||
-    status?.state === ProfileState.BUSY;
-  const isStopped = !status || status.state === ProfileState.STOPPED;
+    status?.state === RunState.STARTING ||
+    status?.state === RunState.RUNNING;
+  const isStopped = !status || status.state === RunState.STOPPED;
   const windowVisible = status?.windowVisible ?? false;
   const scheduleEnabled = profile.scheduleEnabled;
 
@@ -118,7 +117,7 @@ export function useProfileActionItems({
       label: "Release Key",
       icon: LockOpenIcon,
       onClick: () => actions.releaseKey.mutate(profile.name),
-      disabled: !status?.currentKey,
+      disabled: !status?.keyName,
     },
     // Enable/Disable Schedule toggle
     scheduleEnabled

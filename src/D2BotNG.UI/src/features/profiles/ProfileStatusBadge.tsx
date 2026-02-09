@@ -5,27 +5,26 @@
  */
 
 import { useRef, useState, useEffect } from "react";
-import { ProfileState } from "@/generated/common_pb";
+import { RunState } from "@/generated/common_pb";
 import { Tooltip } from "@/components/ui";
 
 export interface ProfileStatusBadgeProps {
-  state: ProfileState;
+  state: RunState;
   status?: string;
 }
 
-const stateConfig: Record<ProfileState, { label: string; color: string }> = {
-  [ProfileState.STOPPED]: { label: "Stopped", color: "text-zinc-400" },
-  [ProfileState.STARTING]: { label: "Starting", color: "text-yellow-400" },
-  [ProfileState.RUNNING]: { label: "Running", color: "text-green-400" },
-  [ProfileState.BUSY]: { label: "Busy", color: "text-orange-400" },
-  [ProfileState.ERROR]: { label: "Error", color: "text-red-400" },
-  [ProfileState.STOPPING]: { label: "Stopping", color: "text-yellow-400" },
+const stateConfig: Record<RunState, { label: string; color: string }> = {
+  [RunState.STOPPED]: { label: "Stopped", color: "text-zinc-400" },
+  [RunState.STARTING]: { label: "Starting", color: "text-yellow-400" },
+  [RunState.RUNNING]: { label: "Running", color: "text-green-400" },
+  [RunState.ERROR]: { label: "Error", color: "text-red-400" },
+  [RunState.STOPPING]: { label: "Stopping", color: "text-yellow-400" },
 };
 
 export function ProfileStatusBadge({ state, status }: ProfileStatusBadgeProps) {
   const textRef = useRef<HTMLSpanElement>(null);
   const [isTruncated, setIsTruncated] = useState(false);
-  const config = stateConfig[state] ?? stateConfig[ProfileState.STOPPED];
+  const config = stateConfig[state] ?? stateConfig[RunState.STOPPED];
   const displayText = status || config.label;
 
   // Check if text is truncated
