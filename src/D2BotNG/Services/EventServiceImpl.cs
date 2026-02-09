@@ -48,7 +48,7 @@ public class EventServiceImpl : EventService.EventServiceBase
         try
         {
             // Send snapshots first
-            await SendSnapshotsAsync(responseStream);
+            await SendSnapshotsAsync(responseStream, context.CancellationToken);
 
             // Then stream events
             await foreach (var evt in _eventBroadcaster.Subscribe(clientId, context.CancellationToken))
@@ -71,7 +71,7 @@ public class EventServiceImpl : EventService.EventServiceBase
         }
     }
 
-    private async Task SendSnapshotsAsync(IServerStreamWriter<Event> responseStream)
+    private async Task SendSnapshotsAsync(IServerStreamWriter<Event> responseStream, CancellationToken ct)
     {
         var now = Timestamp.FromDateTime(DateTime.UtcNow);
 
@@ -81,7 +81,7 @@ public class EventServiceImpl : EventService.EventServiceBase
         {
             Timestamp = now,
             ProfilesSnapshot = profilesSnapshot
-        });
+        }, ct);
 
         // 2. KeyLists snapshot with usage
         var keyListsSnapshot = await BuildKeyListsSnapshotAsync();
@@ -89,7 +89,7 @@ public class EventServiceImpl : EventService.EventServiceBase
         {
             Timestamp = now,
             KeyListsSnapshot = keyListsSnapshot
-        });
+        }, ct);
 
         // 3. Schedules snapshot
         var schedulesSnapshot = await BuildSchedulesSnapshotAsync();
@@ -97,7 +97,7 @@ public class EventServiceImpl : EventService.EventServiceBase
         {
             Timestamp = now,
             SchedulesSnapshot = schedulesSnapshot
-        });
+        }, ct);
 
         // 4. Settings
         var settings = await _settingsRepository.GetAsync();
@@ -105,7 +105,7 @@ public class EventServiceImpl : EventService.EventServiceBase
         {
             Timestamp = now,
             Settings = settings
-        });
+        }, ct);
 
         // 5. Update status
         var updateStatus = _updateManager.GetStatus();
@@ -113,13 +113,13 @@ public class EventServiceImpl : EventService.EventServiceBase
         {
             Timestamp = now,
             UpdateStatus = updateStatus
-        });
+        }, ct);
 
         // 6. Console message history
-        await SendConsoleHistoryAsync(responseStream, now);
+        await SendConsoleHistoryAsync(responseStream, now, ct);
     }
 
-    private async Task SendConsoleHistoryAsync(IServerStreamWriter<Event> responseStream, Timestamp now)
+    private async Task SendConsoleHistoryAsync(IServerStreamWriter<Event> responseStream, Timestamp now, CancellationToken ct)
     {
         // Send all messages from history
         foreach (var msg in _messageService.GetHistory())
@@ -128,7 +128,7 @@ public class EventServiceImpl : EventService.EventServiceBase
             {
                 Timestamp = now,
                 Message = msg
-            });
+            }, ct);
         }
     }
 

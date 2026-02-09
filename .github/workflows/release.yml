@@ -164,18 +164,17 @@ jobs:
         with:
           sarif_file: inspect.sarif
 
-  release:
-    name: Release
+  prepare-release:
+    name: Prepare Release
     needs: [changes, build-ts, build-cs, format-ts, format-cs, lint-ts, lint-cs]
     if: always() && needs.changes.outputs.any_code_changed == 'true' && !contains(needs.*.result, 'failure')
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.x
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -191,29 +190,86 @@ jobs:
           PATCH=$((PATCH + 1))
           NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
           echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-      - name: Build UI
-        shell: bash
-        run: npm ci && npm run build
+      - run: npm ci
         working-directory: src/D2BotNG.UI
-      - name: Publish standalone
+      - run: npm run build
+        working-directory: src/D2BotNG.UI
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-ui
+          path: src/D2BotNG/wwwroot
+          retention-days: 1
+
+  publish-standalone:
+    name: Publish Standalone
+    needs: prepare-release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.x
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-ui
+          path: src/D2BotNG/wwwroot
+      - name: Publish
+        shell: bash
+        run: dotnet publish src/D2BotNG/D2BotNG.csproj -c Release --self-contained -p:SkipUIBuild=true -p:Version=${{ needs.prepare-release.outputs.version }} -p:BuildVariant=standalone
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exe-standalone
+          path: src/D2BotNG/bin/Release/net10.0-windows/win-x86/publish/D2BotNG.exe
+          retention-days: 1
+
+  publish-framework:
+    name: Publish Framework
+    needs: prepare-release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.x
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-ui
+          path: src/D2BotNG/wwwroot
+      - name: Publish
+        shell: bash
+        run: dotnet publish src/D2BotNG/D2BotNG.csproj -c Release --no-self-contained -p:SkipUIBuild=true -p:Version=${{ needs.prepare-release.outputs.version }} -p:BuildVariant=framework
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exe-framework
+          path: src/D2BotNG/bin/Release/net10.0-windows/win-x86/publish/D2BotNG.exe
+          retention-days: 1
+
+  release:
+    name: Release
+    needs: [prepare-release, publish-standalone, publish-framework]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Rename artifacts
         shell: bash
         run: |
-          dotnet publish src/D2BotNG/D2BotNG.csproj -c Release --self-contained -p:SkipUIBuild=true -p:Version=${{ steps.version.outputs.version }} -p:BuildVariant=standalone
-          cp src/D2BotNG/bin/Release/net10.0-windows/win-x86/publish/D2BotNG.exe D2BotNG-standalone.exe
-      - name: Publish framework
-        shell: bash
-        run: |
-          dotnet publish src/D2BotNG/D2BotNG.csproj -c Release --no-self-contained -p:SkipUIBuild=true -p:Version=${{ steps.version.outputs.version }} -p:BuildVariant=framework
-          cp src/D2BotNG/bin/Release/net10.0-windows/win-x86/publish/D2BotNG.exe D2BotNG-framework.exe
+          mv artifacts/exe-standalone/D2BotNG.exe D2BotNG-standalone.exe
+          mv artifacts/exe-framework/D2BotNG.exe D2BotNG-framework.exe
       - name: Create tag
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "v${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}"
+          git tag "v${{ needs.prepare-release.outputs.version }}"
+          git push origin "v${{ needs.prepare-release.outputs.version }}"
       - name: Create GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "v${{ steps.version.outputs.version }}" --generate-notes --title "v${{ steps.version.outputs.version }}" D2BotNG-standalone.exe D2BotNG-framework.exe
+        run: gh release create "v${{ needs.prepare-release.outputs.version }}" --generate-notes --title "v${{ needs.prepare-release.outputs.version }}" D2BotNG-standalone.exe D2BotNG-framework.exe
