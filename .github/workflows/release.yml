@@ -158,11 +158,6 @@ jobs:
             echo "::error::InspectCode found $count issue(s)"
             exit 1
           fi
-      - name: Upload SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: inspect.sarif
 
   prepare-release:
     name: Prepare Release

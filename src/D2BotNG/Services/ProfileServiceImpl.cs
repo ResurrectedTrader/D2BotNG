@@ -163,10 +163,10 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
         return new Empty();
     }
 
-    public override Task<Empty> ReleaseKey(ProfileName request, ServerCallContext context)
+    public override async Task<Empty> ReleaseKey(ProfileName request, ServerCallContext context)
     {
-        _profileEngine.ReleaseKey(request.Name);
-        return Task.FromResult(new Empty());
+        await _profileEngine.ReleaseKeyAsync(request.Name);
+        return new Empty();
     }
 
     public override async Task<Empty> SetScheduleEnabled(SetScheduleEnabledRequest request, ServerCallContext context)

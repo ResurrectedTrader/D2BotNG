@@ -175,9 +175,8 @@ public class ProfileEngine : IDisposable
 
         await instance.TransitionToAsync(RunState.Stopped);
         instance.Status = "";
-        await NotifyProfileStateChangedAsync(profileName);
-
         instance.KeyName = null;
+        await NotifyProfileStateChangedAsync(profileName);
 
         return true;
     }
@@ -262,15 +261,17 @@ public class ProfileEngine : IDisposable
         }
 
         instance.KeyName = key.Name;
+        await NotifyProfileStateChangedAsync(profileName);
 
         return true;
     }
 
-    public void ReleaseKey(string profileName)
+    public async Task ReleaseKeyAsync(string profileName)
     {
         if (_instances.TryGetValue(profileName, out var instance))
         {
             instance.KeyName = null;
+            await NotifyProfileStateChangedAsync(profileName);
         }
     }
 
