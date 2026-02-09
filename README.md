@@ -4,19 +4,6 @@
 
 A modern rewrite of D2Bot - a Diablo II bot manager. Built with .NET 10 and React, hopes to provide full D2BS compatibility with a clean web-based interface.
 
-## Features
-
-- **Web UI** - React frontend with Tailwind CSS, dark Diablo-inspired theme
-- **Remote Access** - Password-protected web interface accessible from anywhere
-- **Real-time Updates** - gRPC streaming for live profile status, console output, item drops
-- **Item Rendering** - DC6 sprite rendering with proper D2 color palettes and socket overlays
-- **Discord Integration** - Slash commands for remote control (/list, /start, /stop, /restart, /mule, /schedule)
-- **Key Management** - Visual dashboard with round-robin rotation, usage tracking, hold/release
-- **Scheduling** - Automated profile scheduling with time-based rules (supports overnight ranges)
-- **Drag & Drop** - Reorder profiles with drag-and-drop
-- **Dual Mode** - GUI (WebView2 desktop app) or headless server
-- **Console** - Real-time console output with source filtering, regex search, D2 color codes
-
 ## Screenshots
 
 ![Profiles](images/profiles.png)
@@ -67,6 +54,19 @@ Legacy D2Bot data files (JSONL format in `data/`) are automatically migrated to 
 - **Format change** - Legacy JSONL (one JSON object per line) is converted to protobuf JSON (single document with typed wrapper messages)
 
 No manual steps are required. To force re-migration of a specific file, delete it from `data/ng/` and restart.
+
+## Features
+
+- **Web UI** - React frontend with Tailwind CSS, dark Diablo-inspired theme
+- **Remote Access** - Password-protected web interface accessible from anywhere
+- **Real-time Updates** - gRPC streaming for live profile status, console output, item drops
+- **Item Rendering** - DC6 sprite rendering with proper D2 color palettes and socket overlays
+- **Discord Integration** - Slash commands for remote control (/list, /start, /stop, /restart, /mule, /schedule)
+- **Key Management** - Visual dashboard with round-robin rotation, usage tracking, hold/release
+- **Scheduling** - Automated profile scheduling with time-based rules (supports overnight ranges)
+- **Drag & Drop** - Reorder profiles with drag-and-drop
+- **Dual Mode** - GUI (WebView2 desktop app) or headless server
+- **Console** - Real-time console output with source filtering, regex search, D2 color codes
 
 ### Remote Access
 
