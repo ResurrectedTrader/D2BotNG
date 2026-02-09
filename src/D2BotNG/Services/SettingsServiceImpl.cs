@@ -67,47 +67,11 @@ public class SettingsServiceImpl : SettingsService.SettingsServiceBase
         if (basePathChanged)
         {
             await _profileEngine.BroadcastProfilesSnapshotAsync();
-            await BroadcastKeyListsSnapshotAsync();
+            await _profileEngine.BroadcastKeyListsSnapshotAsync();
             await BroadcastSchedulesSnapshotAsync();
         }
 
         return new Empty();
-    }
-
-    private async Task BroadcastKeyListsSnapshotAsync()
-    {
-        var snapshot = new KeyListsSnapshot();
-        var keyLists = await _keyListRepository.GetAllAsync();
-        var profiles = await _profileRepository.GetAllAsync();
-
-        foreach (var keyList in keyLists)
-        {
-            var keyListWithUsage = new KeyListWithUsage { KeyList = keyList };
-
-            foreach (var key in keyList.Keys)
-            {
-                var profileUsingKey = profiles.FirstOrDefault(p =>
-                {
-                    if (p.KeyList != keyList.Name) return false;
-                    var instance = _profileEngine.GetInstance(p.Name);
-                    return instance?.KeyName == key.Name;
-                });
-
-                keyListWithUsage.Usage.Add(new KeyUsage
-                {
-                    KeyName = key.Name,
-                    ProfileName = profileUsingKey?.Name ?? ""
-                });
-            }
-
-            snapshot.KeyLists.Add(keyListWithUsage);
-        }
-
-        _eventBroadcaster.Broadcast(new Event
-        {
-            Timestamp = Timestamp.FromDateTime(DateTime.UtcNow),
-            KeyListsSnapshot = snapshot
-        });
     }
 
     private async Task BroadcastSchedulesSnapshotAsync()

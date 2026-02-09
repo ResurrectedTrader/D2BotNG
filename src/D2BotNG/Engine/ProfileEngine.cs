@@ -177,6 +177,7 @@ public class ProfileEngine : IDisposable
         instance.Status = "";
         instance.KeyName = null;
         await NotifyProfileStateChangedAsync(profileName);
+        await BroadcastKeyListsSnapshotAsync();
 
         return true;
     }
@@ -262,6 +263,7 @@ public class ProfileEngine : IDisposable
 
         instance.KeyName = key.Name;
         await NotifyProfileStateChangedAsync(profileName);
+        await BroadcastKeyListsSnapshotAsync();
 
         return true;
     }
@@ -272,6 +274,7 @@ public class ProfileEngine : IDisposable
         {
             instance.KeyName = null;
             await NotifyProfileStateChangedAsync(profileName);
+            await BroadcastKeyListsSnapshotAsync();
         }
     }
 
@@ -326,6 +329,47 @@ public class ProfileEngine : IDisposable
         });
     }
 
+    public async Task<KeyListsSnapshot> BuildKeyListsSnapshotAsync()
+    {
+        var snapshot = new KeyListsSnapshot();
+        var keyLists = await _keyListRepository.GetAllAsync();
+        var profiles = await _profileRepository.GetAllAsync();
+
+        foreach (var keyList in keyLists)
+        {
+            var keyListWithUsage = new KeyListWithUsage { KeyList = keyList };
+
+            foreach (var key in keyList.Keys)
+            {
+                var profileUsingKey = profiles.FirstOrDefault(p =>
+                {
+                    if (p.KeyList != keyList.Name) return false;
+                    var instance = GetInstance(p.Name);
+                    return instance?.KeyName == key.Name;
+                });
+
+                keyListWithUsage.Usage.Add(new KeyUsage
+                {
+                    KeyName = key.Name,
+                    ProfileName = profileUsingKey?.Name ?? ""
+                });
+            }
+
+            snapshot.KeyLists.Add(keyListWithUsage);
+        }
+
+        return snapshot;
+    }
+
+    public async Task BroadcastKeyListsSnapshotAsync()
+    {
+        _eventBroadcaster.Broadcast(new Event
+        {
+            Timestamp = Timestamp.FromDateTime(DateTime.UtcNow),
+            KeyListsSnapshot = await BuildKeyListsSnapshotAsync()
+        });
+    }
+
     private async Task RunProfileAsync(ProfileInstance instance)
     {
         var profileName = instance.ProfileName;
@@ -355,6 +399,7 @@ public class ProfileEngine : IDisposable
                 }
 
                 instance.KeyName = acquiredKey.Name;
+                await BroadcastKeyListsSnapshotAsync();
             }
 
             // Get current key info for command line
@@ -493,6 +538,7 @@ public class ProfileEngine : IDisposable
         }
 
         instance.KeyName = null;
+        await BroadcastKeyListsSnapshotAsync();
 
         if (instance.CrashCount < MaxCrashRetries)
         {
