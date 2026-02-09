@@ -262,6 +262,7 @@ rd /s /q ""{tempDir}"" 2>nul
 
             UpdateStatusAndBroadcast(s => s.State = UpdateState.Installing);
 
+            // Stop profiles to prevent them being orphaned when the process dies.
             _logger.LogInformation("Stopping all profiles before update");
             await _profileEngine.StopAllAsync();
 

@@ -10,8 +10,6 @@ public class EventServiceImpl : EventService.EventServiceBase
 {
     private readonly ILogger<EventServiceImpl> _logger;
     private readonly EventBroadcaster _eventBroadcaster;
-    private readonly ProfileRepository _profileRepository;
-    private readonly KeyListRepository _keyListRepository;
     private readonly ScheduleRepository _scheduleRepository;
     private readonly SettingsRepository _settingsRepository;
     private readonly ProfileEngine _profileEngine;
@@ -21,8 +19,6 @@ public class EventServiceImpl : EventService.EventServiceBase
     public EventServiceImpl(
         ILogger<EventServiceImpl> logger,
         EventBroadcaster eventBroadcaster,
-        ProfileRepository profileRepository,
-        KeyListRepository keyListRepository,
         ScheduleRepository scheduleRepository,
         SettingsRepository settingsRepository,
         ProfileEngine profileEngine,
@@ -31,8 +27,6 @@ public class EventServiceImpl : EventService.EventServiceBase
     {
         _logger = logger;
         _eventBroadcaster = eventBroadcaster;
-        _profileRepository = profileRepository;
-        _keyListRepository = keyListRepository;
         _scheduleRepository = scheduleRepository;
         _settingsRepository = settingsRepository;
         _profileEngine = profileEngine;
@@ -83,7 +77,7 @@ public class EventServiceImpl : EventService.EventServiceBase
         }, ct);
 
         // 2. KeyLists snapshot with usage
-        var keyListsSnapshot = await BuildKeyListsSnapshotAsync();
+        var keyListsSnapshot = await _profileEngine.BuildKeyListsSnapshotAsync();
         await responseStream.WriteAsync(new Event
         {
             Timestamp = now,
@@ -131,41 +125,6 @@ public class EventServiceImpl : EventService.EventServiceBase
         }
     }
 
-    private async Task<KeyListsSnapshot> BuildKeyListsSnapshotAsync()
-    {
-        var snapshot = new KeyListsSnapshot();
-        var keyLists = await _keyListRepository.GetAllAsync();
-        var profiles = await _profileRepository.GetAllAsync();
-
-        foreach (var keyList in keyLists)
-        {
-            var keyListWithUsage = new KeyListWithUsage
-            {
-                KeyList = keyList
-            };
-
-            // Build usage info for each key
-            foreach (var key in keyList.Keys)
-            {
-                var profileUsingKey = profiles.FirstOrDefault(p =>
-                {
-                    if (p.KeyList != keyList.Name) return false;
-                    var instance = _profileEngine.GetInstance(p.Name);
-                    return instance?.KeyName == key.Name;
-                });
-
-                keyListWithUsage.Usage.Add(new KeyUsage
-                {
-                    KeyName = key.Name,
-                    ProfileName = profileUsingKey?.Name ?? ""
-                });
-            }
-
-            snapshot.KeyLists.Add(keyListWithUsage);
-        }
-
-        return snapshot;
-    }
 
     private async Task<SchedulesSnapshot> BuildSchedulesSnapshotAsync()
     {

@@ -11,54 +11,15 @@ public class KeyServiceImpl : KeyService.KeyServiceBase
     private readonly KeyListRepository _keyListRepository;
     private readonly ProfileRepository _profileRepository;
     private readonly ProfileEngine _profileEngine;
-    private readonly EventBroadcaster _eventBroadcaster;
 
     public KeyServiceImpl(
         KeyListRepository keyListRepository,
         ProfileRepository profileRepository,
-        ProfileEngine profileEngine,
-        EventBroadcaster eventBroadcaster)
+        ProfileEngine profileEngine)
     {
         _keyListRepository = keyListRepository;
         _profileRepository = profileRepository;
         _profileEngine = profileEngine;
-        _eventBroadcaster = eventBroadcaster;
-    }
-
-    private async Task BroadcastKeyListsSnapshotAsync()
-    {
-        var snapshot = new KeyListsSnapshot();
-        var keyLists = await _keyListRepository.GetAllAsync();
-        var profiles = await _profileRepository.GetAllAsync();
-
-        foreach (var keyList in keyLists)
-        {
-            var keyListWithUsage = new KeyListWithUsage { KeyList = keyList };
-
-            foreach (var key in keyList.Keys)
-            {
-                var profileUsingKey = profiles.FirstOrDefault(p =>
-                {
-                    if (p.KeyList != keyList.Name) return false;
-                    var instance = _profileEngine.GetInstance(p.Name);
-                    return instance?.KeyName == key.Name;
-                });
-
-                keyListWithUsage.Usage.Add(new KeyUsage
-                {
-                    KeyName = key.Name,
-                    ProfileName = profileUsingKey?.Name ?? ""
-                });
-            }
-
-            snapshot.KeyLists.Add(keyListWithUsage);
-        }
-
-        _eventBroadcaster.Broadcast(new Event
-        {
-            Timestamp = Timestamp.FromDateTime(DateTime.UtcNow),
-            KeyListsSnapshot = snapshot
-        });
     }
 
     private async Task PropagateKeyListChangeAsync(string oldName, string? newName)
@@ -136,7 +97,7 @@ public class KeyServiceImpl : KeyService.KeyServiceBase
     public override async Task<Empty> CreateKeyList(KeyList request, ServerCallContext context)
     {
         await _keyListRepository.CreateAsync(request);
-        await BroadcastKeyListsSnapshotAsync();
+        await _profileEngine.BroadcastKeyListsSnapshotAsync();
         return new Empty();
     }
 
@@ -164,7 +125,7 @@ public class KeyServiceImpl : KeyService.KeyServiceBase
 
         await PropagateCDKeyChangesAsync(existing, keyList);
 
-        await BroadcastKeyListsSnapshotAsync();
+        await _profileEngine.BroadcastKeyListsSnapshotAsync();
         return new Empty();
     }
 
@@ -172,7 +133,7 @@ public class KeyServiceImpl : KeyService.KeyServiceBase
     {
         await _keyListRepository.DeleteAsync(request.Name);
         await PropagateKeyListChangeAsync(request.Name, null);
-        await BroadcastKeyListsSnapshotAsync();
+        await _profileEngine.BroadcastKeyListsSnapshotAsync();
         return new Empty();
     }
 
@@ -192,7 +153,7 @@ public class KeyServiceImpl : KeyService.KeyServiceBase
 
         key.Held = true;
         await _keyListRepository.UpdateAsync(keyList);
-        await BroadcastKeyListsSnapshotAsync();
+        await _profileEngine.BroadcastKeyListsSnapshotAsync();
         return new Empty();
     }
 
@@ -212,7 +173,7 @@ public class KeyServiceImpl : KeyService.KeyServiceBase
 
         key.Held = false;
         await _keyListRepository.UpdateAsync(keyList);
-        await BroadcastKeyListsSnapshotAsync();
+        await _profileEngine.BroadcastKeyListsSnapshotAsync();
         return new Empty();
     }
 }
