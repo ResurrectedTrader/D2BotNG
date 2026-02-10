@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using D2BotNG.Core.Protos;
 using Google.Protobuf;
+using JetBrains.Annotations;
 
 namespace D2BotNG.Data.LegacyModels;
 
@@ -8,6 +9,7 @@ namespace D2BotNG.Data.LegacyModels;
 /// Represents the patch format used by the legacy D2Bot framework.
 /// Use ToModern() to convert to the protobuf Patch type.
 /// </summary>
+[UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
 public class LegacyPatch
 {
     [JsonPropertyName("Name")]

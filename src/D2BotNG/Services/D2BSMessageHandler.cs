@@ -208,7 +208,7 @@ public class D2BSMessageHandler : BackgroundService
             switchKeys = !string.IsNullOrEmpty(profile.KeyList) && ((await _keyListRepository.GetByKeyAsync(profile.KeyList))?.Keys.Count ?? 0) > 1 && profile.SwitchKeysOnRestart,
             rdBlocker = false,
         };
-        instance.Process?.SendMessage(MessageType.GameInfo, JsonSerializer.Serialize(gameInfo), _logger);
+        instance.Process?.SendMessage(MessageType.GameInfo, JsonSerializer.Serialize(gameInfo));
     }
 
     private async Task<Profile?> FindProfileByHandleAsync(nint handle)

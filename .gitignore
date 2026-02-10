@@ -15,6 +15,7 @@ npm-debug.log*
 .claude
 docs/plans
 tmp/
+.worktrees/
 
 # IDE
 .idea/

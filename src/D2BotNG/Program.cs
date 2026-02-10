@@ -202,9 +202,7 @@ internal static class Program
         // Add message service (centralized console messages)
         services.AddSingleton<MessageService>();
 
-        // Add engines - ProfileEngine delegates to KeyManager and ProfileSnapshotService
-        services.AddSingleton<KeyManager>();
-        services.AddSingleton<ProfileSnapshotService>();
+        // Add engines
         services.AddSingleton<ProfileEngine>();
         services.AddSingleton<ScheduleEngine>();
 
