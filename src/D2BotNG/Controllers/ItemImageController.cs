@@ -54,28 +54,7 @@ public class ItemImageController : ControllerBase
     {
         try
         {
-            var item = new Item
-            {
-                Code = request.Code,
-                Name = request.Name ?? "",
-                Description = request.Description ?? "",
-                ItemColor = (uint)request.Color,
-                TextColor = (uint)request.TextColor
-            };
-
-            if (request.Sockets != null)
-            {
-                foreach (var socket in request.Sockets)
-                {
-                    item.Sockets.Add(new Item
-                    {
-                        Code = socket.Code,
-                        ItemColor = (uint)socket.Color,
-                        Description = ""
-                    });
-                }
-            }
-
+            var item = ConvertRequestToItem(request);
             var pngData = _itemRenderer.RenderItemWithSockets(item);
             return File(pngData, "image/png");
         }
@@ -94,28 +73,7 @@ public class ItemImageController : ControllerBase
     {
         try
         {
-            var item = new Item
-            {
-                Code = request.Code,
-                Name = request.Name ?? "",
-                Description = request.Description ?? "",
-                ItemColor = (uint)request.Color,
-                TextColor = (uint)request.TextColor
-            };
-
-            if (request.Sockets != null)
-            {
-                foreach (var socket in request.Sockets)
-                {
-                    item.Sockets.Add(new Item
-                    {
-                        Code = socket.Code,
-                        ItemColor = (uint)socket.Color,
-                        Description = ""
-                    });
-                }
-            }
-
+            var item = ConvertRequestToItem(request);
             var pngData = _itemRenderer.RenderItemTooltip(item);
             return File(pngData, "image/png");
         }
@@ -124,6 +82,33 @@ public class ItemImageController : ControllerBase
             _logger.LogError(ex, "Failed to render tooltip");
             return BadRequest(new { error = ex.Message });
         }
+    }
+
+    private static Item ConvertRequestToItem(ItemRenderRequest request)
+    {
+        var item = new Item
+        {
+            Code = request.Code,
+            Name = request.Name ?? "",
+            Description = request.Description ?? "",
+            ItemColor = (uint)request.Color,
+            TextColor = (uint)request.TextColor
+        };
+
+        if (request.Sockets != null)
+        {
+            foreach (var socket in request.Sockets)
+            {
+                item.Sockets.Add(new Item
+                {
+                    Code = socket.Code,
+                    ItemColor = (uint)socket.Color,
+                    Description = ""
+                });
+            }
+        }
+
+        return item;
     }
 }
 

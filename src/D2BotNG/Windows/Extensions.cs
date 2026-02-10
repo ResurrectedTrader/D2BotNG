@@ -1,7 +1,6 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
-using Serilog;
 using static D2BotNG.Windows.NativeMethods;
 using static D2BotNG.Windows.NativeTypes;
 
@@ -9,9 +8,9 @@ namespace D2BotNG.Windows;
 
 public static class Extensions
 {
-    public static bool SendMessage(this Process proc, MessageType messageType, string data)
+    public static bool SendMessage(this Process proc, MessageType messageType, string data, ILogger logger)
     {
-        Log.Debug("Sending message: {messageType} {data}", messageType, data);
+        logger.LogDebug("Sending message: {messageType} {data}", messageType, data);
         if (proc.MainWindowHandle == 0)
             return false;
 
@@ -46,7 +45,7 @@ public static class Extensions
 
                 if (result == 0)
                 {
-                    Log.Warning("Failed to send WM_COPYDATA to {ProcMainWindowHandle}", proc.MainWindowHandle);
+                    logger.LogWarning("Failed to send WM_COPYDATA to {ProcMainWindowHandle}", proc.MainWindowHandle);
                     return false;
                 }
 

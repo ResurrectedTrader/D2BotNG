@@ -2,9 +2,9 @@ using System.Collections.Concurrent;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using D2BotNG.Core.Protos;
+using D2BotNG.Utilities;
 
 namespace D2BotNG.Rendering;
 
@@ -13,6 +13,17 @@ namespace D2BotNG.Rendering;
 /// </summary>
 public class ItemRenderer
 {
+    private const int GridCellSize = 30;
+    private const int SingleWidthThreshold = 37;
+    private const int TwoRowHeightThreshold = 65;
+    private const int ThreeRowHeightThreshold = 95;
+    private const int TextLineHeight = 16;
+    private const int SocketSpacing = 14;
+    private const int TooltipHeaderHeight = 14;
+    private const int TooltipTextPadding = 14;
+    private const int TooltipMinWidth = 100;
+    private const int TooltipBottomPadding = 6;
+
     private readonly ILogger<ItemRenderer> _logger;
     private readonly PaletteManager _paletteManager;
     private readonly ConcurrentDictionary<string, byte[]> _dc6Cache = new();
@@ -46,10 +57,7 @@ public class ItemRenderer
     {
         try
         {
-            var assembly = Assembly.GetExecutingAssembly();
-            var resourceName = "D2BotNG.Resources.exocet-blizzard-light.ttf";
-
-            using var stream = assembly.GetManifestResourceStream(resourceName);
+            using var stream = EmbeddedResourceLoader.LoadStream("D2BotNG.Resources.exocet-blizzard-light.ttf");
             if (stream == null) return;
 
             var fontData = new byte[stream.Length];
@@ -66,9 +74,9 @@ public class ItemRenderer
                 handle.Free();
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Font loading failed, will fall back to system fonts
+            _logger.LogDebug(ex, "Failed to load Exocet font, falling back to system fonts");
         }
     }
 
@@ -111,8 +119,8 @@ public class ItemRenderer
         var frame = GetItemFrame(item.Code);
         var gridSize = CalculateGridSize(frame.Width, frame.Height);
 
-        int width = gridSize.X * 30 - 1;
-        int height = gridSize.Y * 30 - 1;
+        int width = gridSize.X * GridCellSize - 1;
+        int height = gridSize.Y * GridCellSize - 1;
 
         using var bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
         using var graphics = Graphics.FromImage(bitmap);
@@ -154,18 +162,18 @@ public class ItemRenderer
         bool hasHeader = showHeader && !string.IsNullOrEmpty(item.Header);
         if (hasHeader)
         {
-            headerHeight = 14; // Space for header text
+            headerHeight = TooltipHeaderHeight;
         }
 
         // Calculate dimensions
         int textWidth = CalculateTextWidth(lines, fontFamily);
-        int textHeight = lines.Length * 16;
+        int textHeight = lines.Length * TextLineHeight;
         int imageTop = GetImageTop(gridSize.Y);
 
         // Include header width in calculation if present
         int headerWidth = hasHeader ? MeasureHeaderWidth(item.Header) : 0;
-        int totalWidth = Math.Max(Math.Max(textWidth + 14, headerWidth + 8), 100);
-        int totalHeight = textHeight + imageTop + 6 + headerHeight;
+        int totalWidth = Math.Max(Math.Max(textWidth + TooltipTextPadding, headerWidth + 8), TooltipMinWidth);
+        int totalHeight = textHeight + imageTop + TooltipBottomPadding + headerHeight;
 
         using var bitmap = new Bitmap(totalWidth, totalHeight, PixelFormat.Format32bppArgb);
         using var graphics = Graphics.FromImage(bitmap);
@@ -306,24 +314,13 @@ public class ItemRenderer
 
     private static byte[] LoadDc6Resource(string code)
     {
-        var assembly = Assembly.GetExecutingAssembly();
-        var resourceName = $"D2BotNG.wwwroot.assets.rendering.dc6.{code}.dc6";
-
-        using var stream = assembly.GetManifestResourceStream(resourceName);
-        if (stream == null)
-        {
-            throw new InvalidOperationException($"DC6 resource not found: {code}");
-        }
-
-        using var ms = new MemoryStream();
-        stream.CopyTo(ms);
-        return ms.ToArray();
+        return EmbeddedResourceLoader.LoadBytes($"D2BotNG.wwwroot.assets.rendering.dc6.{code}.dc6");
     }
 
     private static (int X, int Y) CalculateGridSize(int width, int height)
     {
-        int x = width < 37 ? 1 : 2;
-        int y = height < 30 ? 1 : (height < 65 ? 2 : (height < 95 ? 3 : 4));
+        int x = width < SingleWidthThreshold ? 1 : 2;
+        int y = height < GridCellSize ? 1 : (height < TwoRowHeightThreshold ? 2 : (height < ThreeRowHeightThreshold ? 3 : 4));
         return (x, y);
     }
 
@@ -343,47 +340,35 @@ public class ItemRenderer
 
     private void RenderSockets(Graphics graphics, Item item, (int X, int Y) gridSize, int baseX)
     {
-        const int spacing = 14;
-        int socketOffsetY = -1;
+        const int offsetY = -1;
 
-        // Calculate socket positions based on item grid size
-        var positions = GetSocketPositions(item.Sockets.Count, gridSize, baseX, spacing, socketOffsetY);
+        int x1 = baseX;
+        int y1 = 2;
+        int y2 = y1 + SocketSpacing * 2 + 1;
+        int y3 = y2 + SocketSpacing * 2 + 1;
+        int y4 = y3 + SocketSpacing * 2 + 1;
 
-        for (int i = 0; i < item.Sockets.Count && i < positions.Count; i++)
-        {
-            var socketItem = item.Sockets[i];
-            using var socketBitmap = RenderItemBitmap(new Item
-            {
-                Code = socketItem.Code,
-                ItemColor = socketItem.ItemColor,
-                Description = ""
-            }, Color.Transparent);
-
-            var pos = positions[i];
-            int drawX = socketItem.Code == "gemsocket" ? pos.X - 1 : pos.X;
-            int drawY = socketItem.Code == "gemsocket" ? pos.Y + 1 : pos.Y;
-            graphics.DrawImage(socketBitmap, drawX, drawY);
-        }
+        var positions = CalculateSocketPositions(item.Sockets.Count, gridSize, x1, SocketSpacing, offsetY, y1, y2, y3, y4);
+        DrawSockets(graphics, item, positions);
     }
 
     private void RenderSocketsOnTooltip(Graphics graphics, Item item, (int X, int Y) gridSize, int itemX,
         int headerOffset = 0)
     {
-        const int spacing = 14;
-        int socketOffsetY = -1;
+        const int offsetY = -1;
 
-        // Tooltip socket positions are slightly different
         int x1 = itemX + 1;
-        int x2 = x1 + spacing;
-        int x3 = x2 + spacing;
         int y1 = 5 + headerOffset;
         int y2 = 34 + headerOffset;
         int y3 = 63 + headerOffset;
         int y4 = 92 + headerOffset;
 
-        var positions = GetTooltipSocketPositions(item.Sockets.Count, gridSize, x1, x2, x3, y1, y2, y3, y4, spacing,
-            socketOffsetY);
+        var positions = CalculateSocketPositions(item.Sockets.Count, gridSize, x1, SocketSpacing, offsetY, y1, y2, y3, y4);
+        DrawSockets(graphics, item, positions);
+    }
 
+    private void DrawSockets(Graphics graphics, Item item, List<Point> positions)
+    {
         for (int i = 0; i < item.Sockets.Count && i < positions.Count; i++)
         {
             var socketItem = item.Sockets[i];
@@ -401,21 +386,15 @@ public class ItemRenderer
         }
     }
 
-    private static List<Point> GetSocketPositions(int count, (int X, int Y) gridSize, int baseX, int spacing,
-        int offsetY)
+    private static List<Point> CalculateSocketPositions(int count, (int X, int Y) gridSize,
+        int baseX, int spacing, int offsetY, int y1, int y2, int y3, int y4)
     {
         var positions = new List<Point>();
 
         int x1 = baseX;
         int x2 = x1 + spacing;
         int x3 = x2 + spacing;
-        int y1 = 2;
-        int y2 = y1 + spacing * 2 + 1;
-        int y3 = y2 + spacing * 2 + 1;
-        int y4 = y3 + spacing * 2 + 1;
 
-        // Position patterns based on socket count and item dimensions
-        // (These match the original D2Bot implementation)
         switch (count)
         {
             case 1:
@@ -424,147 +403,6 @@ public class ItemRenderer
                     : gridSize.Y == 3
                         ? new Point(gridSize.X == 1 ? x1 : x2, y2 + offsetY)
                         : new Point(gridSize.X == 1 ? x1 : x2, y2 + spacing + offsetY));
-                break;
-            case 2:
-                if (gridSize.Y == 2)
-                {
-                    positions.Add(new Point(gridSize.X == 1 ? x1 : x2, y1 + offsetY));
-                    positions.Add(new Point(gridSize.X == 1 ? x1 : x2, y2 + offsetY));
-                }
-                else if (gridSize.Y == 3)
-                {
-                    positions.Add(new Point(gridSize.X == 1 ? x1 : x2, y1 + spacing + offsetY));
-                    positions.Add(new Point(gridSize.X == 1 ? x1 : x2, y2 + spacing + offsetY));
-                }
-                else
-                {
-                    positions.Add(new Point(gridSize.X == 1 ? x1 : x2, y1 + spacing + offsetY));
-                    positions.Add(new Point(gridSize.X == 1 ? x1 : x2, y3 + spacing + offsetY));
-                }
-
-                break;
-            // Continue for 3-6 sockets...
-            default:
-                // Add positions for remaining socket counts
-                AddRemainingSocketPositions(positions, count, gridSize, x1, x2, x3, y1, y2, y3, y4, spacing, offsetY);
-                break;
-        }
-
-        return positions;
-    }
-
-    private static void AddRemainingSocketPositions(List<Point> positions, int count, (int X, int Y) gridSize,
-        int x1, int x2, int x3, int y1, int y2, int y3, int y4, int spacing, int offsetY)
-    {
-        switch (count)
-        {
-            case 3:
-                if (gridSize.Y == 2)
-                {
-                    positions.Add(new Point(x1, y1 + offsetY));
-                    positions.Add(new Point(x3, y1 + offsetY));
-                    positions.Add(new Point(x2, y2 + offsetY));
-                }
-                else if (gridSize.Y == 3)
-                {
-                    int x = gridSize.X == 1 ? x1 : x2;
-                    positions.Add(new Point(x, y1 + offsetY));
-                    positions.Add(new Point(x, y2 + offsetY));
-                    positions.Add(new Point(x, y3 + offsetY));
-                }
-                else
-                {
-                    int x = gridSize.X == 1 ? x1 : x2;
-                    positions.Add(new Point(x, y1 + spacing + offsetY));
-                    positions.Add(new Point(x, y2 + spacing + offsetY));
-                    positions.Add(new Point(x, y3 + spacing + offsetY));
-                }
-
-                break;
-            case 4:
-                if (gridSize.Y == 3)
-                {
-                    positions.Add(new Point(x1, y1 + spacing + offsetY));
-                    positions.Add(new Point(x3, y1 + spacing + offsetY));
-                    positions.Add(new Point(x1, y2 + spacing + offsetY));
-                    positions.Add(new Point(x3, y2 + spacing + offsetY));
-                }
-                else if (gridSize.Y == 2)
-                {
-                    positions.Add(new Point(x1, y1 + offsetY));
-                    positions.Add(new Point(x3, y1 + offsetY));
-                    positions.Add(new Point(x1, y2 + offsetY));
-                    positions.Add(new Point(x3, y2 + offsetY));
-                }
-                else
-                {
-                    int x = gridSize.X == 1 ? x1 : x2;
-                    positions.Add(new Point(x, y1 + offsetY));
-                    positions.Add(new Point(x, y2 + offsetY));
-                    positions.Add(new Point(x, y3 + offsetY));
-                    positions.Add(new Point(x, y4 + offsetY));
-                }
-
-                break;
-            case 5:
-                if (gridSize.Y == 3)
-                {
-                    positions.Add(new Point(x1, y1 + offsetY));
-                    positions.Add(new Point(x3, y1 + offsetY));
-                    positions.Add(new Point(x2, y2 + offsetY));
-                    positions.Add(new Point(x1, y3 + offsetY));
-                    positions.Add(new Point(x3, y3 + offsetY));
-                }
-                else
-                {
-                    positions.Add(new Point(x1, y1 + spacing + offsetY));
-                    positions.Add(new Point(x3, y1 + spacing + offsetY));
-                    positions.Add(new Point(x2, y2 + spacing + offsetY));
-                    positions.Add(new Point(x1, y3 + spacing + offsetY));
-                    positions.Add(new Point(x3, y3 + spacing + offsetY));
-                }
-
-                break;
-            case 6:
-                if (gridSize.Y == 3)
-                {
-                    positions.Add(new Point(x1, y1 + offsetY));
-                    positions.Add(new Point(x3, y1 + offsetY));
-                    positions.Add(new Point(x1, y2 + offsetY));
-                    positions.Add(new Point(x3, y2 + offsetY));
-                    positions.Add(new Point(x1, y3 + offsetY));
-                    positions.Add(new Point(x3, y3 + offsetY));
-                }
-                else
-                {
-                    positions.Add(new Point(x1, y1 + spacing + offsetY));
-                    positions.Add(new Point(x3, y1 + spacing + offsetY));
-                    positions.Add(new Point(x1, y2 + spacing + offsetY));
-                    positions.Add(new Point(x3, y2 + spacing + offsetY));
-                    positions.Add(new Point(x1, y3 + spacing + offsetY));
-                    positions.Add(new Point(x3, y3 + spacing + offsetY));
-                }
-
-                break;
-        }
-    }
-
-    private static List<Point> GetTooltipSocketPositions(int count, (int X, int Y) gridSize,
-        int x1, int x2, int x3, int y1, int y2, int y3, int y4, int spacing, int offsetY)
-    {
-        // Tooltip socket positions use different y-coordinates than item-only rendering
-        // Reference: y1=5, y2=34, y3=63, y4=92
-        var positions = new List<Point>();
-
-        switch (count)
-        {
-            case 1:
-                if (gridSize.Y == 2)
-                    positions.Add(new Point(gridSize.X == 1 ? x1 : x2, y1 + spacing + offsetY));
-                else if (gridSize.Y == 3)
-                    positions.Add(new Point(gridSize.X == 1 ? x1 : x2, y2 + offsetY));
-                else
-                    positions.Add(new Point(gridSize.X == 1 ? x1 : x2, y2 + spacing + offsetY));
                 break;
             case 2:
                 if (gridSize.Y == 2)
@@ -683,7 +521,7 @@ public class ItemRenderer
         string normalized = NormalizeColorCodes(description);
         string[] lines = normalized.Replace("\\n", "\n").Split('\n');
         int y = top - 1;
-        int colorIndex = 0;
+        var currentColor = D2Colors.White;
 
         using var font = CreateFont(fontFamily, 9);
 
@@ -695,8 +533,8 @@ public class ItemRenderer
             float x = (width - lineWidth) / 2;
 
             // Parse and render colored segments
-            RenderColoredLine(graphics, line, font, x, y, ref colorIndex);
-            y += 16;
+            RenderColoredLine(graphics, line, font, x, y, ref currentColor);
+            y += TextLineHeight;
         }
     }
 
@@ -709,7 +547,7 @@ public class ItemRenderer
         return text.Replace("\\xff", "ÿ").Replace("\\xfF", "ÿ").Replace("\\xFf", "ÿ").Replace("\\xFF", "ÿ");
     }
 
-    private void RenderColoredLine(Graphics graphics, string line, Font font, float startX, float y, ref int colorIndex)
+    private static void RenderColoredLine(Graphics graphics, string line, Font font, float startX, float y, ref Color currentColor)
     {
         // Split by ÿ (0xFF) - the D2 color code delimiter
         string[] segments = line.Split('ÿ');
@@ -727,14 +565,8 @@ public class ItemRenderer
                 {
                     // ÿc[code] format
                     char code = segment[1];
-                    colorIndex = code switch
-                    {
-                        ':' => 10,
-                        ';' => 11,
-                        '<' => 12,
-                        >= '0' and <= '9' => code - '0',
-                        _ => colorIndex
-                    };
+                    if (code is (>= '0' and <= '9') or ':' or ';' or '<')
+                        currentColor = D2Colors.GetTextColor(code);
                     segment = segment.Length > 2 ? segment[2..] : "";
                 }
                 else if (segment[0] == '#' && segment.Length >= 7)
@@ -746,11 +578,7 @@ public class ItemRenderer
 
             if (!string.IsNullOrEmpty(segment))
             {
-                var color = colorIndex < D2Colors.TextColors.Length
-                    ? D2Colors.TextColors[colorIndex]
-                    : D2Colors.White;
-
-                using var brush = new SolidBrush(color);
+                using var brush = new SolidBrush(currentColor);
                 graphics.DrawString(segment, font, brush, x, y);
                 x += graphics.MeasureString(segment, font).Width;
             }
@@ -807,9 +635,7 @@ public class ItemRenderer
     {
         try
         {
-            var assembly = Assembly.GetExecutingAssembly();
-            var resourceName = $"D2BotNG.wwwroot.assets.rendering.bgnd{gridY}.png";
-            using var stream = assembly.GetManifestResourceStream(resourceName);
+            using var stream = EmbeddedResourceLoader.LoadStream($"D2BotNG.wwwroot.assets.rendering.bgnd{gridY}.png");
             if (stream == null) return null;
             return new Bitmap(stream);
         }

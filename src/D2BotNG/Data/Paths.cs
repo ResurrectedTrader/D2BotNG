@@ -7,25 +7,19 @@ namespace D2BotNG.Data;
 public class Paths
 {
     private readonly SettingsRepository _settingsRepository;
+    private string _basePath;
 
     public Paths(SettingsRepository settingsRepository)
     {
         _settingsRepository = settingsRepository;
+        _basePath = ResolveBasePath(settingsRepository.GetAsync().GetAwaiter().GetResult());
+        _settingsRepository.SettingsChanged += (_, settings) => _basePath = ResolveBasePath(settings);
     }
 
-    /// <summary>
-    /// Gets the base path. Returns the configured BasePath if set, otherwise AppContext.BaseDirectory.
-    /// </summary>
-    private string BasePath
-    {
-        get
-        {
-            var settings = _settingsRepository.GetAsync().GetAwaiter().GetResult();
-            return string.IsNullOrWhiteSpace(settings.BasePath)
-                ? AppContext.BaseDirectory
-                : settings.BasePath;
-        }
-    }
+    private static string ResolveBasePath(Core.Protos.Settings settings) =>
+        string.IsNullOrWhiteSpace(settings.BasePath)
+            ? AppContext.BaseDirectory
+            : settings.BasePath;
 
     /// <summary>
     /// Gets the data directory for storing profiles, keys, schedules, etc.
@@ -34,7 +28,7 @@ public class Paths
     {
         get
         {
-            var dir = Path.Combine(BasePath, "data", "ng");
+            var dir = Path.Combine(_basePath, "data", "ng");
             Directory.CreateDirectory(dir);
             return dir;
         }
@@ -47,7 +41,7 @@ public class Paths
     {
         get
         {
-            var dir = Path.Combine(BasePath, "d2bs", "kolbot", "mules");
+            var dir = Path.Combine(_basePath, "d2bs", "kolbot", "mules");
             Directory.CreateDirectory(dir);
             return dir;
         }
@@ -60,7 +54,7 @@ public class Paths
     {
         get
         {
-            var dir = Path.Combine(BasePath, "d2bs");
+            var dir = Path.Combine(_basePath, "d2bs");
             Directory.CreateDirectory(dir);
             return dir;
         }

@@ -55,6 +55,8 @@ public class ScheduleEngine : IDisposable
 
     private async Task CheckSchedulesAsync()
     {
+        // Uses local time intentionally: schedule periods like "22:00-06:00" represent
+        // user-local wall-clock hours, not UTC offsets.
         var now = DateTime.Now;
         var currentHour = (uint)now.Hour;
         var currentMinute = (uint)now.Minute;

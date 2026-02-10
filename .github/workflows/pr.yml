@@ -123,9 +123,6 @@ jobs:
     needs: changes
     if: needs.changes.outputs.cs == 'true'
     runs-on: windows-latest
-    permissions:
-      contents: read
-      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -152,11 +149,3 @@ jobs:
             echo "::error::InspectCode found $count issue(s)"
             exit 1
           fi
-      - name: Review comments
-        if: always()
-        uses: HollowMan6/sarif4reviewdog@v1.0.1
-        with:
-          file: inspect.sarif
-          reporter: github-pr-review
-          filter_mode: added
-          fail_on_error: false

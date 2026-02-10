@@ -1,6 +1,7 @@
 using D2BotNG.Core.Protos;
 using D2BotNG.Data;
 using D2BotNG.Engine;
+using D2BotNG.Utilities;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 
@@ -72,7 +73,7 @@ public class ScheduleServiceImpl : ScheduleService.ScheduleServiceBase
         var existing = await _scheduleRepository.GetByKeyAsync(lookupName);
         if (existing == null)
         {
-            throw new RpcException(new Status(StatusCode.NotFound, $"Schedule '{lookupName}' not found"));
+            throw RpcExceptions.NotFound("Schedule", lookupName);
         }
 
         if (request.HasOriginalName && request.OriginalName != schedule.Name)

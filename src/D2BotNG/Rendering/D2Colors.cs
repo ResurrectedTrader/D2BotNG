@@ -42,7 +42,6 @@ public static class D2Colors
     /// <summary>
     /// Gets color for a D2 color code character
     /// </summary>
-    // ReSharper disable once UnusedMember.Global — rendering utility for text color rendering
     public static Color GetTextColor(char code)
     {
         int index = code switch

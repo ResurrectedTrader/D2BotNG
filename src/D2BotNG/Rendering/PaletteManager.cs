@@ -1,4 +1,4 @@
-using System.Reflection;
+using D2BotNG.Utilities;
 
 namespace D2BotNG.Rendering;
 
@@ -65,17 +65,6 @@ public class PaletteManager
 
     private static byte[] LoadEmbeddedResource(string name)
     {
-        var assembly = Assembly.GetExecutingAssembly();
-        var resourceName = $"D2BotNG.wwwroot.assets.rendering.{name}";
-
-        using var stream = assembly.GetManifestResourceStream(resourceName);
-        if (stream == null)
-        {
-            throw new InvalidOperationException($"Embedded resource not found: {resourceName}");
-        }
-
-        using var ms = new MemoryStream();
-        stream.CopyTo(ms);
-        return ms.ToArray();
+        return EmbeddedResourceLoader.LoadBytes($"D2BotNG.wwwroot.assets.rendering.{name}");
     }
 }

@@ -1,3 +1,4 @@
+using D2BotNG.Utilities;
 using Google.Protobuf;
 
 namespace D2BotNG.Data;
@@ -8,18 +9,13 @@ namespace D2BotNG.Data;
 /// </summary>
 /// <typeparam name="TItem">The protobuf message type for individual entities</typeparam>
 /// <typeparam name="TList">The protobuf list-wrapper message type (e.g., ProfileList)</typeparam>
-public abstract class FileRepository<TItem, TList>
+public abstract class FileRepository<TItem, TList> : IDisposable
     where TItem : IMessage<TItem>
     where TList : IMessage<TList>, new()
 {
     protected readonly SemaphoreSlim Lock = new(1, 1);
     protected readonly List<TItem> Data = [];
     private volatile bool _loaded;
-
-    // ReSharper disable once StaticMemberInGenericType
-    private static readonly JsonFormatter JsonFormatter = new(JsonFormatter.Settings.Default.WithIndentation());
-    // ReSharper disable once StaticMemberInGenericType
-    private static readonly JsonParser JsonParser = new(JsonParser.Settings.Default.WithIgnoreUnknownFields(true));
 
     private readonly Paths _paths;
 
@@ -68,7 +64,7 @@ public abstract class FileRepository<TItem, TList>
         if (!File.Exists(FilePath)) return;
 
         var json = await File.ReadAllTextAsync(FilePath);
-        var list = JsonParser.Parse<TList>(json);
+        var list = ProtobufJsonConfig.Parser.Parse<TList>(json);
         Data.AddRange(GetItems(list));
     }
 
@@ -79,7 +75,7 @@ public abstract class FileRepository<TItem, TList>
             Directory.CreateDirectory(directory);
 
         var list = CreateList(Data);
-        var json = JsonFormatter.Format(list);
+        var json = ProtobufJsonConfig.Formatter.Format(list);
 
         var tempPath = FilePath + ".tmp";
         await File.WriteAllTextAsync(tempPath, json);
@@ -98,7 +94,7 @@ public abstract class FileRepository<TItem, TList>
             if (File.Exists(FilePath))
             {
                 var json = await File.ReadAllTextAsync(FilePath);
-                var list = JsonParser.Parse<TList>(json);
+                var list = ProtobufJsonConfig.Parser.Parse<TList>(json);
                 tempData.AddRange(GetItems(list));
             }
 
@@ -134,9 +130,9 @@ public abstract class FileRepository<TItem, TList>
             var key = GetKey(entity);
             var index = Data.FindIndex(e => GetKey(e) == key);
             if (index >= 0)
-                Data[index] = entity;
-            else
-                Data.Add(entity);
+                throw new InvalidOperationException($"{typeof(TItem).Name} '{key}' already exists");
+
+            Data.Add(entity);
             await SaveAsync();
             return entity;
         }
@@ -209,5 +205,11 @@ public abstract class FileRepository<TItem, TList>
         {
             Lock.Release();
         }
+    }
+
+    public virtual void Dispose()
+    {
+        Lock.Dispose();
+        GC.SuppressFinalize(this);
     }
 }

@@ -1,5 +1,5 @@
 using D2BotNG.Core.Protos;
-using Google.Protobuf;
+using D2BotNG.Utilities;
 using Microsoft.Win32;
 
 namespace D2BotNG.Data;
@@ -16,9 +16,6 @@ public class SettingsRepository
     /// </summary>
     public event EventHandler<Settings>? SettingsChanged;
 
-    private static readonly JsonFormatter JsonFormatter = new(JsonFormatter.Settings.Default.WithIndentation());
-    private static readonly JsonParser JsonParser = new(JsonParser.Settings.Default.WithIgnoreUnknownFields(true));
-
     private async Task EnsureLoadedAsync()
     {
         if (_loaded) return;
@@ -31,7 +28,7 @@ public class SettingsRepository
             if (File.Exists(_filePath))
             {
                 var json = await File.ReadAllTextAsync(_filePath);
-                _settings = JsonParser.Parse<Settings>(json);
+                _settings = ProtobufJsonConfig.Parser.Parse<Settings>(json);
             }
             _settings ??= CreateDefault();
             EnsureDefaults(_settings);
@@ -136,7 +133,9 @@ public class SettingsRepository
 
     private async Task SaveInternalAsync()
     {
-        var json = JsonFormatter.Format(_settings);
-        await File.WriteAllTextAsync(_filePath, json);
+        var json = ProtobufJsonConfig.Formatter.Format(_settings);
+        var tempPath = _filePath + ".tmp";
+        await File.WriteAllTextAsync(tempPath, json);
+        File.Move(tempPath, _filePath, overwrite: true);
     }
 }

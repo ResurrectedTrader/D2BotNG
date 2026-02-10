@@ -1,6 +1,7 @@
 using D2BotNG.Core.Protos;
 using D2BotNG.Data;
 using D2BotNG.Engine;
+using D2BotNG.Utilities;
 using D2BotNG.Windows;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
@@ -25,7 +26,7 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
         var existingProfile = await _profileRepository.GetByKeyAsync(request.Name);
         if (existingProfile != null)
         {
-            throw new RpcException(new Status(StatusCode.AlreadyExists, $"Profile '{request.Name}' already exists"));
+            throw RpcExceptions.AlreadyExists("Profile", request.Name);
         }
 
         var profile = await _profileRepository.CreateAsync(request);
@@ -43,16 +44,10 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
         var existing = await _profileRepository.GetByKeyAsync(lookupName);
         if (existing == null)
         {
-            throw new RpcException(new Status(StatusCode.NotFound, $"Profile '{lookupName}' not found"));
+            throw RpcExceptions.NotFound("Profile", lookupName);
         }
 
-        // Preserve stats from existing profile
-        profile.Runs = existing.Runs;
-        profile.Chickens = existing.Chickens;
-        profile.Deaths = existing.Deaths;
-        profile.Crashes = existing.Crashes;
-        profile.Restarts = existing.Restarts;
-        profile.KeyRuns = existing.KeyRuns;
+        profile.PreserveStatsFrom(existing);
 
         // Handle rename
         if (request.HasOriginalName && request.OriginalName != profile.Name)
@@ -85,65 +80,37 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
 
     public override async Task<Empty> Start(ProfileNames request, ServerCallContext context)
     {
-        foreach (var name in request.Names)
-        {
-            await _profileEngine.StartProfileAsync(name);
-        }
-        return new Empty();
+        return await ForEachProfileAsync(request, name => _profileEngine.StartProfileAsync(name));
     }
 
     public override async Task<Empty> Stop(ProfileNames request, ServerCallContext context)
     {
-        foreach (var name in request.Names)
-        {
-            await _profileEngine.StopProfileAsync(name);
-        }
-        return new Empty();
+        return await ForEachProfileAsync(request, name => _profileEngine.StopProfileAsync(name));
     }
 
     public override async Task<Empty> Restart(RestartRequest request, ServerCallContext context)
     {
-        await _profileEngine.StopProfileAsync(request.ProfileName);
-        await Task.Delay(1000);
-        await _profileEngine.StartProfileAsync(request.ProfileName);
+        await _profileEngine.RestartProfileAsync(request.ProfileName);
         return new Empty();
     }
 
     public override async Task<Empty> ShowWindow(ProfileNames request, ServerCallContext context)
     {
-        var peer = context.Peer;
-        if (!IsLocalhost(peer))
-        {
-            throw new RpcException(new Status(StatusCode.PermissionDenied, "Window control only allowed from localhost"));
-        }
-
-        foreach (var name in request.Names)
-        {
-            await _profileEngine.ShowWindowAsync(name);
-        }
-        return new Empty();
+        RequireLocalhost(context.Peer);
+        return await ForEachProfileAsync(request, name => _profileEngine.ShowWindowAsync(name));
     }
 
     public override async Task<Empty> HideWindow(ProfileNames request, ServerCallContext context)
     {
-        var peer = context.Peer;
-        if (!IsLocalhost(peer))
-        {
-            throw new RpcException(new Status(StatusCode.PermissionDenied, "Window control only allowed from localhost"));
-        }
-
-        foreach (var name in request.Names)
-        {
-            await _profileEngine.HideWindowAsync(name);
-        }
-        return new Empty();
+        RequireLocalhost(context.Peer);
+        return await ForEachProfileAsync(request, name => _profileEngine.HideWindowAsync(name));
     }
 
     public override async Task<Empty> ResetStats(ProfileName request, ServerCallContext context)
     {
         if (!await _profileEngine.ResetStatsAsync(request.Name))
         {
-            throw new RpcException(new Status(StatusCode.NotFound, $"Profile '{request.Name}' not found"));
+            throw RpcExceptions.NotFound("Profile", request.Name);
         }
         return new Empty();
     }
@@ -158,7 +125,7 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
     {
         if (!await _profileEngine.RotateKeyAsync(request.Name))
         {
-            throw new RpcException(new Status(StatusCode.FailedPrecondition, "Failed to rotate key"));
+            throw RpcExceptions.FailedPrecondition("Failed to rotate key");
         }
         return new Empty();
     }
@@ -174,7 +141,7 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
         var profile = await _profileRepository.GetByKeyAsync(request.ProfileName);
         if (profile == null)
         {
-            throw new RpcException(new Status(StatusCode.NotFound, $"Profile '{request.ProfileName}' not found"));
+            throw RpcExceptions.NotFound("Profile", request.ProfileName);
         }
 
         profile.ScheduleEnabled = request.Enabled;
@@ -189,7 +156,7 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
         var profile = await _profileRepository.GetByKeyAsync(request.ProfileName);
         if (profile == null)
         {
-            throw new RpcException(new Status(StatusCode.NotFound, $"Profile '{request.ProfileName}' not found"));
+            throw RpcExceptions.NotFound("Profile", request.ProfileName);
         }
 
         var allProfiles = (await _profileRepository.GetAllAsync()).ToList();
@@ -267,8 +234,33 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
         return new Empty();
     }
 
-    private static bool IsLocalhost(string peer)
+    private static async Task<Empty> ForEachProfileAsync(ProfileNames request, Func<string, Task> action)
     {
-        return peer.Contains("127.0.0.1") || peer.Contains("::1") || peer.Contains("localhost");
+        foreach (var name in request.Names)
+        {
+            await action(name);
+        }
+        return new Empty();
+    }
+
+    private static void RequireLocalhost(string peer)
+    {
+        if (!peer.Contains("127.0.0.1") && !peer.Contains("::1") && !peer.Contains("localhost"))
+        {
+            throw RpcExceptions.PermissionDenied("Window control only allowed from localhost");
+        }
+    }
+}
+
+public static class ProfileExtensions
+{
+    public static void PreserveStatsFrom(this Profile target, Profile source)
+    {
+        target.Runs = source.Runs;
+        target.Chickens = source.Chickens;
+        target.Deaths = source.Deaths;
+        target.Crashes = source.Crashes;
+        target.Restarts = source.Restarts;
+        target.KeyRuns = source.KeyRuns;
     }
 }
