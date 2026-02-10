@@ -30,8 +30,8 @@ public class ProcessManager
 
         try
         {
-            var processHandle = OpenProcess(PROCESS_ALL_ACCESS, false, process.Id);
-            if (processHandle == 0)
+            var rawProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, false, process.Id);
+            if (rawProcessHandle == 0)
             {
                 // Try DACL overwrite to gain access
                 _logger.LogDebug("OpenProcess failed for {Pid}, attempting DACL overwrite", process.Id);
@@ -42,64 +42,59 @@ public class ProcessManager
                 }
 
                 // Retry after DACL overwrite
-                processHandle = OpenProcess(PROCESS_ALL_ACCESS, false, process.Id);
-                if (processHandle == 0)
+                rawProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, false, process.Id);
+                if (rawProcessHandle == 0)
                 {
                     _logger.LogError("Failed to open process {Pid} even after DACL overwrite", process.Id);
                     return false;
                 }
             }
 
+            using var processHandle = new SafeProcessHandle(rawProcessHandle, ownsHandle: true);
+
+            // Allocate memory in target process
+            var remoteMemory = VirtualAllocEx(processHandle.DangerousGetHandle(), 0, (uint)pathBytes.Length, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+            if (remoteMemory == 0)
+            {
+                _logger.LogError("Failed to allocate memory in target process");
+                return false;
+            }
+
             try
             {
-                // Allocate memory in target process
-                var remoteMemory = VirtualAllocEx(processHandle, 0, (uint)pathBytes.Length, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-                if (remoteMemory == 0)
+                // Write DLL path
+                if (!WriteProcessMemory(processHandle.DangerousGetHandle(), remoteMemory, pathBytes, (uint)pathBytes.Length, out _))
                 {
-                    _logger.LogError("Failed to allocate memory in target process");
+                    _logger.LogError("Failed to write DLL path to target process");
                     return false;
                 }
 
-                try
+                // Get LoadLibraryA address
+                var kernel32 = GetModuleHandle("kernel32.dll");
+                var loadLibraryAddr = GetProcAddress(kernel32, "LoadLibraryA");
+                if (loadLibraryAddr == 0)
                 {
-                    // Write DLL path
-                    if (!WriteProcessMemory(processHandle, remoteMemory, pathBytes, (uint)pathBytes.Length, out _))
-                    {
-                        _logger.LogError("Failed to write DLL path to target process");
-                        return false;
-                    }
-
-                    // Get LoadLibraryA address
-                    var kernel32 = GetModuleHandle("kernel32.dll");
-                    var loadLibraryAddr = GetProcAddress(kernel32, "LoadLibraryA");
-                    if (loadLibraryAddr == 0)
-                    {
-                        _logger.LogError("Failed to get LoadLibraryA address");
-                        return false;
-                    }
-
-                    // Create remote thread
-                    var threadHandle = CreateRemoteThread(processHandle, 0, 0, loadLibraryAddr, remoteMemory, 0, out _);
-                    if (threadHandle == 0)
-                    {
-                        _logger.LogError("Failed to create remote thread");
-                        return false;
-                    }
-
-                    WaitForSingleObject(threadHandle, 5000);
-                    CloseHandle(threadHandle);
-
-                    _logger.LogDebug("Successfully injected {Dll} into process {Pid}", dllPath, process.Id);
-                    return true;
+                    _logger.LogError("Failed to get LoadLibraryA address");
+                    return false;
                 }
-                finally
+
+                // Create remote thread
+                var rawThreadHandle = CreateRemoteThread(processHandle.DangerousGetHandle(), 0, 0, loadLibraryAddr, remoteMemory, 0, out _);
+                if (rawThreadHandle == 0)
                 {
-                    VirtualFreeEx(processHandle, remoteMemory, 0, MEM_RELEASE);
+                    _logger.LogError("Failed to create remote thread");
+                    return false;
                 }
+
+                using var threadHandle = new SafeProcessHandle(rawThreadHandle, ownsHandle: true);
+                WaitForSingleObject(threadHandle.DangerousGetHandle(), 5000);
+
+                _logger.LogDebug("Successfully injected {Dll} into process {Pid}", dllPath, process.Id);
+                return true;
             }
             finally
             {
-                CloseHandle(processHandle);
+                VirtualFreeEx(processHandle.DangerousGetHandle(), remoteMemory, 0, MEM_RELEASE);
             }
         }
         catch (Exception ex)
@@ -197,8 +192,8 @@ public class ProcessManager
         }
 
         // Close handles - we'll use Process object instead
-        CloseHandle(processInfo.hThread);
-        CloseHandle(processInfo.hProcess);
+        using (new SafeProcessHandle(processInfo.hThread, ownsHandle: true)) { }
+        using (new SafeProcessHandle(processInfo.hProcess, ownsHandle: true)) { }
 
         try
         {
@@ -216,11 +211,11 @@ public class ProcessManager
         process.Refresh();
         foreach (ProcessThread thread in process.Threads)
         {
-            var threadHandle = OpenThread(THREAD_SUSPEND_RESUME, false, (uint)thread.Id);
-            if (threadHandle != 0)
+            var rawThreadHandle = OpenThread(THREAD_SUSPEND_RESUME, false, (uint)thread.Id);
+            if (rawThreadHandle != 0)
             {
-                ResumeThread(threadHandle);
-                CloseHandle(threadHandle);
+                using var threadHandle = new SafeProcessHandle(rawThreadHandle, ownsHandle: true);
+                ResumeThread(threadHandle.DangerousGetHandle());
             }
         }
     }

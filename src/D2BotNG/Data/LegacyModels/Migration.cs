@@ -1,5 +1,6 @@
 using System.Text.Json;
 using D2BotNG.Core.Protos;
+using D2BotNG.Utilities;
 using Google.Protobuf;
 using Serilog;
 
@@ -10,9 +11,6 @@ namespace D2BotNG.Data.LegacyModels;
 /// </summary>
 public static class Migration
 {
-    private static readonly JsonFormatter JsonFormatter =
-        new(JsonFormatter.Settings.Default.WithIndentation());
-
     /// <summary>
     /// Migrates legacy data files individually from data/ to data/ng/.
     /// Each file is migrated independently - if a modern file already exists, it is skipped.
@@ -28,11 +26,63 @@ public static class Migration
         Directory.CreateDirectory(modernDir);
 
         MigrateProfiles(legacyDir, modernDir);
-        MigrateKeyLists(legacyDir, modernDir);
-        MigrateSchedules(legacyDir, modernDir);
-        MigratePatches(legacyDir, modernDir);
+
+        MigrateLegacyFile<LegacyKeyList, KeyListCollection>(
+            legacyDir, modernDir, "cdkeys.json", "keylists.json",
+            (collection, legacy) => collection.KeyLists.Add(legacy.ToModern()),
+            c => c.KeyLists.Count, "key lists");
+
+        MigrateLegacyFile<LegacySchedule, ScheduleList>(
+            legacyDir, modernDir, "schedules.json", "schedules.json",
+            (collection, legacy) => collection.Schedules.Add(legacy.ToModern()),
+            c => c.Schedules.Count, "schedules");
+
+        MigrateLegacyFile<LegacyPatch, PatchList>(
+            legacyDir, modernDir, "patch.json", "patches.json",
+            (collection, legacy) => collection.Patches.Add(legacy.ToModern()),
+            c => c.Patches.Count, "patches");
     }
 
+    private static void MigrateLegacyFile<TLegacy, TCollection>(
+        string legacyDir,
+        string modernDir,
+        string legacyFileName,
+        string modernFileName,
+        Action<TCollection, TLegacy> addItem,
+        Func<TCollection, int> getCount,
+        string entityName)
+        where TCollection : IMessage<TCollection>, new()
+    {
+        var modernPath = Path.Combine(modernDir, modernFileName);
+        if (File.Exists(modernPath)) return;
+
+        var legacyPath = Path.Combine(legacyDir, legacyFileName);
+        if (!File.Exists(legacyPath)) return;
+
+        var collection = new TCollection();
+        foreach (var line in File.ReadAllLines(legacyPath))
+        {
+            if (string.IsNullOrWhiteSpace(line) || line.StartsWith("//")) continue;
+
+            try
+            {
+                var legacy = JsonSerializer.Deserialize<TLegacy>(line);
+                if (legacy != null)
+                    addItem(collection, legacy);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Skipping malformed {EntityName} line during migration", entityName);
+            }
+        }
+
+        File.WriteAllText(modernPath, ProtobufJsonConfig.Formatter.Format(collection));
+        Log.Information("Migrated {Count} {EntityName}", getCount(collection), entityName);
+    }
+
+    /// <summary>
+    /// Profiles need special handling: IRC profiles (Type=1) are skipped.
+    /// </summary>
     private static void MigrateProfiles(string legacyDir, string modernDir)
     {
         var modernPath = Path.Combine(modernDir, "profiles.json");
@@ -63,95 +113,7 @@ public static class Migration
             }
         }
 
-        File.WriteAllText(Path.Combine(modernDir, "profiles.json"), JsonFormatter.Format(profiles));
+        File.WriteAllText(Path.Combine(modernDir, "profiles.json"), ProtobufJsonConfig.Formatter.Format(profiles));
         Log.Information("Migrated {Count} profiles", profiles.Profiles.Count);
     }
-
-    private static void MigrateKeyLists(string legacyDir, string modernDir)
-    {
-        var modernPath = Path.Combine(modernDir, "keylists.json");
-        if (File.Exists(modernPath)) return;
-
-        var legacyPath = Path.Combine(legacyDir, "cdkeys.json");
-        if (!File.Exists(legacyPath)) return;
-
-        var keyLists = new KeyListCollection();
-        foreach (var line in File.ReadAllLines(legacyPath))
-        {
-            if (string.IsNullOrWhiteSpace(line) || line.StartsWith("//")) continue;
-
-            try
-            {
-                var legacy = JsonSerializer.Deserialize<LegacyKeyList>(line);
-                if (legacy != null)
-                    keyLists.KeyLists.Add(legacy.ToModern());
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Skipping malformed key list line during migration");
-            }
-        }
-
-        File.WriteAllText(Path.Combine(modernDir, "keylists.json"), JsonFormatter.Format(keyLists));
-        Log.Information("Migrated {Count} key lists", keyLists.KeyLists.Count);
-    }
-
-    private static void MigrateSchedules(string legacyDir, string modernDir)
-    {
-        var modernPath = Path.Combine(modernDir, "schedules.json");
-        if (File.Exists(modernPath)) return;
-
-        var legacyPath = Path.Combine(legacyDir, "schedules.json");
-        if (!File.Exists(legacyPath)) return;
-
-        var schedules = new ScheduleList();
-        foreach (var line in File.ReadAllLines(legacyPath))
-        {
-            if (string.IsNullOrWhiteSpace(line) || line.StartsWith("//")) continue;
-
-            try
-            {
-                var legacy = JsonSerializer.Deserialize<LegacySchedule>(line);
-                if (legacy != null)
-                    schedules.Schedules.Add(legacy.ToModern());
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Skipping malformed schedule line during migration");
-            }
-        }
-
-        File.WriteAllText(Path.Combine(modernDir, "schedules.json"), JsonFormatter.Format(schedules));
-        Log.Information("Migrated {Count} schedules", schedules.Schedules.Count);
-    }
-
-    private static void MigratePatches(string legacyDir, string modernDir)
-    {
-        var modernPath = Path.Combine(modernDir, "patches.json");
-        if (File.Exists(modernPath)) return;
-
-        var legacyPath = Path.Combine(legacyDir, "patch.json");
-        if (!File.Exists(legacyPath)) return;
-
-        var patches = new PatchList();
-        foreach (var line in File.ReadAllLines(legacyPath))
-        {
-            if (string.IsNullOrWhiteSpace(line) || line.StartsWith("//")) continue;
-
-            try
-            {
-                var legacy = JsonSerializer.Deserialize<LegacyPatch>(line);
-                if (legacy != null)
-                    patches.Patches.Add(legacy.ToModern());
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Skipping malformed patch line during migration");
-            }
-        }
-
-        File.WriteAllText(Path.Combine(modernDir, "patches.json"), JsonFormatter.Format(patches));
-        Log.Information("Migrated {Count} patches", patches.Patches.Count);
-    }
-
 }

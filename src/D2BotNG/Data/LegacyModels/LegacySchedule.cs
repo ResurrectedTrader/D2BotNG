@@ -4,6 +4,7 @@ using JetBrains.Annotations;
 
 namespace D2BotNG.Data.LegacyModels;
 
+[UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
 public class LegacySchedule
 {
     [JsonPropertyName("Name")]

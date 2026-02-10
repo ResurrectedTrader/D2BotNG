@@ -1,6 +1,7 @@
 using System.Text;
 using D2BotNG.Core.Protos;
 using D2BotNG.Data;
+using D2BotNG.Utilities;
 
 namespace D2BotNG.Services;
 
@@ -64,15 +65,15 @@ public class IniWriter
 
     private static void WriteProfileSection(StringBuilder sb, Profile profile)
     {
-        var difficulty = MapDifficulty(profile.Difficulty);
+        var difficulty = profile.Difficulty.ToIniString();
         var scriptPath = "kolbot"; // Default bot library folder name
         var entryScript = Path.GetFileName(profile.EntryScript);
 
         sb.AppendLine($"[{profile.Name}]");
-        sb.AppendLine($"Mode={GameModeToString(profile.Mode)}");
+        sb.AppendLine($"Mode={profile.Mode.ToIniString()}");
         sb.AppendLine($"Username={profile.Account}");
         sb.AppendLine($"Password={profile.Password}");
-        sb.AppendLine($"gateway={RealmToString(profile.Realm)}");
+        sb.AppendLine($"gateway={profile.Realm.ToIniString()}");
         sb.AppendLine($"character={profile.Character}");
         sb.AppendLine($"ScriptPath={scriptPath}");
         sb.AppendLine("DefaultGameScript=default.dbj");
@@ -80,35 +81,4 @@ public class IniWriter
         sb.AppendLine($"spdifficulty={difficulty}");
         sb.AppendLine();
     }
-
-    private static string MapDifficulty(Difficulty difficulty)
-    {
-        return difficulty switch
-        {
-            Difficulty.Normal => "0",
-            Difficulty.Nightmare => "1",
-            Difficulty.Hell => "2",
-            Difficulty.Highest => "3",
-            _ => "0"
-        };
-    }
-
-    private static string RealmToString(Realm realm) => realm switch
-    {
-        Realm.UsWest => "West",
-        Realm.UsEast => "East",
-        Realm.Europe => "Europe",
-        Realm.Asia => "Asia",
-        _ => ""
-    };
-
-    private static string GameModeToString(GameMode mode) => mode switch
-    {
-        GameMode.SinglePlayer => "Single Player",
-        GameMode.BattleNet => "Battle.net",
-        GameMode.OpenBattleNet => "Open Battle.net",
-        GameMode.TcpHost => "Host TCP/IP Game",
-        GameMode.TcpJoin => "Join TCP/IP Game",
-        _ => ""
-    };
 }

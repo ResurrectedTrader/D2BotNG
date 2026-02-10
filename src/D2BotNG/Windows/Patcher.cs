@@ -26,43 +26,38 @@ public class Patcher
 
             var targetAddress = moduleBase + offset;
 
-            var handle = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE, false, process.Id);
-            if (handle == 0)
+            var rawHandle = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE, false, process.Id);
+            if (rawHandle == 0)
             {
                 _logger.LogError("Failed to open process {Pid} for memory write", process.Id);
                 return false;
             }
 
+            using var handle = new SafeProcessHandle(rawHandle, ownsHandle: true);
+
+            // Change memory protection
+            if (!VirtualProtectEx(handle.DangerousGetHandle(), targetAddress, (uint)bytes.Length, PAGE_EXECUTE_READWRITE, out uint oldProtection))
+            {
+                _logger.LogError("Failed to change memory protection at {Address:X}", targetAddress);
+                return false;
+            }
+
             try
             {
-                // Change memory protection
-                if (!VirtualProtectEx(handle, targetAddress, (uint)bytes.Length, PAGE_EXECUTE_READWRITE, out uint oldProtection))
+                // Write the patch bytes
+                if (!WriteProcessMemory(handle.DangerousGetHandle(), targetAddress, bytes, (uint)bytes.Length, out _))
                 {
-                    _logger.LogError("Failed to change memory protection at {Address:X}", targetAddress);
+                    _logger.LogError("Failed to write patch at {Address:X}", targetAddress);
                     return false;
                 }
 
-                try
-                {
-                    // Write the patch bytes
-                    if (!WriteProcessMemory(handle, targetAddress, bytes, (uint)bytes.Length, out _))
-                    {
-                        _logger.LogError("Failed to write patch at {Address:X}", targetAddress);
-                        return false;
-                    }
-
-                    _logger.LogDebug("Applied patch to {Module}+{Offset:X} ({ByteCount} bytes)", module, offset, bytes.Length);
-                    return true;
-                }
-                finally
-                {
-                    // Restore original protection
-                    VirtualProtectEx(handle, targetAddress, (uint)bytes.Length, oldProtection, out _);
-                }
+                _logger.LogDebug("Applied patch to {Module}+{Offset:X} ({ByteCount} bytes)", module, offset, bytes.Length);
+                return true;
             }
             finally
             {
-                CloseHandle(handle);
+                // Restore original protection
+                VirtualProtectEx(handle.DangerousGetHandle(), targetAddress, (uint)bytes.Length, oldProtection, out _);
             }
         }
         catch (Exception ex)

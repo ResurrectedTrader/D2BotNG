@@ -8,16 +8,16 @@ using Google.Protobuf.WellKnownTypes;
 namespace D2BotNG.Engine;
 
 /// <summary>
-/// Main engine for managing profile lifecycles
+/// Main engine for managing profile lifecycles, key management, and snapshot broadcasting.
 /// </summary>
 public class ProfileEngine : IDisposable
 {
     private readonly ILogger<ProfileEngine> _logger;
     private readonly ProfileRepository _profileRepository;
     private readonly KeyListRepository _keyListRepository;
+    private readonly EventBroadcaster _eventBroadcaster;
     private readonly GameLauncher _gameLauncher;
     private readonly ProcessManager _processManager;
-    private readonly EventBroadcaster _eventBroadcaster;
     private readonly MessageWindow _messageWindow;
     private readonly Paths _paths;
 
@@ -32,32 +32,20 @@ public class ProfileEngine : IDisposable
         ILogger<ProfileEngine> logger,
         ProfileRepository profileRepository,
         KeyListRepository keyListRepository,
+        EventBroadcaster eventBroadcaster,
         GameLauncher gameLauncher,
         ProcessManager processManager,
-        EventBroadcaster eventBroadcaster,
         MessageWindow messageWindow,
         Paths paths)
     {
         _logger = logger;
         _profileRepository = profileRepository;
         _keyListRepository = keyListRepository;
+        _eventBroadcaster = eventBroadcaster;
         _gameLauncher = gameLauncher;
         _processManager = processManager;
-        _eventBroadcaster = eventBroadcaster;
         _messageWindow = messageWindow;
         _paths = paths;
-    }
-
-    private async Task<HashSet<string>> GetUsedKeyNamesAsync(string keyListName)
-    {
-        var profiles = await _profileRepository.GetAllAsync();
-        var used = new HashSet<string>();
-        foreach (var p in profiles.Where(p => p.KeyList == keyListName))
-        {
-            if (_instances.TryGetValue(p.Name, out var inst) && inst.KeyName != null)
-                used.Add(inst.KeyName);
-        }
-        return used;
     }
 
     private Task RunProfileBackgroundAsync(ProfileInstance instance)
@@ -106,20 +94,25 @@ public class ProfileEngine : IDisposable
         }
     }
 
+    public async Task UpdateProfileAndNotifyAsync(Profile profile)
+    {
+        await _profileRepository.UpdateAsync(profile);
+        await NotifyProfileStateChangedAsync(profile.Name, includeProfile: true);
+    }
+
     public async Task NotifyProfileStateChangedAsync(string profileName, bool includeProfile = false)
     {
-        if (_instances.TryGetValue(profileName, out var instance))
-        {
-            var state = instance.GetState();
-            if (includeProfile)
-                state.Profile = await _profileRepository.GetByKeyAsync(profileName);
+        if (!_instances.TryGetValue(profileName, out var instance)) return;
 
-            _eventBroadcaster.Broadcast(new Event
-            {
-                Timestamp = Timestamp.FromDateTime(DateTime.UtcNow),
-                ProfileState = state
-            });
-        }
+        var state = instance.GetState();
+        if (includeProfile)
+            state.Profile = await _profileRepository.GetByKeyAsync(profileName);
+
+        _eventBroadcaster.Broadcast(new Event
+        {
+            Timestamp = Timestamp.FromDateTime(DateTime.UtcNow),
+            ProfileState = state
+        });
     }
 
     public async Task<bool> StartProfileAsync(string profileName)
@@ -182,6 +175,15 @@ public class ProfileEngine : IDisposable
         return true;
     }
 
+    public async Task RestartProfileAsync(string profileName, bool rotateKey = false)
+    {
+        await StopProfileAsync(profileName);
+        if (rotateKey)
+            await RotateKeyAsync(profileName);
+        await Task.Delay(1000);
+        await StartProfileAsync(profileName);
+    }
+
     public async Task StartAllAsync()
     {
         foreach (var instance in _instances.Values)
@@ -237,29 +239,24 @@ public class ProfileEngine : IDisposable
         return GetInstanceByHandle(handle)?.Process?.SendMessage(messageType, message) ?? false;
     }
 
+    #region Key Management
+
     public async Task<bool> RotateKeyAsync(string profileName)
     {
         if (!_instances.TryGetValue(profileName, out var instance))
-        {
             return false;
-        }
 
         var profile = await _profileRepository.GetByKeyAsync(profileName);
         if (profile == null || string.IsNullOrEmpty(profile.KeyList))
-        {
             return false;
-        }
 
         // Clear current key first (frees it in runtime state)
         instance.KeyName = null;
 
         // Get next available key
-        var usedKeys = await GetUsedKeyNamesAsync(profile.KeyList);
-        var key = await _keyListRepository.GetNextAvailableKeyAsync(profile.KeyList, usedKeys);
+        var key = await AcquireKeyAsync(profile.KeyList);
         if (key == null)
-        {
             return false;
-        }
 
         instance.KeyName = key.Name;
         await NotifyProfileStateChangedAsync(profileName);
@@ -278,25 +275,28 @@ public class ProfileEngine : IDisposable
         }
     }
 
-    public async Task<bool> ResetStatsAsync(string profileName)
+    private async Task<CDKey?> AcquireKeyAsync(string keyListName)
     {
-        var profile = await _profileRepository.GetByKeyAsync(profileName);
-        if (profile == null)
-        {
-            return false;
-        }
-
-        profile.Runs = 0;
-        profile.Chickens = 0;
-        profile.Deaths = 0;
-        profile.Crashes = 0;
-        profile.Restarts = 0;
-        profile.KeyRuns = 0;
-        await _profileRepository.UpdateAsync(profile);
-        await NotifyProfileStateChangedAsync(profileName, includeProfile: true);
-
-        return true;
+        var usedKeys = await GetUsedKeyNamesAsync(keyListName);
+        return await _keyListRepository.GetNextAvailableKeyAsync(keyListName, usedKeys);
     }
+
+    private async Task<HashSet<string>> GetUsedKeyNamesAsync(string keyListName)
+    {
+        var profiles = await _profileRepository.GetAllAsync();
+        var used = new HashSet<string>();
+        foreach (var p in profiles.Where(p => p.KeyList == keyListName))
+        {
+            var inst = GetInstance(p.Name);
+            if (inst?.KeyName != null)
+                used.Add(inst.KeyName);
+        }
+        return used;
+    }
+
+    #endregion
+
+    #region Snapshots
 
     public async Task<ProfilesSnapshot> BuildProfilesSnapshotAsync()
     {
@@ -306,15 +306,15 @@ public class ProfileEngine : IDisposable
         foreach (var profile in profiles)
         {
             var instance = GetInstance(profile.Name);
-            var status = instance?.GetState() ?? new ProfileState
+            var state = instance?.GetState() ?? new ProfileState
             {
                 ProfileName = profile.Name,
                 State = RunState.Stopped,
                 Status = ""
             };
 
-            status.Profile = profile;
-            snapshot.Profiles.Add(status);
+            state.Profile = profile;
+            snapshot.Profiles.Add(state);
         }
 
         return snapshot;
@@ -370,6 +370,28 @@ public class ProfileEngine : IDisposable
         });
     }
 
+    #endregion
+
+    public async Task<bool> ResetStatsAsync(string profileName)
+    {
+        var profile = await _profileRepository.GetByKeyAsync(profileName);
+        if (profile == null)
+        {
+            return false;
+        }
+
+        profile.Runs = 0;
+        profile.Chickens = 0;
+        profile.Deaths = 0;
+        profile.Crashes = 0;
+        profile.Restarts = 0;
+        profile.KeyRuns = 0;
+        await _profileRepository.UpdateAsync(profile);
+        await NotifyProfileStateChangedAsync(profileName, includeProfile: true);
+
+        return true;
+    }
+
     private async Task RunProfileAsync(ProfileInstance instance)
     {
         var profileName = instance.ProfileName;
@@ -389,8 +411,7 @@ public class ProfileEngine : IDisposable
             CDKey? acquiredKey = null;
             if (!string.IsNullOrEmpty(profile.KeyList))
             {
-                var usedKeys = await GetUsedKeyNamesAsync(profile.KeyList);
-                acquiredKey = await _keyListRepository.GetNextAvailableKeyAsync(profile.KeyList, usedKeys);
+                acquiredKey = await AcquireKeyAsync(profile.KeyList);
                 if (acquiredKey == null)
                 {
                     await instance.SetErrorAsync("No available keys");

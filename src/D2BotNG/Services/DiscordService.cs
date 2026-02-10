@@ -496,9 +496,7 @@ public class DiscordService : BackgroundService
 
         foreach (var profile in profiles)
         {
-            await _profileEngine.StopProfileAsync(profile.Name);
-            await Task.Delay(1000);
-            await _profileEngine.StartProfileAsync(profile.Name);
+            await _profileEngine.RestartProfileAsync(profile.Name);
         }
 
         return CreateSuccessEmbed("Restarted", $"Restarted {profiles.Count} profile(s).");
@@ -591,27 +589,20 @@ public class DiscordService : BackgroundService
         _ => "⚫"
     };
 
-    private static Embed CreateSuccessEmbed(string title, string description) =>
+    private static Embed CreateEmbed(string title, string description, Discord.Color color) =>
         new EmbedBuilder()
             .WithTitle(title)
             .WithDescription(description)
-            .WithColor(ColorSuccess)
+            .WithColor(color)
             .WithCurrentTimestamp()
             .Build();
+
+    private static Embed CreateSuccessEmbed(string title, string description) =>
+        CreateEmbed(title, description, ColorSuccess);
 
     private static Embed CreateErrorEmbed(string title, string description) =>
-        new EmbedBuilder()
-            .WithTitle(title)
-            .WithDescription(description)
-            .WithColor(ColorError)
-            .WithCurrentTimestamp()
-            .Build();
+        CreateEmbed(title, description, ColorError);
 
     private static Embed CreateInfoEmbed(string title, string description) =>
-        new EmbedBuilder()
-            .WithTitle(title)
-            .WithDescription(description)
-            .WithColor(ColorInfo)
-            .WithCurrentTimestamp()
-            .Build();
+        CreateEmbed(title, description, ColorInfo);
 }

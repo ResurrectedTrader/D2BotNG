@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using D2BotNG.Core.Protos;
 using D2BotNG.Data;
 using D2BotNG.Engine;
+using D2BotNG.Utilities;
 using D2BotNG.Windows;
 
 namespace D2BotNG.Services;
@@ -236,22 +237,19 @@ public class D2BSMessageHandler : BackgroundService
         profile.Runs++;
         if (profile.RunsPerKey > 0)
             profile.KeyRuns++;
-        await _profileRepository.UpdateAsync(profile);
-        await _profileEngine.NotifyProfileStateChangedAsync(profile.Name, includeProfile: true);
+        await _profileEngine.UpdateProfileAndNotifyAsync(profile);
     }
 
     private async Task HandleUpdateChickensAsync(Profile profile)
     {
         profile.Chickens++;
-        await _profileRepository.UpdateAsync(profile);
-        await _profileEngine.NotifyProfileStateChangedAsync(profile.Name, includeProfile: true);
+        await _profileEngine.UpdateProfileAndNotifyAsync(profile);
     }
 
     private async Task HandleUpdateDeathsAsync(Profile profile)
     {
         profile.Deaths++;
-        await _profileRepository.UpdateAsync(profile);
-        await _profileEngine.NotifyProfileStateChangedAsync(profile.Name, includeProfile: true);
+        await _profileEngine.UpdateProfileAndNotifyAsync(profile);
     }
 
     private void HandlePrintToConsole(string profileName, string[] args)
@@ -303,50 +301,20 @@ public class D2BSMessageHandler : BackgroundService
         if (args.Length > 2 && !string.IsNullOrEmpty(args[2]))
             profile.Character = args[2];
         if (args.Length > 3 && !string.IsNullOrEmpty(args[3]))
-            profile.Difficulty = ParseDifficulty(args[3]);
+            profile.Difficulty = EnumConverters.ParseDifficulty(args[3]);
         if (args.Length > 4 && !string.IsNullOrEmpty(args[4]))
-            profile.Realm = ParseRealm(args[4]);
+            profile.Realm = EnumConverters.ParseRealm(args[4]);
         if (args.Length > 5 && !string.IsNullOrEmpty(args[5]))
             profile.InfoTag = args[5];
         if (args.Length > 6 && !string.IsNullOrEmpty(args[6]))
             profile.D2Path = args[6];
 
-        await _profileRepository.UpdateAsync(profile);
-        await _profileEngine.NotifyProfileStateChangedAsync(profile.Name, includeProfile: true);
-    }
-
-    private static Difficulty ParseDifficulty(string value)
-    {
-        var lower = value.ToLowerInvariant();
-        return lower switch
-        {
-            "normal" or "0" => Difficulty.Normal,
-            "nightmare" or "1" => Difficulty.Nightmare,
-            "hell" or "2" => Difficulty.Hell,
-            "highest" or "3" => Difficulty.Highest,
-            _ => Difficulty.Unspecified
-        };
-    }
-
-    private static Realm ParseRealm(string value)
-    {
-        var lower = value.ToLowerInvariant();
-        return lower switch
-        {
-            "west" or "uswest" or "uswest.battle.net" => Realm.UsWest,
-            "east" or "useast" or "useast.battle.net" => Realm.UsEast,
-            "europe" or "europe.battle.net" => Realm.Europe,
-            "asia" or "asia.battle.net" => Realm.Asia,
-            _ => Realm.Unspecified
-        };
+        await _profileEngine.UpdateProfileAndNotifyAsync(profile);
     }
 
     private async Task HandleRestartProfileAsync(string profileName)
     {
-        await _profileEngine.StopProfileAsync(profileName);
-        await _profileEngine.RotateKeyAsync(profileName);
-        await Task.Delay(1000);
-        await _profileEngine.StartProfileAsync(profileName);
+        await _profileEngine.RestartProfileAsync(profileName, rotateKey: true);
     }
 
     private async Task HandleCDKeyDisabledAsync(Profile profile, string keyName)
@@ -364,9 +332,8 @@ public class D2BSMessageHandler : BackgroundService
         if (profile != null)
         {
             profile.ScheduleEnabled = false;
-            await _profileRepository.UpdateAsync(profile);
             _messageService.AddMessage(profileName, "Schedule disabled", MessageColor.ColorGold);
-            await _profileEngine.NotifyProfileStateChangedAsync(profileName, includeProfile: true);
+            await _profileEngine.UpdateProfileAndNotifyAsync(profile);
         }
     }
 
@@ -376,9 +343,8 @@ public class D2BSMessageHandler : BackgroundService
         if (profile != null)
         {
             profile.ScheduleEnabled = true;
-            await _profileRepository.UpdateAsync(profile);
             _messageService.AddMessage(profileName, "Schedule enabled", MessageColor.ColorGreen);
-            await _profileEngine.NotifyProfileStateChangedAsync(profileName, includeProfile: true);
+            await _profileEngine.UpdateProfileAndNotifyAsync(profile);
         }
     }
 }

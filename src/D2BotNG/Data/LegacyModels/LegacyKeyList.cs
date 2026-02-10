@@ -1,8 +1,10 @@
 using System.Text.Json.Serialization;
 using D2BotNG.Core.Protos;
+using JetBrains.Annotations;
 
 namespace D2BotNG.Data.LegacyModels;
 
+[UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
 public class LegacyKeyList
 {
     [JsonPropertyName("Name")]

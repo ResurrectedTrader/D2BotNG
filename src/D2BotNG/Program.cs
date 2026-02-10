@@ -202,7 +202,7 @@ internal static class Program
         // Add message service (centralized console messages)
         services.AddSingleton<MessageService>();
 
-        // Add engines - ProfileEngine receives EventBroadcaster directly
+        // Add engines
         services.AddSingleton<ProfileEngine>();
         services.AddSingleton<ScheduleEngine>();
 

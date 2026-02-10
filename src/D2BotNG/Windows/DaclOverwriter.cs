@@ -24,9 +24,6 @@ public class DaclOverwriter
     /// </summary>
     public bool OverwriteDacl(Process process)
     {
-        nint securityDescriptor = 0;
-        nint targetHandle = 0;
-
         try
         {
             // Get the DACL of the current process
@@ -39,7 +36,7 @@ public class DaclOverwriter
                 out _,
                 out nint dacl,
                 out _,
-                out securityDescriptor);
+                out nint rawSecurityDescriptor);
 
             if (result != 0)
             {
@@ -47,18 +44,22 @@ public class DaclOverwriter
                 return false;
             }
 
+            using var securityDescriptor = new SafeLocalAllocHandle(rawSecurityDescriptor, ownsHandle: true);
+
             // Open the target process with WRITE_DAC access
-            targetHandle = OpenProcess(WRITE_DAC, false, process.Id);
-            if (targetHandle == 0)
+            var rawTargetHandle = OpenProcess(WRITE_DAC, false, process.Id);
+            if (rawTargetHandle == 0)
             {
                 int error = Marshal.GetLastWin32Error();
                 _logger.LogError("Failed to open process {Pid} with WRITE_DAC (error {Error})", process.Id, error);
                 return false;
             }
 
+            using var targetHandle = new SafeProcessHandle(rawTargetHandle, ownsHandle: true);
+
             // Set the DACL of the target process
             result = SetSecurityInfo(
-                targetHandle,
+                targetHandle.DangerousGetHandle(),
                 SE_OBJECT_TYPE.SE_KERNEL_OBJECT,
                 SECURITY_INFORMATION.DACL_SECURITY_INFORMATION | SECURITY_INFORMATION.UNPROTECTED_DACL_SECURITY_INFORMATION,
                 0,
@@ -79,14 +80,6 @@ public class DaclOverwriter
         {
             _logger.LogError(ex, "Exception while overwriting DACL for process {Pid}", process.Id);
             return false;
-        }
-        finally
-        {
-            if (targetHandle != 0)
-                CloseHandle(targetHandle);
-
-            if (securityDescriptor != 0)
-                LocalFree(securityDescriptor);
         }
     }
 }

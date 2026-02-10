@@ -1,4 +1,5 @@
 using D2BotNG.Core.Protos;
+using D2BotNG.Utilities;
 using Grpc.Core;
 
 namespace D2BotNG.Services;
@@ -18,7 +19,7 @@ public class FileServiceImpl : FileService.FileServiceBase
         // Validate path exists
         if (!Directory.Exists(path))
         {
-            throw new RpcException(new Status(StatusCode.NotFound, $"Directory not found: {path}"));
+            throw RpcExceptions.NotFound("Directory", path);
         }
 
         var result = new DirectoryListing
@@ -58,7 +59,7 @@ public class FileServiceImpl : FileService.FileServiceBase
         }
         catch (UnauthorizedAccessException)
         {
-            throw new RpcException(new Status(StatusCode.PermissionDenied, $"Access denied: {path}"));
+            throw RpcExceptions.PermissionDenied($"Access denied: {path}");
         }
 
         return Task.FromResult(result);
