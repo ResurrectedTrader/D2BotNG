@@ -55,6 +55,9 @@ public static class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern uint WaitForSingleObject(nint hHandle, uint dwMilliseconds);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool GetExitCodeThread(nint hThread, out uint lpExitCode);
+
     #endregion
 
     #region kernel32.dll - Process Creation
@@ -142,6 +145,7 @@ public static class NativeMethods
 
     [DllImport("user32.dll")]
     public static extern bool IsWindowVisible(nint hWnd);
+
 
     #endregion
 

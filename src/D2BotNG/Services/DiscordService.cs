@@ -206,45 +206,56 @@ public class DiscordService : BackgroundService
         {
             LogSeverity.Critical => LogLevel.Critical,
             LogSeverity.Error => LogLevel.Error,
-            LogSeverity.Warning => LogLevel.Warning,
-            LogSeverity.Info => LogLevel.Debug, // Too spammy
-            LogSeverity.Verbose => LogLevel.Debug,
-            LogSeverity.Debug => LogLevel.Trace,
-            _ => LogLevel.Information
+            // Remaining are too spammy
+            _ => LogLevel.Debug
         };
 
         _logger.Log(level, msg.Exception, "{Source}: {Message}", msg.Source, msg.Message);
         return Task.CompletedTask;
     }
 
-    private async Task OnReady()
+    private Task OnReady()
     {
-        if (_client == null || _guildId == 0) return;
+        // Fire-and-forget to avoid blocking the gateway task
+        _ = OnReadyAsync();
+        return Task.CompletedTask;
+    }
 
-        // Get the guild by ID
-        var guild = _client.GetGuild(_guildId);
-        if (guild == null)
+    private async Task OnReadyAsync()
+    {
+        try
         {
-            _logger.LogWarning("Guild {GuildId} not found - bot may not have access", _guildId);
-            return;
+            if (_client == null || _guildId == 0) return;
+
+            // Get the guild by ID
+            var guild = _client.GetGuild(_guildId);
+            if (guild == null)
+            {
+                _logger.LogWarning("Guild {GuildId} not found - bot may not have access", _guildId);
+                return;
+            }
+
+            await RegisterSlashCommandsAsync(guild);
+
+            // Send ready message to the first text channel we can access
+            var textChannel = guild.TextChannels.FirstOrDefault(c =>
+                guild.CurrentUser.GetPermissions(c).SendMessages);
+
+            if (textChannel != null)
+            {
+                var embed = new EmbedBuilder()
+                    .WithTitle("D2BotNG Online")
+                    .WithDescription("Bot is ready. Use `/help` to see available commands.")
+                    .WithColor(ColorSuccess)
+                    .WithCurrentTimestamp()
+                    .Build();
+
+                await textChannel.SendMessageAsync(embed: embed);
+            }
         }
-
-        await RegisterSlashCommandsAsync(guild);
-
-        // Send ready message to the first text channel we can access
-        var textChannel = guild.TextChannels.FirstOrDefault(c =>
-            guild.CurrentUser.GetPermissions(c).SendMessages);
-
-        if (textChannel != null)
+        catch (Exception ex)
         {
-            var embed = new EmbedBuilder()
-                .WithTitle("D2BotNG Online")
-                .WithDescription("Bot is ready. Use `/help` to see available commands.")
-                .WithColor(ColorSuccess)
-                .WithCurrentTimestamp()
-                .Build();
-
-            await textChannel.SendMessageAsync(embed: embed);
+            _logger.LogError(ex, "Error in Ready handler");
         }
     }
 
@@ -310,7 +321,7 @@ public class DiscordService : BackgroundService
             {
                 await guild.CreateApplicationCommandAsync(command.Build());
             }
-            _logger.LogInformation("Registered {Count} slash commands for guild {GuildId}", commands.Count, guild.Id);
+            _logger.LogDebug("Registered {Count} slash commands for guild {GuildId}", commands.Count, guild.Id);
         }
         catch (Exception ex)
         {
@@ -337,10 +348,16 @@ public class DiscordService : BackgroundService
                 }
             }
 
+            if (command.Data.Name == "list")
+            {
+                var embeds = await HandleList();
+                await command.RespondAsync(embeds: embeds);
+                return;
+            }
+
             var embed = command.Data.Name switch
             {
                 "help" => await HandleHelp(settings.Server.HasPassword),
-                "list" => await HandleList(),
                 "status" => await HandleStatus(command),
                 "start" => await HandleStart(command),
                 "stop" => await HandleStop(command),
@@ -388,28 +405,36 @@ public class DiscordService : BackgroundService
         return Task.FromResult(embed.Build());
     }
 
-    private async Task<Embed> HandleList()
+    private async Task<Embed[]> HandleList()
     {
         var profiles = await _profileRepository.GetAllAsync();
 
         if (!profiles.Any())
         {
-            return CreateInfoEmbed("Profiles", "No profiles configured.");
+            return [CreateInfoEmbed("Profiles", "No profiles configured.")];
         }
 
-        var embed = new EmbedBuilder()
-            .WithTitle("Profiles")
-            .WithColor(ColorInfo);
+        const int maxFieldsPerEmbed = 25;
+        var embeds = new List<Embed>();
 
-        foreach (var profile in profiles)
+        foreach (var chunk in profiles.Chunk(maxFieldsPerEmbed))
         {
-            var instance = _profileEngine.GetInstance(profile.Name);
-            var state = instance?.State.ToString() ?? "Stopped";
-            var emoji = GetStateEmoji(instance?.State);
-            embed.AddField($"{emoji} {profile.Name}", $"State: {state}", inline: true);
+            var embed = new EmbedBuilder()
+                .WithTitle(embeds.Count == 0 ? "Profiles" : "Profiles (cont.)")
+                .WithColor(ColorInfo);
+
+            foreach (var profile in chunk)
+            {
+                var instance = _profileEngine.GetInstance(profile.Name);
+                var state = instance?.State.ToString() ?? "Stopped";
+                var emoji = GetStateEmoji(instance?.State);
+                embed.AddField($"{emoji} {profile.Name}", $"State: {state}", inline: true);
+            }
+
+            embeds.Add(embed.Build());
         }
 
-        return embed.Build();
+        return embeds.ToArray();
     }
 
     private async Task<Embed> HandleStatus(SocketSlashCommand command)

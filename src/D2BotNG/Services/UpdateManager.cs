@@ -84,6 +84,12 @@ public class UpdateManager
 
     public async Task CheckForUpdateAsync(CancellationToken cancellationToken = default)
     {
+        if (_currentVersion == "0.0.0")
+        {
+            _logger.LogDebug("Skipping update check for non-release build (version 0.0.0)");
+            return;
+        }
+
         UpdateStatusAndBroadcast(s =>
         {
             s.State = UpdateState.Checking;

@@ -4,9 +4,10 @@
  * Displays a table of profiles with status and actions.
  * Supports grouping profiles with expandable group headers.
  * Supports drag-and-drop reordering within and across groups.
+ * On desktop (hover devices), hides inline action buttons in favor of right-click context menu.
  */
 
-import { useState, useMemo, Fragment } from "react";
+import { useState, useMemo, useRef, useCallback, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import {
@@ -40,33 +41,35 @@ import {
   useContextMenu,
 } from "@/components/ui";
 import { useAllProfileStates } from "@/stores/event-store";
-import {
-  useProfileActions,
-  useProfileTableColumns,
-  PROFILE_COLUMNS,
-} from "@/hooks";
+import { useProfileActions, useHasHover, useIsLocalhost } from "@/hooks";
 import type { ProfileColumnKey } from "@/hooks";
 import { RunState } from "@/generated/common_pb";
 import type { Profile, ProfileState } from "@/generated/profiles_pb";
+import { canStart, canStop, isActive } from "./profile-states";
 import { ProfileStatusBadge } from "./ProfileStatusBadge";
-import { useProfileActionItems } from "./ProfileActions";
+import {
+  useProfileActionItems,
+  buildSingleProfileActionItems,
+  buildMultiProfileActionItems,
+} from "./ProfileActions";
 import {
   PlayIcon,
   StopIcon,
   EyeIcon,
   EyeSlashIcon,
   ChevronDownIcon,
-  ViewColumnsIcon,
   Bars2Icon,
   ArrowPathIcon,
 } from "@heroicons/react/24/outline";
 
 export interface ProfilesTableProps {
   profiles: Profile[];
+  visibleColumns: { key: ProfileColumnKey; label: string }[];
   selectedProfiles: Set<string>;
   onSelectionChange: (selected: Set<string>) => void;
   onClone: (profile: Profile) => void;
   onDelete: (profile: Profile) => void;
+  onDeleteMultiple: (names: string[]) => void;
 }
 
 interface ProfileGroup {
@@ -147,10 +150,12 @@ interface SortableProfileRowProps {
   visibleColumns: { key: ProfileColumnKey; label: string }[];
   actions: ReturnType<typeof useProfileActions>;
   isSelected: boolean;
+  hasHover: boolean;
   onClone: (profile: Profile) => void;
   onDelete: (profile: Profile) => void;
-  onSelect: (name: string, ctrlKey: boolean) => void;
+  onSelect: (name: string, ctrlKey: boolean, shiftKey: boolean) => void;
   onNavigate: (name: string) => void;
+  onRowContextMenu?: (e: React.MouseEvent, profileName: string) => void;
   isDragOverlay?: boolean;
 }
 
@@ -160,10 +165,12 @@ function SortableProfileRow({
   visibleColumns,
   actions,
   isSelected,
+  hasHover,
   onClone,
   onDelete,
   onSelect,
   onNavigate,
+  onRowContextMenu,
   isDragOverlay,
 }: SortableProfileRowProps) {
   const {
@@ -175,21 +182,19 @@ function SortableProfileRow({
     isDragging,
   } = useSortable({ id: profile.name });
 
+  // For mobile: always build action items for the dropdown
   const actionItems = useProfileActionItems({
     profile,
     status,
     onClone,
     onDelete,
   });
-  const { contextMenu, onContextMenu } = useContextMenu(actionItems);
 
   // Only apply transform to the dragging item to prevent other items from shifting
   const style = isDragging
     ? { transform: CSS.Transform.toString(transform), transition }
     : {};
   const state = status?.state ?? RunState.STOPPED;
-  const isRunning = state === RunState.RUNNING;
-  const isStopped = state === RunState.STOPPED;
   const windowVisible = status?.windowVisible ?? false;
 
   const titleParts = [profile.account, profile.character].filter(Boolean);
@@ -206,11 +211,14 @@ function SortableProfileRow({
         isSelected && "bg-blue-900/30",
       )}
       onClick={(e) =>
-        !isDragging && onSelect(profile.name, e.ctrlKey || e.metaKey)
+        !isDragging &&
+        onSelect(profile.name, e.ctrlKey || e.metaKey, e.shiftKey)
       }
       onDoubleClick={() => !isDragging && onNavigate(profile.name)}
       onContextMenu={(e) => {
-        if (!isDragging) onContextMenu(e);
+        if (!isDragging && onRowContextMenu) {
+          onRowContextMenu(e, profile.name);
+        }
       }}
     >
       <TableCell className="w-px whitespace-nowrap">
@@ -250,102 +258,183 @@ function SortableProfileRow({
           {getColumnValue(col.key, profile, status)}
         </TableCell>
       ))}
-      <TableCell
-        className="w-px whitespace-nowrap"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-end gap-1">
-          {isStopped ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => actions.start.mutate([profile.name])}
-              disabled={actions.start.isPending}
-              title="Start profile"
-            >
-              {actions.start.isPending ? (
-                <ArrowPathIcon className="h-4 w-4 animate-spin" />
-              ) : (
-                <PlayIcon className="h-4 w-4" />
-              )}
-            </Button>
-          ) : (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => actions.stop.mutate([profile.name])}
-              disabled={actions.stop.isPending}
-              title="Stop profile"
-            >
-              {actions.stop.isPending ? (
-                <ArrowPathIcon className="h-4 w-4 animate-spin" />
-              ) : (
-                <StopIcon className="h-4 w-4" />
-              )}
-            </Button>
-          )}
+      {!hasHover && (
+        <TableCell
+          className="w-px whitespace-nowrap"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-end gap-1">
+            {canStart(state) && !canStop(state) ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => actions.start.mutate([profile.name])}
+                disabled={actions.start.isPending}
+                title="Start profile"
+              >
+                {actions.start.isPending ? (
+                  <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                ) : (
+                  <PlayIcon className="h-4 w-4" />
+                )}
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => actions.stop.mutate([profile.name])}
+                disabled={!canStop(state) || actions.stop.isPending}
+                title="Stop profile"
+              >
+                {actions.stop.isPending ? (
+                  <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                ) : (
+                  <StopIcon className="h-4 w-4" />
+                )}
+              </Button>
+            )}
 
-          {/* Show/hide window - hidden when columns start hiding, available in context menu */}
-          <span className={getColumnAlignedInlineClass(visibleColumns.length)}>
-            {isRunning &&
-              (windowVisible ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => actions.hideWindow.mutate([profile.name])}
-                  disabled={actions.hideWindow.isPending}
-                  title="Hide window"
-                >
-                  {actions.hideWindow.isPending ? (
-                    <ArrowPathIcon className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <EyeSlashIcon className="h-4 w-4" />
-                  )}
-                </Button>
-              ) : (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => actions.showWindow.mutate([profile.name])}
-                  disabled={actions.showWindow.isPending}
-                  title="Show window"
-                >
-                  {actions.showWindow.isPending ? (
-                    <ArrowPathIcon className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <EyeIcon className="h-4 w-4" />
-                  )}
-                </Button>
-              ))}
-          </span>
+            {/* Show/hide window - hidden when columns start hiding, available in context menu */}
+            <span
+              className={getColumnAlignedInlineClass(visibleColumns.length)}
+            >
+              {isActive(state) &&
+                (windowVisible ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => actions.hideWindow.mutate([profile.name])}
+                    disabled={actions.hideWindow.isPending}
+                    title="Hide window"
+                  >
+                    {actions.hideWindow.isPending ? (
+                      <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <EyeSlashIcon className="h-4 w-4" />
+                    )}
+                  </Button>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => actions.showWindow.mutate([profile.name])}
+                    disabled={actions.showWindow.isPending}
+                    title="Show window"
+                  >
+                    {actions.showWindow.isPending ? (
+                      <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <EyeIcon className="h-4 w-4" />
+                    )}
+                  </Button>
+                ))}
+            </span>
 
-          <Dropdown items={actionItems} />
-        </div>
-      </TableCell>
-      {contextMenu}
+            <Dropdown items={actionItems} />
+          </div>
+        </TableCell>
+      )}
     </tr>
   );
 }
 
 export function ProfilesTable({
   profiles,
+  visibleColumns,
   selectedProfiles,
   onSelectionChange,
   onClone,
   onDelete,
+  onDeleteMultiple,
 }: ProfilesTableProps) {
   const navigate = useNavigate();
   const statuses = useAllProfileStates();
   const actions = useProfileActions();
-  const { isColumnVisible, toggleColumn } = useProfileTableColumns();
+  const hasHover = useHasHover();
+  const isLocalhost = useIsLocalhost();
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [overGroupId, setOverGroupId] = useState<string | null>(null);
+  const anchorRef = useRef<string | null>(null);
 
-  const handleSelect = (name: string, ctrlKey: boolean) => {
+  // Table-level context menu
+  const [contextMenuItems, setContextMenuItems] = useState<DropdownItem[]>([]);
+  const { contextMenu, onContextMenu: showContextMenu } =
+    useContextMenu(contextMenuItems);
+
+  const handleRowContextMenu = useCallback(
+    (e: React.MouseEvent, profileName: string) => {
+      // Determine effective selection for context menu
+      const isInSelection =
+        selectedProfiles.has(profileName) && selectedProfiles.size > 1;
+
+      if (isInSelection) {
+        // Right-clicked a profile that's part of a multi-selection: keep selection, show multi-menu
+        const selectedProfileObjects = profiles.filter((p) =>
+          selectedProfiles.has(p.name),
+        );
+        const items = buildMultiProfileActionItems({
+          profiles: selectedProfileObjects,
+          statuses,
+          isLocalhost,
+          actions,
+          onDelete: onDeleteMultiple,
+        });
+        setContextMenuItems(items);
+      } else {
+        // Right-clicked an unselected profile or single-selected: select it, show single menu
+        onSelectionChange(new Set([profileName]));
+        const profile = profiles.find((p) => p.name === profileName);
+        if (!profile) return;
+        const items = buildSingleProfileActionItems({
+          profile,
+          status: statuses[profileName],
+          isLocalhost,
+          actions,
+          onEdit: (p) => navigate(`/profiles/${encodeURIComponent(p.name)}`),
+          onClone,
+          onDelete,
+        });
+        setContextMenuItems(items);
+      }
+
+      showContextMenu(e);
+    },
+    [
+      selectedProfiles,
+      profiles,
+      statuses,
+      isLocalhost,
+      actions,
+      onSelectionChange,
+      onClone,
+      onDelete,
+      onDeleteMultiple,
+      navigate,
+      showContextMenu,
+    ],
+  );
+
+  const handleSelect = (name: string, ctrlKey: boolean, shiftKey: boolean) => {
+    if (shiftKey && anchorRef.current) {
+      // Shift+Click: select range from anchor to clicked item, replacing selection
+      const anchorIndex = allProfileIds.indexOf(anchorRef.current);
+      const targetIndex = allProfileIds.indexOf(name);
+      if (anchorIndex !== -1 && targetIndex !== -1) {
+        const start = Math.min(anchorIndex, targetIndex);
+        const end = Math.max(anchorIndex, targetIndex);
+        const rangeNames = allProfileIds.slice(start, end + 1);
+        onSelectionChange(new Set(rangeNames));
+        return;
+      }
+    }
+
+    // Click or Ctrl+Click sets the anchor
+    anchorRef.current = name;
+
     const newSelected = new Set(selectedProfiles);
-    if (ctrlKey) {
-      // Ctrl+Click: toggle individual selection
+    if (ctrlKey || !hasHover) {
+      // Ctrl+Click or touch: toggle individual selection
       if (newSelected.has(name)) {
         newSelected.delete(name);
       } else {
@@ -375,19 +464,6 @@ export function ProfilesTable({
       coordinateGetter: sortableKeyboardCoordinates,
     }),
   );
-
-  // Get visible columns in order
-  const visibleColumns = useMemo(
-    () => PROFILE_COLUMNS.filter((col) => isColumnVisible(col.key)),
-    [isColumnVisible],
-  );
-
-  // Column selector dropdown items
-  const columnSelectorItems: DropdownItem[] = PROFILE_COLUMNS.map((col) => ({
-    label: col.label,
-    checked: isColumnVisible(col.key),
-    onClick: () => toggleColumn(col.key),
-  }));
 
   // Separate ungrouped profiles from grouped ones
   const { ungroupedProfiles, groupedProfiles } = useMemo(() => {
@@ -565,8 +641,8 @@ export function ProfilesTable({
     setOverGroupId(null);
   };
 
-  // Total columns: Drag handle + Name + Status + visible stats + Actions
-  const totalColumns = 3 + visibleColumns.length;
+  // Total columns: Name + Status + visible stats + (Actions on mobile only)
+  const totalColumns = 2 + visibleColumns.length + (hasHover ? 0 : 1);
 
   const handleGroupSelect = (group: ProfileGroup, ctrlKey: boolean) => {
     const groupProfileNames = group.profiles.map((p) => p.name);
@@ -646,67 +722,41 @@ export function ProfilesTable({
     : null;
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      onDragStart={handleDragStart}
-      onDragOver={handleDragOver}
-      onDragEnd={handleDragEnd}
-      onDragCancel={handleDragCancel}
-    >
-      <Table>
-        <TableHead>
-          <TableRow>
-            <TableHeader className="w-px whitespace-nowrap">Name</TableHeader>
-            <TableHeader className="w-full">Status</TableHeader>
-            {visibleColumns.map((col, index) => (
-              <TableHeader
-                key={col.key}
-                className={`${getColumnBreakpointClass(index)} w-px whitespace-nowrap text-right`}
-              >
-                {col.label}
-              </TableHeader>
-            ))}
-            <TableHeader className="w-px whitespace-nowrap text-right">
-              <div className="flex justify-end">
-                <Dropdown
-                  items={columnSelectorItems}
-                  trigger={
-                    <ViewColumnsIcon className="h-5 w-5" aria-hidden="true" />
-                  }
-                />
-              </div>
-            </TableHeader>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          <SortableContext items={allProfileIds}>
-            {/* Ungrouped profiles first - no header, always visible */}
-            {ungroupedProfiles.length > 0 && (
-              <>
-                {ungroupedProfiles.map((profile) => (
-                  <SortableProfileRow
-                    key={profile.name}
-                    profile={profile}
-                    status={statuses[profile.name]}
-                    visibleColumns={visibleColumns}
-                    actions={actions}
-                    isSelected={selectedProfiles.has(profile.name)}
-                    onClone={onClone}
-                    onDelete={onDelete}
-                    onSelect={handleSelect}
-                    onNavigate={handleNavigate}
-                  />
-                ))}
-              </>
-            )}
-
-            {/* Grouped profiles with collapsible headers */}
-            {groupedProfiles.map((group) => (
-              <Fragment key={group.name}>
-                {renderGroupHeader(group)}
-                {expandedGroups.has(group.name) &&
-                  group.profiles.map((profile) => (
+    <>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
+        onDragEnd={handleDragEnd}
+        onDragCancel={handleDragCancel}
+      >
+        <Table className="select-none">
+          <TableHead>
+            <TableRow>
+              <TableHeader className="w-px whitespace-nowrap">Name</TableHeader>
+              <TableHeader className="w-full">Status</TableHeader>
+              {visibleColumns.map((col, index) => (
+                <TableHeader
+                  key={col.key}
+                  className={`${getColumnBreakpointClass(index)} w-px whitespace-nowrap text-right`}
+                >
+                  {col.label}
+                </TableHeader>
+              ))}
+              {!hasHover && (
+                <TableHeader className="w-px whitespace-nowrap text-right">
+                  Actions
+                </TableHeader>
+              )}
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            <SortableContext items={allProfileIds}>
+              {/* Ungrouped profiles first - no header, always visible */}
+              {ungroupedProfiles.length > 0 && (
+                <>
+                  {ungroupedProfiles.map((profile) => (
                     <SortableProfileRow
                       key={profile.name}
                       profile={profile}
@@ -714,38 +764,68 @@ export function ProfilesTable({
                       visibleColumns={visibleColumns}
                       actions={actions}
                       isSelected={selectedProfiles.has(profile.name)}
+                      hasHover={hasHover}
                       onClone={onClone}
                       onDelete={onDelete}
                       onSelect={handleSelect}
                       onNavigate={handleNavigate}
+                      onRowContextMenu={handleRowContextMenu}
                     />
                   ))}
-              </Fragment>
-            ))}
-          </SortableContext>
-        </TableBody>
-      </Table>
+                </>
+              )}
 
-      <DragOverlay>
-        {activeProfile && (
-          <table className="w-full">
-            <tbody>
-              <SortableProfileRow
-                profile={activeProfile}
-                status={statuses[activeProfile.name]}
-                visibleColumns={visibleColumns}
-                actions={actions}
-                isSelected={selectedProfiles.has(activeProfile.name)}
-                onClone={onClone}
-                onDelete={onDelete}
-                onSelect={handleSelect}
-                onNavigate={handleNavigate}
-                isDragOverlay
-              />
-            </tbody>
-          </table>
-        )}
-      </DragOverlay>
-    </DndContext>
+              {/* Grouped profiles with collapsible headers */}
+              {groupedProfiles.map((group) => (
+                <Fragment key={group.name}>
+                  {renderGroupHeader(group)}
+                  {expandedGroups.has(group.name) &&
+                    group.profiles.map((profile) => (
+                      <SortableProfileRow
+                        key={profile.name}
+                        profile={profile}
+                        status={statuses[profile.name]}
+                        visibleColumns={visibleColumns}
+                        actions={actions}
+                        isSelected={selectedProfiles.has(profile.name)}
+                        hasHover={hasHover}
+                        onClone={onClone}
+                        onDelete={onDelete}
+                        onSelect={handleSelect}
+                        onNavigate={handleNavigate}
+                        onRowContextMenu={handleRowContextMenu}
+                      />
+                    ))}
+                </Fragment>
+              ))}
+            </SortableContext>
+          </TableBody>
+        </Table>
+
+        <DragOverlay>
+          {activeProfile && (
+            <table className="w-full">
+              <tbody>
+                <SortableProfileRow
+                  profile={activeProfile}
+                  status={statuses[activeProfile.name]}
+                  visibleColumns={visibleColumns}
+                  actions={actions}
+                  isSelected={selectedProfiles.has(activeProfile.name)}
+                  hasHover={hasHover}
+                  onClone={onClone}
+                  onDelete={onDelete}
+                  onSelect={handleSelect}
+                  onNavigate={handleNavigate}
+                  isDragOverlay
+                />
+              </tbody>
+            </table>
+          )}
+        </DragOverlay>
+      </DndContext>
+
+      {contextMenu}
+    </>
   );
 }

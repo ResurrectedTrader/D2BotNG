@@ -24,9 +24,9 @@ public class PatchRepository : FileRepository<Patch, PatchList>
         return list;
     }
 
-    public IEnumerable<Patch> GetPatchesForVersion(string version)
+    public async Task<IEnumerable<Patch>> GetPatchesForVersionAsync(string version)
     {
-        return Data.Where(p => p.Version == version);
+        return (await GetAllAsync()).Where(p => p.Version == version);
     }
 
     public static string GetModuleName(D2Module module)

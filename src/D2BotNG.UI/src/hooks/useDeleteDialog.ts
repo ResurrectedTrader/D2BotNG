@@ -45,8 +45,9 @@ interface UseDeleteDialogResult<T extends Entity> {
  *   isPending={deleteProfile.isPending}
  * />
  */
-export function useDeleteDialog<T extends Entity>(
-  deleteMutation: UseMutationResult<void, Error, string>,
+export function useDeleteDialog<T extends Entity, TArg = string>(
+  deleteMutation: UseMutationResult<void, Error, TArg>,
+  mapName?: (name: string) => TArg,
 ): UseDeleteDialogResult<T> {
   const [deleteTarget, setDeleteTarget] = useState<T | null>(null);
 
@@ -56,10 +57,13 @@ export function useDeleteDialog<T extends Entity>(
 
   const confirmDelete = useCallback(() => {
     if (deleteTarget) {
-      deleteMutation.mutate(deleteTarget.name);
+      const arg = mapName
+        ? mapName(deleteTarget.name)
+        : (deleteTarget.name as TArg);
+      deleteMutation.mutate(arg);
       setDeleteTarget(null);
     }
-  }, [deleteTarget, deleteMutation]);
+  }, [deleteTarget, deleteMutation, mapName]);
 
   const cancelDelete = useCallback(() => {
     setDeleteTarget(null);

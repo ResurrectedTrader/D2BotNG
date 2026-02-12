@@ -12,23 +12,23 @@ service ProfileService {
   // CRUD operations - mutations return Empty, data arrives via events
   rpc Create(Profile) returns (google.protobuf.Empty);
   rpc Update(UpdateProfileRequest) returns (google.protobuf.Empty);
-  rpc Delete(ProfileName) returns (google.protobuf.Empty);
+  rpc Delete(ProfileNames) returns (google.protobuf.Empty);
 
   // Profile actions (accepts list of profile names)
   rpc Start(ProfileNames) returns (google.protobuf.Empty);
   rpc Stop(ProfileNames) returns (google.protobuf.Empty);
-  rpc Restart(RestartRequest) returns (google.protobuf.Empty);
 
   // Window control (accepts list of profile names)
   rpc ShowWindow(ProfileNames) returns (google.protobuf.Empty);
   rpc HideWindow(ProfileNames) returns (google.protobuf.Empty);
 
-  // Stats and keys
-  rpc ResetStats(ProfileName) returns (google.protobuf.Empty);
-  rpc TriggerMule(ProfileName) returns (google.protobuf.Empty);
-  rpc RotateKey(ProfileName) returns (google.protobuf.Empty);
-  rpc ReleaseKey(ProfileName) returns (google.protobuf.Empty);
-  rpc SetScheduleEnabled(SetScheduleEnabledRequest) returns (google.protobuf.Empty);
+  // Stats and keys (accepts list of profile names)
+  rpc ResetStats(ProfileNames) returns (google.protobuf.Empty);
+  rpc TriggerMule(ProfileNames) returns (google.protobuf.Empty);
+  rpc RotateKey(ProfileNames) returns (google.protobuf.Empty);
+  rpc ReleaseKey(ProfileNames) returns (google.protobuf.Empty);
+  rpc EnableSchedule(ProfileNames) returns (google.protobuf.Empty);
+  rpc DisableSchedule(ProfileNames) returns (google.protobuf.Empty);
 
   // Reordering
   rpc Reorder(ReorderProfileRequest) returns (google.protobuf.Empty);
@@ -96,16 +96,6 @@ message ProfileState {
   // profile fields changed (e.g. stats, key rotation, settings). When absent in
   // events, clients should retain their cached profile data keyed by profile_name.
   optional Profile profile = 40;
-}
-
-message RestartRequest {
-  string profile_name = 1;
-  bool rotate_key = 2;
-}
-
-message SetScheduleEnabledRequest {
-  string profile_name = 1;
-  bool enabled = 2;
 }
 
 message ReorderProfileRequest {

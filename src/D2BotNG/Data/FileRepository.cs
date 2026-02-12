@@ -14,7 +14,7 @@ public abstract class FileRepository<TItem, TList> : IDisposable
     where TList : IMessage<TList>, new()
 {
     protected readonly SemaphoreSlim Lock = new(1, 1);
-    protected readonly List<TItem> Data = [];
+    private readonly List<TItem> _data = [];
     private volatile bool _loaded;
 
     private readonly Paths _paths;
@@ -65,7 +65,7 @@ public abstract class FileRepository<TItem, TList> : IDisposable
 
         var json = await File.ReadAllTextAsync(FilePath);
         var list = ProtobufJsonConfig.Parser.Parse<TList>(json);
-        Data.AddRange(GetItems(list));
+        _data.AddRange(GetItems(list));
     }
 
     protected virtual async Task SaveAsync()
@@ -74,7 +74,7 @@ public abstract class FileRepository<TItem, TList> : IDisposable
         if (directory != null)
             Directory.CreateDirectory(directory);
 
-        var list = CreateList(Data);
+        var list = CreateList(_data);
         var json = ProtobufJsonConfig.Formatter.Format(list);
 
         var tempPath = FilePath + ".tmp";
@@ -98,8 +98,8 @@ public abstract class FileRepository<TItem, TList> : IDisposable
                 tempData.AddRange(GetItems(list));
             }
 
-            Data.Clear();
-            Data.AddRange(tempData);
+            _data.Clear();
+            _data.AddRange(tempData);
             _loaded = true;
         }
         finally
@@ -111,13 +111,13 @@ public abstract class FileRepository<TItem, TList> : IDisposable
     public async Task<IReadOnlyList<TItem>> GetAllAsync()
     {
         await EnsureLoadedAsync();
-        return Data.ToList();
+        return _data.ToList();
     }
 
     public async Task<TItem?> GetByKeyAsync(string key)
     {
         await EnsureLoadedAsync();
-        return Data.FirstOrDefault(e => GetKey(e) == key);
+        return _data.FirstOrDefault(e => GetKey(e) == key);
     }
 
     public async Task<TItem> CreateAsync(TItem entity)
@@ -128,11 +128,11 @@ public abstract class FileRepository<TItem, TList> : IDisposable
         try
         {
             var key = GetKey(entity);
-            var index = Data.FindIndex(e => GetKey(e) == key);
+            var index = _data.FindIndex(e => GetKey(e) == key);
             if (index >= 0)
                 throw new InvalidOperationException($"{typeof(TItem).Name} '{key}' already exists");
 
-            Data.Add(entity);
+            _data.Add(entity);
             await SaveAsync();
             return entity;
         }
@@ -150,11 +150,11 @@ public abstract class FileRepository<TItem, TList> : IDisposable
         await Lock.WaitAsync();
         try
         {
-            var index = Data.FindIndex(e => GetKey(e) == key);
+            var index = _data.FindIndex(e => GetKey(e) == key);
             if (index < 0)
                 throw new KeyNotFoundException($"{typeof(TItem).Name} '{key}' not found");
 
-            Data[index] = entity;
+            _data[index] = entity;
             await SaveAsync();
             return entity;
         }
@@ -171,9 +171,9 @@ public abstract class FileRepository<TItem, TList> : IDisposable
         await Lock.WaitAsync();
         try
         {
-            var index = Data.FindIndex(e => GetKey(e) == key);
+            var index = _data.FindIndex(e => GetKey(e) == key);
             if (index >= 0)
-                Data.RemoveAt(index);
+                _data.RemoveAt(index);
             await SaveAsync();
         }
         finally
@@ -189,16 +189,16 @@ public abstract class FileRepository<TItem, TList> : IDisposable
         await Lock.WaitAsync();
         try
         {
-            var currentIndex = Data.FindIndex(e => GetKey(e) == key);
+            var currentIndex = _data.FindIndex(e => GetKey(e) == key);
             if (currentIndex < 0)
                 throw new KeyNotFoundException($"{typeof(TItem).Name} '{key}' not found");
 
-            if (newIndex < 0 || newIndex >= Data.Count)
-                throw new ArgumentOutOfRangeException(nameof(newIndex), $"Index must be between 0 and {Data.Count - 1}");
+            if (newIndex < 0 || newIndex >= _data.Count)
+                throw new ArgumentOutOfRangeException(nameof(newIndex), $"Index must be between 0 and {_data.Count - 1}");
 
-            var entity = Data[currentIndex];
-            Data.RemoveAt(currentIndex);
-            Data.Insert(newIndex, entity);
+            var entity = _data[currentIndex];
+            _data.RemoveAt(currentIndex);
+            _data.Insert(newIndex, entity);
             await SaveAsync();
         }
         finally

@@ -99,12 +99,25 @@ internal static class Program
     private static void RunWithGui(WebApplication app, string serverUrl, SettingsRepository settingsRepo)
     {
         // Start server in background
-        _ = Task.Run(() => app.RunAsync(serverUrl));
+        var serverTask = Task.Run(() => app.RunAsync(serverUrl));
 
         // Wait for server to be ready (use localhost for health check since 0.0.0.0 won't respond to client requests)
         var healthCheckUrl = serverUrl.Replace("0.0.0.0", "127.0.0.1");
-        if (!WaitForServerReady(healthCheckUrl, TimeSpan.FromSeconds(30)))
+        if (!WaitForServerReady(healthCheckUrl, serverTask, TimeSpan.FromSeconds(30)))
         {
+            if (serverTask.IsFaulted)
+            {
+                var innerEx = serverTask.Exception!.GetBaseException();
+                if (innerEx.Message.Contains("address already in use", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new Exception(
+                        $"Could not start server on {serverUrl} because the port is already in use.\n\n" +
+                        "Another instance of D2BotNG may already be running, or another application is using this port.\n\n" +
+                        "Close the other application or change the port in d2botng.json.",
+                        innerEx);
+                }
+                throw serverTask.Exception.GetBaseException();
+            }
             throw new Exception("Server failed to start within timeout");
         }
 
@@ -134,7 +147,7 @@ internal static class Program
         Application.Run(form);
     }
 
-    private static bool WaitForServerReady(string url, TimeSpan timeout)
+    private static bool WaitForServerReady(string url, Task serverTask, TimeSpan timeout)
     {
         using var client = new HttpClient();
         client.Timeout = TimeSpan.FromSeconds(2);
@@ -142,6 +155,12 @@ internal static class Program
 
         while (DateTime.UtcNow < deadline)
         {
+            // If the server task has faulted, stop waiting immediately
+            if (serverTask.IsFaulted)
+            {
+                return false;
+            }
+
             try
             {
                 var response = client.GetAsync(url).GetAwaiter().GetResult();

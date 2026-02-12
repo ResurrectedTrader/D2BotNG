@@ -8,12 +8,13 @@
  * - Install button when ready
  */
 
-import { Fragment } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Transition } from "@headlessui/react";
 import {
   ArrowDownTrayIcon,
   ArrowPathIcon,
   ExclamationTriangleIcon,
+  XMarkIcon,
 } from "@heroicons/react/24/outline";
 import clsx from "clsx";
 import { Button } from "./ui/Button";
@@ -29,6 +30,20 @@ export function UpdateNotification() {
   const status = useUpdateStatus();
   const startUpdate = useStartUpdate();
   const isVisible = useUpdateVisibility(status);
+  const [dismissed, setDismissed] = useState(false);
+  const prevStateRef = useRef(status?.state);
+
+  // Reset dismissed when update state changes (e.g. new update available)
+  useEffect(() => {
+    if (status?.state !== prevStateRef.current) {
+      prevStateRef.current = status?.state;
+      setDismissed(false);
+    }
+  }, [status?.state]);
+
+  const handleDismiss = useCallback(() => {
+    setDismissed(true);
+  }, []);
 
   if (!status) return null;
 
@@ -38,6 +53,9 @@ export function UpdateNotification() {
   const isError = status.state === UpdateState.ERROR;
   const isUpdateAvailable = status.state === UpdateState.UPDATE_AVAILABLE;
 
+  // Don't allow dismissing while actively downloading or installing
+  const canDismiss = !isDownloading && !isInstalling;
+
   const handleStartUpdate = () => {
     startUpdate.mutate();
   };
@@ -45,7 +63,7 @@ export function UpdateNotification() {
   return (
     <div className="pointer-events-none fixed bottom-0 right-0 z-50 p-4">
       <Transition
-        show={isVisible}
+        show={isVisible && !dismissed}
         as={Fragment}
         enter="transform ease-out duration-300 transition"
         enterFrom="translate-y-2 opacity-0 translate-x-2"
@@ -83,6 +101,16 @@ export function UpdateNotification() {
             >
               {getUpdateStateLabel(status.state)}
             </span>
+            {canDismiss && (
+              <button
+                type="button"
+                onClick={handleDismiss}
+                className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition-colors"
+              >
+                <span className="sr-only">Dismiss</span>
+                <XMarkIcon className="h-4 w-4" aria-hidden="true" />
+              </button>
+            )}
           </div>
 
           {/* Content */}

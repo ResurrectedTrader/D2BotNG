@@ -67,12 +67,14 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
         return new Empty();
     }
 
-    public override async Task<Empty> Delete(ProfileName request, ServerCallContext context)
+    public override async Task<Empty> Delete(ProfileNames request, ServerCallContext context)
     {
-        await _profileEngine.StopProfileAsync(request.Name, force: true);
-
-        await _profileRepository.DeleteAsync(request.Name);
-        _profileEngine.RemoveProfile(request.Name);
+        foreach (var name in request.Names)
+        {
+            await _profileEngine.StopProfileAsync(name, force: true);
+            await _profileRepository.DeleteAsync(name);
+            _profileEngine.RemoveProfile(name);
+        }
         await _profileEngine.BroadcastProfilesSnapshotAsync();
 
         return new Empty();
@@ -88,12 +90,6 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
         return await ForEachProfileAsync(request, name => _profileEngine.StopProfileAsync(name));
     }
 
-    public override async Task<Empty> Restart(RestartRequest request, ServerCallContext context)
-    {
-        await _profileEngine.RestartProfileAsync(request.ProfileName);
-        return new Empty();
-    }
-
     public override async Task<Empty> ShowWindow(ProfileNames request, ServerCallContext context)
     {
         RequireLocalhost(context.Peer);
@@ -106,47 +102,83 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
         return await ForEachProfileAsync(request, name => _profileEngine.HideWindowAsync(name));
     }
 
-    public override async Task<Empty> ResetStats(ProfileName request, ServerCallContext context)
+    public override async Task<Empty> ResetStats(ProfileNames request, ServerCallContext context)
     {
-        if (!await _profileEngine.ResetStatsAsync(request.Name))
+        List<string>? notFound = null;
+        foreach (var name in request.Names)
         {
-            throw RpcExceptions.NotFound("Profile", request.Name);
+            if (!await _profileEngine.ResetStatsAsync(name))
+                (notFound ??= []).Add(name);
         }
+        if (notFound != null)
+            throw RpcExceptions.NotFound("Profile(s)", string.Join(", ", notFound));
         return new Empty();
     }
 
-    public override Task<Empty> TriggerMule(ProfileName request, ServerCallContext context)
+    public override Task<Empty> TriggerMule(ProfileNames request, ServerCallContext context)
     {
-        _profileEngine.SendMessage(request.Name, MessageType.Mule, "mule");
+        foreach (var name in request.Names)
+        {
+            _profileEngine.SendMessage(name, MessageType.Mule, "mule");
+        }
         return Task.FromResult(new Empty());
     }
 
-    public override async Task<Empty> RotateKey(ProfileName request, ServerCallContext context)
+    public override async Task<Empty> RotateKey(ProfileNames request, ServerCallContext context)
     {
-        if (!await _profileEngine.RotateKeyAsync(request.Name))
+        if (!await _profileEngine.RotateKeysAsync(request.Names))
         {
             throw RpcExceptions.FailedPrecondition("Failed to rotate key");
         }
         return new Empty();
     }
 
-    public override async Task<Empty> ReleaseKey(ProfileName request, ServerCallContext context)
+    public override async Task<Empty> ReleaseKey(ProfileNames request, ServerCallContext context)
     {
-        await _profileEngine.ReleaseKeyAsync(request.Name);
+        await _profileEngine.ReleaseKeysAsync(request.Names);
         return new Empty();
     }
 
-    public override async Task<Empty> SetScheduleEnabled(SetScheduleEnabledRequest request, ServerCallContext context)
+    public override async Task<Empty> EnableSchedule(ProfileNames request, ServerCallContext context)
     {
-        var profile = await _profileRepository.GetByKeyAsync(request.ProfileName);
-        if (profile == null)
+        List<string>? notFound = null;
+        foreach (var name in request.Names)
         {
-            throw RpcExceptions.NotFound("Profile", request.ProfileName);
-        }
+            var profile = await _profileRepository.GetByKeyAsync(name);
+            if (profile == null)
+            {
+                (notFound ??= []).Add(name);
+                continue;
+            }
 
-        profile.ScheduleEnabled = request.Enabled;
-        await _profileRepository.UpdateAsync(profile);
-        await _profileEngine.NotifyProfileStateChangedAsync(request.ProfileName, includeProfile: true);
+            profile.ScheduleEnabled = true;
+            await _profileRepository.UpdateAsync(profile);
+            await _profileEngine.NotifyProfileStateChangedAsync(name, includeProfile: true);
+        }
+        if (notFound != null)
+            throw RpcExceptions.NotFound("Profile(s)", string.Join(", ", notFound));
+
+        return new Empty();
+    }
+
+    public override async Task<Empty> DisableSchedule(ProfileNames request, ServerCallContext context)
+    {
+        List<string>? notFound = null;
+        foreach (var name in request.Names)
+        {
+            var profile = await _profileRepository.GetByKeyAsync(name);
+            if (profile == null)
+            {
+                (notFound ??= []).Add(name);
+                continue;
+            }
+
+            profile.ScheduleEnabled = false;
+            await _profileRepository.UpdateAsync(profile);
+            await _profileEngine.NotifyProfileStateChangedAsync(name, includeProfile: true);
+        }
+        if (notFound != null)
+            throw RpcExceptions.NotFound("Profile(s)", string.Join(", ", notFound));
 
         return new Empty();
     }
@@ -236,10 +268,7 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
 
     private static async Task<Empty> ForEachProfileAsync(ProfileNames request, Func<string, Task> action)
     {
-        foreach (var name in request.Names)
-        {
-            await action(name);
-        }
+        await Task.WhenAll(request.Names.Select(action));
         return new Empty();
     }
 

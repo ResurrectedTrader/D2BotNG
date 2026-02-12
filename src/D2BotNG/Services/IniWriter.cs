@@ -24,7 +24,7 @@ public class IniWriter
     /// <summary>
     /// Write all profiles to d2bs.ini.
     /// </summary>
-    public async Task WriteAsync(List<Profile> profiles)
+    public async Task WriteAsync(IReadOnlyList<Profile> profiles)
     {
         var iniPath = Path.Combine(_paths.D2BSDirectory, "d2bs.ini");
         if (!File.Exists(iniPath))
