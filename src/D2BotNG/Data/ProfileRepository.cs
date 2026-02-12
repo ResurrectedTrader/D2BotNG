@@ -26,6 +26,6 @@ public class ProfileRepository : FileRepository<Profile, ProfileList>
     protected override async Task SaveAsync()
     {
         await base.SaveAsync();
-        await _iniWriter.WriteAsync(Data);
+        await _iniWriter.WriteAsync(await GetAllAsync());
     }
 }

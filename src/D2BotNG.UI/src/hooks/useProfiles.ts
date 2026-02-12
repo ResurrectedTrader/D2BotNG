@@ -13,7 +13,7 @@ import {
   ReorderProfileRequestSchema,
   UpdateProfileRequestSchema,
 } from "@/generated/profiles_pb";
-import { ProfileNameSchema, ProfileNamesSchema } from "@/generated/common_pb";
+import { ProfileNamesSchema } from "@/generated/common_pb";
 
 export type ProfileInput = MessageInitShape<typeof ProfileSchema>;
 export type UpdateProfileInput = MessageInitShape<
@@ -66,13 +66,9 @@ export function useUpdateProfile() {
  */
 export function useDeleteProfile() {
   return useMutation({
-    mutationFn: async (name: string) => {
-      const request = create(ProfileNameSchema, { name });
+    mutationFn: async (names: string[]) => {
+      const request = create(ProfileNamesSchema, { names });
       await profileClient.delete(request);
-    },
-    onSuccess: () => {
-      // Data arrives via event stream - no need to invalidate queries
-      toast.success("Profile deleted");
     },
     onError: (error) => {
       toast.error("Failed to delete profile", error.message);
@@ -90,13 +86,6 @@ export function useProfileActions() {
       const request = create(ProfileNamesSchema, { names });
       await profileClient.start(request);
     },
-    onSuccess: (_, names) => {
-      toast.success(
-        names.length === 1
-          ? "Profile started"
-          : `${names.length} profiles started`,
-      );
-    },
     onError: (error) => {
       toast.error("Failed to start profile", error.message);
     },
@@ -106,13 +95,6 @@ export function useProfileActions() {
     mutationFn: async (names: string[]) => {
       const request = create(ProfileNamesSchema, { names });
       await profileClient.stop(request);
-    },
-    onSuccess: (_, names) => {
-      toast.success(
-        names.length === 1
-          ? "Profile stopped"
-          : `${names.length} profiles stopped`,
-      );
     },
     onError: (error) => {
       toast.error("Failed to stop profile", error.message);
@@ -124,11 +106,6 @@ export function useProfileActions() {
       const request = create(ProfileNamesSchema, { names });
       await profileClient.showWindow(request);
     },
-    onSuccess: (_, names) => {
-      toast.success(
-        names.length === 1 ? "Window shown" : `${names.length} windows shown`,
-      );
-    },
     onError: (error) => {
       toast.error("Failed to show window", error.message);
     },
@@ -139,23 +116,15 @@ export function useProfileActions() {
       const request = create(ProfileNamesSchema, { names });
       await profileClient.hideWindow(request);
     },
-    onSuccess: (_, names) => {
-      toast.success(
-        names.length === 1 ? "Window hidden" : `${names.length} windows hidden`,
-      );
-    },
     onError: (error) => {
       toast.error("Failed to hide window", error.message);
     },
   });
 
   const resetStats = useMutation({
-    mutationFn: async (name: string) => {
-      const request = create(ProfileNameSchema, { name });
+    mutationFn: async (names: string[]) => {
+      const request = create(ProfileNamesSchema, { names });
       await profileClient.resetStats(request);
-    },
-    onSuccess: () => {
-      toast.success("Stats reset");
     },
     onError: (error) => {
       toast.error("Failed to reset stats", error.message);
@@ -163,12 +132,9 @@ export function useProfileActions() {
   });
 
   const triggerMule = useMutation({
-    mutationFn: async (name: string) => {
-      const request = create(ProfileNameSchema, { name });
+    mutationFn: async (names: string[]) => {
+      const request = create(ProfileNamesSchema, { names });
       await profileClient.triggerMule(request);
-    },
-    onSuccess: () => {
-      toast.success("Mule triggered");
     },
     onError: (error) => {
       toast.error("Failed to trigger mule", error.message);
@@ -176,12 +142,9 @@ export function useProfileActions() {
   });
 
   const rotateKey = useMutation({
-    mutationFn: async (name: string) => {
-      const request = create(ProfileNameSchema, { name });
+    mutationFn: async (names: string[]) => {
+      const request = create(ProfileNamesSchema, { names });
       await profileClient.rotateKey(request);
-    },
-    onSuccess: () => {
-      toast.success("Key rotated");
     },
     onError: (error) => {
       toast.error("Failed to rotate key", error.message);
@@ -189,33 +152,32 @@ export function useProfileActions() {
   });
 
   const releaseKey = useMutation({
-    mutationFn: async (name: string) => {
-      const request = create(ProfileNameSchema, { name });
+    mutationFn: async (names: string[]) => {
+      const request = create(ProfileNamesSchema, { names });
       await profileClient.releaseKey(request);
-    },
-    onSuccess: () => {
-      toast.success("Key released");
     },
     onError: (error) => {
       toast.error("Failed to release key", error.message);
     },
   });
 
-  const setScheduleEnabled = useMutation({
-    mutationFn: async ({
-      profileName,
-      enabled,
-    }: {
-      profileName: string;
-      enabled: boolean;
-    }) => {
-      await profileClient.setScheduleEnabled({ profileName, enabled });
-    },
-    onSuccess: (_, { enabled }) => {
-      toast.success(enabled ? "Schedule enabled" : "Schedule disabled");
+  const enableSchedule = useMutation({
+    mutationFn: async (names: string[]) => {
+      const request = create(ProfileNamesSchema, { names });
+      await profileClient.enableSchedule(request);
     },
     onError: (error) => {
-      toast.error("Failed to update schedule", error.message);
+      toast.error("Failed to enable schedule", error.message);
+    },
+  });
+
+  const disableSchedule = useMutation({
+    mutationFn: async (names: string[]) => {
+      const request = create(ProfileNamesSchema, { names });
+      await profileClient.disableSchedule(request);
+    },
+    onError: (error) => {
+      toast.error("Failed to disable schedule", error.message);
     },
   });
 
@@ -250,7 +212,8 @@ export function useProfileActions() {
     triggerMule,
     rotateKey,
     releaseKey,
-    setScheduleEnabled,
+    enableSchedule,
+    disableSchedule,
     reorder,
   };
 }

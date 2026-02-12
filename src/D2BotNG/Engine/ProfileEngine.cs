@@ -129,6 +129,7 @@ public class ProfileEngine : IDisposable
             return false;
         }
 
+        instance.CrashCount = 0;
         await NotifyProfileStateChangedAsync(profileName);
 
         _ = RunProfileBackgroundAsync(instance);
@@ -265,14 +266,59 @@ public class ProfileEngine : IDisposable
         return true;
     }
 
-    public async Task ReleaseKeyAsync(string profileName)
+    public async Task ReleaseKeysAsync(IEnumerable<string> profileNames)
     {
-        if (_instances.TryGetValue(profileName, out var instance))
+        foreach (var profileName in profileNames)
         {
-            instance.KeyName = null;
-            await NotifyProfileStateChangedAsync(profileName);
-            await BroadcastKeyListsSnapshotAsync();
+            if (_instances.TryGetValue(profileName, out var instance))
+            {
+                instance.KeyName = null;
+                await NotifyProfileStateChangedAsync(profileName);
+            }
         }
+        await BroadcastKeyListsSnapshotAsync();
+    }
+
+    public async Task<bool> RotateKeysAsync(IEnumerable<string> profileNames)
+    {
+        var allSucceeded = true;
+        foreach (var profileName in profileNames)
+        {
+            if (!await RotateKeySingleAsync(profileName))
+                allSucceeded = false;
+        }
+        await BroadcastKeyListsSnapshotAsync();
+        return allSucceeded;
+    }
+
+    private async Task<bool> RotateKeySingleAsync(string profileName)
+    {
+        if (!_instances.TryGetValue(profileName, out var instance))
+        {
+            return false;
+        }
+
+        var profile = await _profileRepository.GetByKeyAsync(profileName);
+        if (profile == null || string.IsNullOrEmpty(profile.KeyList))
+        {
+            return false;
+        }
+
+        // Clear current key first (frees it in runtime state)
+        instance.KeyName = null;
+
+        // Get next available key
+        var usedKeys = await GetUsedKeyNamesAsync(profile.KeyList);
+        var key = await _keyListRepository.GetNextAvailableKeyAsync(profile.KeyList, usedKeys);
+        if (key == null)
+        {
+            return false;
+        }
+
+        instance.KeyName = key.Name;
+        await NotifyProfileStateChangedAsync(profileName);
+
+        return true;
     }
 
     private async Task<CDKey?> AcquireKeyAsync(string keyListName)
@@ -397,6 +443,11 @@ public class ProfileEngine : IDisposable
         var profileName = instance.ProfileName;
         var cancellationToken = instance.GetCancellationToken();
 
+        // Clear stale status from previous run
+        instance.Status = "";
+        instance.MissedHeartbeats = 0;
+        await NotifyProfileStateChangedAsync(profileName);
+
         try
         {
             var profile = await _profileRepository.GetByKeyAsync(profileName);
@@ -466,7 +517,6 @@ public class ProfileEngine : IDisposable
             }
 
             await NotifyProfileStateChangedAsync(profileName);
-            instance.CrashCount = 0;
 
             // Monitor process
             await MonitorProcessAsync(instance, cancellationToken);
@@ -499,18 +549,21 @@ public class ProfileEngine : IDisposable
         {
             if (process.HasExited)
             {
-                _logger.LogInformation("Profile {Name} process exited with code {Code}",
+                _logger.LogDebug("Profile {Name} process exited with code {Code}",
                     instance.ProfileName, process.ExitCode);
 
-                if (process.ExitCode != 0)
+                _handleToProfile.TryRemove(process.MainWindowHandle, out _);
+
+                if (instance.State == RunState.Running)
                 {
+                    // Process exited while intended to be running — treat as crash
+                    _logger.LogWarning("Profile {Name} exited unexpectedly, treating as crash",
+                        instance.ProfileName);
+                    await instance.SetErrorAsync("Process exited unexpectedly");
+                    await NotifyProfileStateChangedAsync(instance.ProfileName);
                     await HandleCrashAsync(instance);
                 }
-                else
-                {
-                    await instance.TransitionToAsync(RunState.Stopped);
-                    await NotifyProfileStateChangedAsync(instance.ProfileName);
-                }
+                // If state is Stopping, StopProfileAsync handles the cleanup
                 return;
             }
 
@@ -533,9 +586,19 @@ public class ProfileEngine : IDisposable
 
                     if (instance.MissedHeartbeats >= MaxMissedHeartbeats)
                     {
-                        _logger.LogError("Profile {Name} terminated due to lack of response",
+                        _logger.LogWarning("Profile {Name} not responding, treating as crash",
                             instance.ProfileName);
-                        await StopProfileAsync(instance.ProfileName, force: true);
+
+                        _handleToProfile.TryRemove(process.MainWindowHandle, out _);
+
+                        // Kill the unresponsive process
+                        await _processManager.TerminateAsync(process, TimeSpan.FromSeconds(5));
+
+                        // Treat as crash — restart instead of stopping
+                        instance.MissedHeartbeats = 0;
+                        await instance.SetErrorAsync("Process not responding");
+                        await NotifyProfileStateChangedAsync(instance.ProfileName);
+                        await HandleCrashAsync(instance);
                         return;
                     }
                 }
@@ -568,6 +631,14 @@ public class ProfileEngine : IDisposable
 
             await Task.Delay(TimeSpan.FromSeconds(5));
 
+            // If state changed during delay (e.g. user stopped), don't restart
+            if (instance.State != RunState.Error)
+            {
+                _logger.LogDebug("Profile {Name} state changed to {State} during crash delay, not restarting",
+                    profileName, instance.State);
+                return;
+            }
+
             if (await instance.TransitionToAsync(RunState.Starting))
             {
                 await NotifyProfileStateChangedAsync(profileName);
@@ -577,7 +648,7 @@ public class ProfileEngine : IDisposable
         else
         {
             _logger.LogError("Profile {Name} exceeded max crash retries", profileName);
-            await instance.SetErrorAsync($"Exceeded max crash retries ({MaxCrashRetries})");
+            await instance.TransitionToAsync(RunState.Stopped);
 
             // Disable schedule to prevent ScheduleEngine from restarting
             if (profile is { ScheduleEnabled: true })
@@ -587,7 +658,7 @@ public class ProfileEngine : IDisposable
                 _logger.LogWarning("Disabled schedule for profile {Name} due to repeated crashes", profileName);
             }
 
-            await instance.TransitionToAsync(RunState.Stopped);
+            await instance.SetErrorAsync($"Exceeded max crash retries ({MaxCrashRetries})");
             await NotifyProfileStateChangedAsync(profileName, includeProfile: true);
         }
     }

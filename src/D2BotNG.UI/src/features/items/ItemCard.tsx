@@ -28,7 +28,7 @@ export const ItemCard = memo(function ItemCard({
   return (
     <div
       className={clsx(
-        "flex items-center gap-3 rounded-lg bg-zinc-900 p-3 ring-1 ring-zinc-800 transition-colors hover:ring-zinc-700",
+        "flex min-w-0 items-center gap-3 rounded-lg bg-zinc-900 p-3 ring-1 ring-zinc-800 transition-colors hover:ring-zinc-700",
         className,
       )}
       onMouseEnter={() => setIsHovered(true)}
@@ -54,17 +54,32 @@ export const ItemCard = memo(function ItemCard({
         )}
       </div>
 
-      {/* Socket count indicator */}
-      {item.sockets.length > 0 && (
-        <div
-          className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-zinc-700 text-xs font-bold text-zinc-100"
-          title={
-            item.sockets.length +
-            " socket" +
-            (item.sockets.length > 1 ? "s" : "")
-          }
-        >
-          {item.sockets.length}
+      {/* Item badges */}
+      {(item.sockets.length > 0 || item.description?.includes("Ethereal")) && (
+        <div className="flex flex-shrink-0 flex-col items-center gap-1">
+          {/* Socket count indicator */}
+          {item.sockets.length > 0 && (
+            <div
+              className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-700 text-xs font-bold text-zinc-100"
+              title={
+                item.sockets.length +
+                " socket" +
+                (item.sockets.length > 1 ? "s" : "")
+              }
+            >
+              {item.sockets.length}
+            </div>
+          )}
+
+          {/* Ethereal indicator */}
+          {item.description?.includes("Ethereal") && (
+            <div
+              className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-900/60 text-xs font-bold text-cyan-300"
+              title="Ethereal"
+            >
+              E
+            </div>
+          )}
         </div>
       )}
     </div>

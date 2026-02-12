@@ -96,6 +96,8 @@ public static class NativeTypes
     public const uint PROCESS_VM_OPERATION = 0x0008;
     public const uint PROCESS_VM_READ = 0x0010;
     public const uint PROCESS_VM_WRITE = 0x0020;
+    public const uint PROCESS_CREATE_THREAD = 0x0002;
+    public const uint PROCESS_QUERY_INFORMATION = 0x0400;
     public const uint WRITE_DAC = 0x00040000;
 
     // Thread access rights (DWORD)
@@ -141,6 +143,9 @@ public static class NativeTypes
 
     // Special window handles
     public static readonly nint HWND_MESSAGE = -3;
+
+    // Wait constants
+    public const uint INFINITE = 0xFFFFFFFF;
 
     #endregion
 }

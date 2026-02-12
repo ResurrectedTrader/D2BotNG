@@ -16,6 +16,8 @@ public class MainForm : Form
     private const int ResizeBorderSize = 3;
 
     // ReSharper disable InconsistentNaming — Win32 API constants
+    private const int WM_SYSCOMMAND = 0x112;
+    private const int SC_MINIMIZE = 0xF020;
     private const int WM_NCHITTEST = 0x84;
     private const int WM_EXITSIZEMOVE = 0x232;
     private const int HTCLIENT = 1;
@@ -104,6 +106,13 @@ public class MainForm : Form
             return;
         }
 
+        // Intercept system minimize (taskbar right-click, Win+D, etc.) → minimize to tray
+        if (m.Msg == WM_SYSCOMMAND && (m.WParam.ToInt32() & 0xFFF0) == SC_MINIMIZE)
+        {
+            MinimizeToTray();
+            return;
+        }
+
         if (m.Msg == WM_NCHITTEST && WindowState != FormWindowState.Maximized)
         {
             var pt = PointToClient(new Point(m.LParam.ToInt32() & 0xFFFF, m.LParam.ToInt32() >> 16));
@@ -186,7 +195,7 @@ public class MainForm : Form
             switch (action)
             {
                 case "minimize":
-                    WindowState = FormWindowState.Minimized;
+                    MinimizeToTray();
                     break;
 
                 case "maximize":
@@ -236,7 +245,13 @@ public class MainForm : Form
         else
         {
             _restoreBounds = Bounds;
-            MaximizedBounds = Screen.FromHandle(Handle).WorkingArea;
+            var screen = Screen.FromRectangle(Bounds);
+            // MaximizedBounds position is relative to the monitor origin, not absolute
+            MaximizedBounds = new Rectangle(
+                screen.WorkingArea.X - screen.Bounds.X,
+                screen.WorkingArea.Y - screen.Bounds.Y,
+                screen.WorkingArea.Width,
+                screen.WorkingArea.Height);
             WindowState = FormWindowState.Maximized;
         }
 
@@ -331,14 +346,7 @@ public class MainForm : Form
 
     private void OnFormResize(object? sender, EventArgs e)
     {
-        if (WindowState == FormWindowState.Minimized)
-        {
-            MinimizeToTray();
-        }
-        else
-        {
-            NotifyWindowState();
-        }
+        NotifyWindowState();
     }
 
     private void MinimizeToTray()
@@ -420,7 +428,12 @@ public class MainForm : Form
 
                 if (!window.IsMaximized) return;
 
-                MaximizedBounds = Screen.FromRectangle(bounds).WorkingArea;
+                var screen = Screen.FromRectangle(bounds);
+                MaximizedBounds = new Rectangle(
+                    screen.WorkingArea.X - screen.Bounds.X,
+                    screen.WorkingArea.Y - screen.Bounds.Y,
+                    screen.WorkingArea.Width,
+                    screen.WorkingArea.Height);
                 WindowState = FormWindowState.Maximized;
             }
             else

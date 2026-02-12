@@ -66,3 +66,6 @@ export type { ProfileColumnKey, ProfileColumn } from "./useProfileTableColumns";
 
 // Localhost check hook
 export { useIsLocalhost } from "./useIsLocalhost";
+
+// Hover capability hook
+export { useHasHover } from "./useHasHover";

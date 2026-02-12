@@ -58,7 +58,7 @@ public class GameLauncher
             process.EnableRaisingEvents = true;
 
             // Step 5: Apply patches
-            await ApplyPatchesAsync(process);
+            await ApplyPatchesAsync(process, gameDir, config.Visible);
 
             // Step 6: Resume process
             _processManager.ResumeProcess(process);
@@ -140,7 +140,7 @@ public class GameLauncher
         }
     }
 
-    private async Task ApplyPatchesAsync(Process process)
+    private async Task ApplyPatchesAsync(Process process, string gameDir, bool visible)
     {
         var settings = await _settingsRepository.GetAsync();
         var version = settings.Game?.GameVersion;
@@ -151,13 +151,17 @@ public class GameLauncher
             return;
         }
 
-        var patches = _patchRepository.GetPatchesForVersion(version);
+        var patches = await _patchRepository.GetPatchesForVersionAsync(version);
 
         foreach (var patch in patches)
         {
+            // Do not apply hidewin patches if the window is supposed to be visible.
+            if (visible && patch.Name.StartsWith("hidewin")) continue;
             var moduleName = PatchRepository.GetModuleName(patch.Module);
+            var modulePath = Path.Combine(gameDir, moduleName);
+
             var bytes = patch.Data.ToByteArray();
-            _patcher.ApplyPatch(process, moduleName, patch.Offset, bytes);
+            _patcher.ApplyPatch(process, modulePath, patch.Offset, bytes);
         }
     }
 

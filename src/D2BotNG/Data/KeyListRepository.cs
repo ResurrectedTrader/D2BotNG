@@ -21,16 +21,16 @@ public class KeyListRepository : FileRepository<KeyList, KeyListCollection>
 
     public async Task<CDKey?> GetNextAvailableKeyAsync(string keyListName, IReadOnlySet<string> usedKeyNames)
     {
+        var keyList = await GetByKeyAsync(keyListName);
+        if (keyList == null)
+            return null;
+
+        var keys = keyList.Keys;
+        if (keys.Count == 0) return null;
+
         await Lock.WaitAsync();
         try
         {
-            var keyList = Data.FirstOrDefault(k => GetKey(k) == keyListName);
-            if (keyList == null)
-                return null;
-
-            var keys = keyList.Keys;
-            if (keys.Count == 0) return null;
-
             _currentIndex.TryGetValue(keyListName, out var startIndex);
 
             for (int i = 0; i < keys.Count; i++)
@@ -55,22 +55,14 @@ public class KeyListRepository : FileRepository<KeyList, KeyListCollection>
 
     public async Task HoldKeyAsync(string keyListName, string keyName)
     {
-        await Lock.WaitAsync();
-        try
+        var all = await GetAllAsync();
+        var keyList = all.FirstOrDefault(k => GetKey(k) == keyListName);
+        if (keyList == null) return;
+
+        var key = keyList.Keys.FirstOrDefault(k => k.Name == keyName);
+        if (key != null)
         {
-            var keyList = Data.FirstOrDefault(k => GetKey(k) == keyListName);
-            if (keyList != null)
-            {
-                var key = keyList.Keys.FirstOrDefault(k => k.Name == keyName);
-                if (key != null)
-                {
-                    key.Held = true;
-                }
-            }
-        }
-        finally
-        {
-            Lock.Release();
+            key.Held = true;
         }
     }
 }

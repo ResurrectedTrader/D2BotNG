@@ -13,16 +13,20 @@ import {
   Card,
   LoadingSpinner,
   DeleteConfirmationDialog,
+  Dropdown,
+  type DropdownItem,
 } from "@/components/ui";
 import {
   useDeleteProfile,
   useProfileActions,
   useDeleteDialog,
   useIsLocalhost,
+  useProfileTableColumns,
+  PROFILE_COLUMNS,
 } from "@/hooks";
 import { useProfiles, useIsLoading } from "@/stores/event-store";
 import type { Profile } from "@/generated/profiles_pb";
-import { RunState } from "@/generated/common_pb";
+import { canStart, canStop, isActive } from "./profile-states";
 import { ProfilesTable } from "./ProfilesTable";
 import {
   PlayIcon,
@@ -32,6 +36,7 @@ import {
   PlusIcon,
   UserGroupIcon,
   ArrowPathIcon,
+  ViewColumnsIcon,
 } from "@heroicons/react/24/outline";
 
 export function ProfilesPage() {
@@ -44,19 +49,51 @@ export function ProfilesPage() {
   const actions = useProfileActions();
   const isLocalhost = useIsLocalhost();
 
+  // Column visibility
+  const { isColumnVisible, toggleColumn } = useProfileTableColumns();
+
+  const visibleColumns = useMemo(
+    () => PROFILE_COLUMNS.filter((col) => isColumnVisible(col.key)),
+    [isColumnVisible],
+  );
+
+  const columnSelectorItems: DropdownItem[] = PROFILE_COLUMNS.map((col) => ({
+    label: col.label,
+    checked: isColumnVisible(col.key),
+    onClick: () => toggleColumn(col.key),
+  }));
+
   // Selected profiles for bulk actions
   const [selectedProfiles, setSelectedProfiles] = useState<Set<string>>(
     new Set(),
   );
 
-  // Delete dialog hook
+  // Single-profile delete dialog
   const {
     deleteTarget,
     isOpen: isDeleteDialogOpen,
     requestDelete,
     confirmDelete,
     cancelDelete,
-  } = useDeleteDialog<Profile>(deleteProfile);
+  } = useDeleteDialog<Profile, string[]>(deleteProfile, (name) => [name]);
+
+  // Multi-profile delete state
+  const [deleteNames, setDeleteNames] = useState<string[] | null>(null);
+
+  const handleDeleteMultiple = useCallback((names: string[]) => {
+    setDeleteNames(names);
+  }, []);
+
+  const confirmDeleteMultiple = useCallback(() => {
+    if (deleteNames) {
+      deleteProfile.mutate(deleteNames);
+      setDeleteNames(null);
+    }
+  }, [deleteNames, deleteProfile]);
+
+  const cancelDeleteMultiple = useCallback(() => {
+    setDeleteNames(null);
+  }, []);
 
   const handleNewProfile = useCallback(() => {
     navigate("/profiles/new");
@@ -72,12 +109,12 @@ export function ProfilesPage() {
 
   const hasProfiles = profiles && profiles.length > 0;
 
-  // Calculate profile state counts for bulk actions
+  // Calculate profile state counts for bulk actions (mirrors backend state machine)
   // If profiles are selected, only include those; otherwise include all
-  const { stoppedNames, runningNames, hiddenNames, visibleNames } =
+  const { startableNames, stoppableNames, hiddenNames, visibleNames } =
     useMemo(() => {
-      const stopped: string[] = [];
-      const running: string[] = [];
+      const startable: string[] = [];
+      const stoppable: string[] = [];
       const hidden: string[] = [];
       const visible: string[] = [];
 
@@ -87,24 +124,21 @@ export function ProfilesPage() {
         // If we have a selection, only include selected profiles
         if (hasSelection && !selectedProfiles.has(profile.name)) continue;
 
-        const isStopped = !status || status.state === RunState.STOPPED;
-        const isRunning =
-          status?.state === RunState.STARTING ||
-          status?.state === RunState.RUNNING;
+        const state = status?.state;
 
-        if (isStopped) stopped.push(profile.name);
-        if (isRunning) running.push(profile.name);
+        if (canStart(state)) startable.push(profile.name);
+        if (canStop(state)) stoppable.push(profile.name);
 
-        // Window visibility only matters when running
-        if (isRunning) {
+        // Window visibility only matters when actively running
+        if (isActive(state)) {
           if (status?.windowVisible) visible.push(profile.name);
           else hidden.push(profile.name);
         }
       }
 
       return {
-        stoppedNames: stopped,
-        runningNames: running,
+        startableNames: startable,
+        stoppableNames: stoppable,
         hiddenNames: hidden,
         visibleNames: visible,
       };
@@ -132,8 +166,8 @@ export function ProfilesPage() {
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => actions.start.mutate(stoppedNames)}
-              disabled={stoppedNames.length === 0 || actions.start.isPending}
+              onClick={() => actions.start.mutate(startableNames)}
+              disabled={startableNames.length === 0 || actions.start.isPending}
             >
               {actions.start.isPending ? (
                 <ArrowPathIcon className="h-4 w-4 animate-spin" />
@@ -141,14 +175,14 @@ export function ProfilesPage() {
                 <PlayIcon className="h-4 w-4" />
               )}
               {selectedProfiles.size > 0
-                ? `Start (${stoppedNames.length})`
+                ? `Start (${startableNames.length})`
                 : "Start All"}
             </Button>
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => actions.stop.mutate(runningNames)}
-              disabled={runningNames.length === 0 || actions.stop.isPending}
+              onClick={() => actions.stop.mutate(stoppableNames)}
+              disabled={stoppableNames.length === 0 || actions.stop.isPending}
             >
               {actions.stop.isPending ? (
                 <ArrowPathIcon className="h-4 w-4 animate-spin" />
@@ -156,7 +190,7 @@ export function ProfilesPage() {
                 <StopIcon className="h-4 w-4" />
               )}
               {selectedProfiles.size > 0
-                ? `Stop (${runningNames.length})`
+                ? `Stop (${stoppableNames.length})`
                 : "Stop All"}
             </Button>
             {isLocalhost && (
@@ -207,6 +241,12 @@ export function ProfilesPage() {
           <PlusIcon className="h-4 w-4" />
           New Profile
         </Button>
+        {hasProfiles && (
+          <Dropdown
+            items={columnSelectorItems}
+            trigger={<ViewColumnsIcon className="h-5 w-5" aria-hidden="true" />}
+          />
+        )}
       </div>
 
       {/* Content */}
@@ -214,10 +254,12 @@ export function ProfilesPage() {
         <Card className="overflow-hidden">
           <ProfilesTable
             profiles={profiles}
+            visibleColumns={visibleColumns}
             selectedProfiles={selectedProfiles}
             onSelectionChange={setSelectedProfiles}
             onClone={handleClone}
             onDelete={requestDelete}
+            onDeleteMultiple={handleDeleteMultiple}
           />
         </Card>
       ) : (
@@ -234,7 +276,7 @@ export function ProfilesPage() {
         />
       )}
 
-      {/* Delete confirmation dialog */}
+      {/* Single delete confirmation dialog */}
       <DeleteConfirmationDialog
         open={isDeleteDialogOpen}
         entityType="Profile"
@@ -243,6 +285,17 @@ export function ProfilesPage() {
         isPending={deleteProfile.isPending}
         onConfirm={confirmDelete}
         onCancel={cancelDelete}
+      />
+
+      {/* Multi-delete confirmation dialog */}
+      <DeleteConfirmationDialog
+        open={deleteNames !== null}
+        entityType="Profiles"
+        entityName={`${deleteNames?.length ?? 0} profiles`}
+        warningMessage="All profile data including statistics will be permanently deleted for all selected profiles."
+        isPending={deleteProfile.isPending}
+        onConfirm={confirmDeleteMultiple}
+        onCancel={cancelDeleteMultiple}
       />
     </div>
   );

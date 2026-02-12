@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using D2BotNG.Core.Protos;
+using D2BotNG.Data.LegacyModels;
 using D2BotNG.Data;
 using D2BotNG.Engine;
 using D2BotNG.Utilities;
@@ -95,6 +96,11 @@ public class D2BSMessageHandler : BackgroundService
             case "printToConsole":
                 if (args.Length > 0)
                     HandlePrintToConsole(profile.Name, args);
+                break;
+
+            case "printToItemLog":
+                if (args.Length > 0 && args[0].Length > 0)
+                    HandlePrintToItemLog(profile.Name, args[0]);
                 break;
 
             case "getProfile":
@@ -250,6 +256,12 @@ public class D2BSMessageHandler : BackgroundService
     {
         profile.Deaths++;
         await _profileEngine.UpdateProfileAndNotifyAsync(profile);
+    }
+
+    private void HandlePrintToItemLog(string profileName, string itemJson)
+    {
+        var legacyItem = JsonSerializer.Deserialize<LegacyItem>(itemJson)!;
+        _messageService.AddMessage(profileName, legacyItem.Title, MessageColor.ColorDefault, legacyItem.ToModern());
     }
 
     private void HandlePrintToConsole(string profileName, string[] args)
