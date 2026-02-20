@@ -7,7 +7,6 @@ using D2BotNG.Services;
 using D2BotNG.UI;
 using D2BotNG.Windows;
 using Microsoft.Extensions.FileProviders;
-using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Events;
 using Serilog.Extensions.Logging; // For SerilogLoggerFactory
@@ -26,10 +25,11 @@ internal static class Program
 
         // Configure logging with async sinks to avoid thread pool starvation
         Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
+            .MinimumLevel.Verbose()
             .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
             .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Warning)
             .MinimumLevel.Override("Grpc", LogEventLevel.Warning)
+            .Filter.With<LoggerRegistry>()
             .WriteTo.Async(a => a.Console())
             .WriteTo.Async(a => a.File("logs/d2bot-.log", rollingInterval: RollingInterval.Day))
             .WriteTo.MessageService()
@@ -51,7 +51,7 @@ internal static class Program
             // Initialize the MessageService sink for logging to console panel (do this early)
             var messageService = app.Services.GetRequiredService<MessageService>();
             var loggerRegistry = app.Services.GetRequiredService<LoggerRegistry>();
-            MessageServiceSink.Initialize(messageService, loggerRegistry);
+            MessageServiceSink.Initialize(messageService);
             TrackingLoggerFactory.Initialize(loggerRegistry);
 
             // Migrate legacy data files using the configured base path from settings
@@ -78,6 +78,8 @@ internal static class Program
                 // Headless mode: create message-only window for D2BS IPC
                 var messageWindow = app.Services.GetRequiredService<MessageWindow>();
                 messageWindow.CreateMessageOnlyWindow();
+
+                Logger.Information("Server will run on {Url}", serverUrl);
 
                 // Run the server
                 app.Run(serverUrl);
@@ -129,8 +131,6 @@ internal static class Program
             }
             throw new Exception("Server failed to start within timeout");
         }
-
-        Logger.Information("Server is ready at {Url}", serverUrl);
 
         // Check if we should start minimized
         var settings = settingsRepo.GetAsync().GetAwaiter().GetResult();

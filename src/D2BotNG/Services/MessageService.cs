@@ -10,18 +10,14 @@ namespace D2BotNG.Services;
 /// </summary>
 public class MessageService
 {
-    private readonly ILogger<MessageService> _logger;
     private readonly EventBroadcaster _eventBroadcaster;
 
     private const int MaxHistorySize = 100_000;
     private readonly List<Message> _history = [];
     private readonly Lock _historyLock = new();
 
-    public MessageService(
-        ILogger<MessageService> logger,
-        EventBroadcaster eventBroadcaster)
+    public MessageService(EventBroadcaster eventBroadcaster)
     {
-        _logger = logger;
         _eventBroadcaster = eventBroadcaster;
     }
 
@@ -61,8 +57,6 @@ public class MessageService
             Timestamp = msg.Timestamp,
             Message = msg
         });
-
-        _logger.LogDebug("[{Source}] {Content}", source, content);
     }
 
     /// <summary>
