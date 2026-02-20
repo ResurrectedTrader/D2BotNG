@@ -1,6 +1,7 @@
 using D2BotNG.Core.Protos;
 using D2BotNG.Data;
 using D2BotNG.Engine;
+using D2BotNG.Logging;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 
@@ -15,6 +16,7 @@ public class EventServiceImpl : EventService.EventServiceBase
     private readonly ProfileEngine _profileEngine;
     private readonly UpdateManager _updateManager;
     private readonly MessageService _messageService;
+    private readonly LoggerRegistry _loggerRegistry;
 
     public EventServiceImpl(
         ILogger<EventServiceImpl> logger,
@@ -23,7 +25,8 @@ public class EventServiceImpl : EventService.EventServiceBase
         SettingsRepository settingsRepository,
         ProfileEngine profileEngine,
         UpdateManager updateManager,
-        MessageService messageService)
+        MessageService messageService,
+        LoggerRegistry loggerRegistry)
     {
         _logger = logger;
         _eventBroadcaster = eventBroadcaster;
@@ -32,6 +35,7 @@ public class EventServiceImpl : EventService.EventServiceBase
         _profileEngine = profileEngine;
         _updateManager = updateManager;
         _messageService = messageService;
+        _loggerRegistry = loggerRegistry;
     }
 
     public override async Task StreamEvents(Empty request, IServerStreamWriter<Event> responseStream, ServerCallContext context)
@@ -108,7 +112,14 @@ public class EventServiceImpl : EventService.EventServiceBase
             UpdateStatus = updateStatus
         }, ct);
 
-        // 6. Console message history
+        // 6. Log levels snapshot
+        await responseStream.WriteAsync(new Event
+        {
+            Timestamp = now,
+            LogLevelsSnapshot = _loggerRegistry.GetSnapshot()
+        }, ct);
+
+        // 7. Console message history
         await SendConsoleHistoryAsync(responseStream, now, ct);
     }
 

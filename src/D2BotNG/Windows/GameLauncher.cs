@@ -147,11 +147,13 @@ public class GameLauncher
 
         if (string.IsNullOrEmpty(version))
         {
-            _logger.LogDebug("No D2 version configured, skipping patches");
+            _logger.LogWarning("No D2 version configured, skipping patches");
             return;
         }
 
         var patches = await _patchRepository.GetPatchesForVersionAsync(version);
+
+        _logger.LogDebug("Will apply {Length} patches", patches.Count);
 
         foreach (var patch in patches)
         {
@@ -161,7 +163,10 @@ public class GameLauncher
             var modulePath = Path.Combine(gameDir, moduleName);
 
             var bytes = patch.Data.ToByteArray();
-            _patcher.ApplyPatch(process, modulePath, patch.Offset, bytes);
+            if (!_patcher.ApplyPatch(process, modulePath, patch.Offset, bytes))
+            {
+                _logger.LogWarning("Failed to apply patch {Patch}", patch.Name);
+            }
         }
     }
 

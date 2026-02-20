@@ -12,6 +12,7 @@ import "schedules.proto";
 import "items.proto";
 import "settings.proto";
 import "updates.proto";
+import "logging.proto";
 
 // Message color codes (values match reference implementation)
 enum MessageColor {
@@ -62,11 +63,19 @@ message Event {
 
     // Item entities
     EntitiesChanged entities_changed = 80;
+
+    // Logging
+    LogLevelsSnapshot log_levels_snapshot = 90;
   }
 }
 
 // Item entities changed event - signals UI to refresh entity list and search
 message EntitiesChanged {}
+
+// Log levels snapshot - sent on connect and when levels change
+message LogLevelsSnapshot {
+  repeated LogLevelEntry levels = 1;
+}
 
 // Snapshot messages
 message ProfilesSnapshot {

@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package d2bot;
+
+option csharp_namespace = "D2BotNG.Core.Protos";
+
+import "google/protobuf/empty.proto";
+
+// Logging configuration service - session-only log level management
+service LoggingService {
+  rpc GetLogLevels(google.protobuf.Empty) returns (GetLogLevelsResponse);
+  rpc SetLogLevel(SetLogLevelRequest) returns (google.protobuf.Empty);
+}
+
+enum SinkLogLevel {
+  SINK_LOG_LEVEL_VERBOSE = 0;
+  SINK_LOG_LEVEL_DEBUG = 1;
+  SINK_LOG_LEVEL_INFORMATION = 2;
+  SINK_LOG_LEVEL_WARNING = 3;
+  SINK_LOG_LEVEL_ERROR = 4;
+  SINK_LOG_LEVEL_FATAL = 5;
+}
+
+message LogLevelEntry {
+  string category = 1;
+  SinkLogLevel level = 2;
+}
+
+message GetLogLevelsResponse {
+  repeated LogLevelEntry levels = 1;
+}
+
+message SetLogLevelRequest {
+  string category = 1;
+  SinkLogLevel level = 2;
+}

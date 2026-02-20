@@ -17,6 +17,7 @@ import { ProfileService } from "../generated/profiles_pb";
 import { ScheduleService } from "../generated/schedules_pb";
 import { SettingsService, FileService } from "../generated/settings_pb";
 import { UpdateService } from "../generated/updates_pb";
+import { LoggingService } from "../generated/logging_pb";
 
 /** LocalStorage key for dev backend URL override */
 const DEV_BACKEND_URL_KEY = "d2bot-dev-backend-url";
@@ -146,3 +147,9 @@ export const eventClient = createClient(EventService, transport);
  * - Search items with filters
  */
 export const itemClient = createClient(ItemService, transport);
+
+/**
+ * Logging configuration client
+ * - Get/Set per-logger log levels for UI console
+ */
+export const loggingClient = createClient(LoggingService, transport);

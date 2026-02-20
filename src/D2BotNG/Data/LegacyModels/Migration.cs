@@ -1,8 +1,8 @@
 using System.Text.Json;
 using D2BotNG.Core.Protos;
+using D2BotNG.Logging;
 using D2BotNG.Utilities;
 using Google.Protobuf;
-using Serilog;
 
 namespace D2BotNG.Data.LegacyModels;
 
@@ -11,6 +11,7 @@ namespace D2BotNG.Data.LegacyModels;
 /// </summary>
 public static class Migration
 {
+    private static readonly Serilog.ILogger Logger = TrackingLoggerFactory.ForContext(typeof(Migration));
     /// <summary>
     /// Migrates legacy data files individually from data/ to data/ng/.
     /// Each file is migrated independently - if a modern file already exists, it is skipped.
@@ -72,12 +73,12 @@ public static class Migration
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Skipping malformed {EntityName} line during migration", entityName);
+                Logger.Warning(ex, "Skipping malformed {EntityName} line during migration", entityName);
             }
         }
 
         File.WriteAllText(modernPath, ProtobufJsonConfig.Formatter.Format(collection));
-        Log.Information("Migrated {Count} {EntityName}", getCount(collection), entityName);
+        Logger.Information("Migrated {Count} {EntityName}", getCount(collection), entityName);
     }
 
     /// <summary>
@@ -109,11 +110,11 @@ public static class Migration
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Skipping malformed profile line during migration");
+                Logger.Warning(ex, "Skipping malformed profile line during migration");
             }
         }
 
         File.WriteAllText(Path.Combine(modernDir, "profiles.json"), ProtobufJsonConfig.Formatter.Format(profiles));
-        Log.Information("Migrated {Count} profiles", profiles.Profiles.Count);
+        Logger.Information("Migrated {Count} profiles", profiles.Profiles.Count);
     }
 }

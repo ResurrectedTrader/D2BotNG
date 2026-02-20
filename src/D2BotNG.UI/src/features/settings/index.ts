@@ -11,3 +11,4 @@ export { SettingsPage } from "./SettingsPage";
 export { GeneralSettings } from "./GeneralSettings";
 export { DiscordSettings } from "./DiscordSettings";
 export { DevSettings } from "./AppSettings";
+export { LoggingSettings } from "./LoggingSettings";
