@@ -158,7 +158,11 @@ public class GameLauncher
         foreach (var patch in patches)
         {
             // Do not apply hidewin patches if the window is supposed to be visible.
-            if (visible && patch.Name.StartsWith("hidewin")) continue;
+            if (visible && patch.Name.StartsWith("hidewin"))
+            {
+                _logger.LogDebug("Skipping patch {Patch} as window configured to be visible", patch.Name);
+                continue;
+            }
             var moduleName = PatchRepository.GetModuleName(patch.Module);
             var modulePath = Path.Combine(gameDir, moduleName);
 

@@ -2,24 +2,38 @@ using System.Collections.Concurrent;
 using D2BotNG.Core.Protos;
 using D2BotNG.Services;
 using Google.Protobuf.WellKnownTypes;
+using Serilog.Core;
 using Serilog.Events;
 
 namespace D2BotNG.Logging;
 
 /// <summary>
-/// Tracks all logger categories and their per-logger minimum levels for the MessageServiceSink.
+/// Tracks all logger categories and their per-logger minimum levels.
+/// Also serves as a global Serilog ILogEventFilter so all sinks respect the configured levels.
 /// Session-only — levels reset to defaults on restart.
 /// </summary>
-public class LoggerRegistry
+public class LoggerRegistry : ILogEventFilter
 {
     private const string Prefix = "D2BotNG.";
-    private readonly ConcurrentDictionary<string, LogEventLevel> _levels = new();
-    private readonly EventBroadcaster _eventBroadcaster;
     private const LogEventLevel DefaultLevel = LogEventLevel.Information;
 
+    private static LoggerRegistry? _instance;
+
+    private readonly ConcurrentDictionary<string, LogEventLevel> _levels = new();
+    private readonly EventBroadcaster? _eventBroadcaster;
+
+    /// <summary>
+    /// Used by Serilog's Filter.With&lt;T&gt;() — delegates to the DI instance via _instance.
+    /// </summary>
+    public LoggerRegistry() { }
+
+    /// <summary>
+    /// Used by DI.
+    /// </summary>
     public LoggerRegistry(EventBroadcaster eventBroadcaster)
     {
         _eventBroadcaster = eventBroadcaster;
+        _instance = this;
     }
 
     private static string Shorten(string category) =>
@@ -37,7 +51,7 @@ public class LoggerRegistry
     }
 
     /// <summary>
-    /// Set the minimum log level for a category's messages in the MessageServiceSink.
+    /// Set the minimum log level for a category's messages.
     /// </summary>
     public void SetLevel(string category, LogEventLevel level)
     {
@@ -46,7 +60,7 @@ public class LoggerRegistry
     }
 
     /// <summary>
-    /// Check if a log event from the given source context should be emitted to the MessageServiceSink.
+    /// Check if a log event from the given source context should be logged.
     /// </summary>
     public bool ShouldLog(string? sourceContext, LogEventLevel level)
     {
@@ -57,6 +71,22 @@ public class LoggerRegistry
             return level >= minLevel;
 
         return level >= DefaultLevel;
+    }
+
+    /// <summary>
+    /// ILogEventFilter implementation — Serilog calls this for every log event.
+    /// Delegates to the DI instance's ShouldLog.
+    /// </summary>
+    public bool IsEnabled(LogEvent logEvent)
+    {
+        if (_instance == null)
+            return true;
+
+        var sourceContext = logEvent.Properties.TryGetValue("SourceContext", out var value)
+            ? value.ToString().Trim('"')
+            : null;
+
+        return _instance.ShouldLog(sourceContext, logEvent.Level);
     }
 
     /// <summary>
@@ -78,7 +108,7 @@ public class LoggerRegistry
 
     private void BroadcastSnapshot()
     {
-        _eventBroadcaster.Broadcast(new Event
+        _eventBroadcaster?.Broadcast(new Event
         {
             Timestamp = Timestamp.FromDateTime(DateTime.UtcNow),
             LogLevelsSnapshot = GetSnapshot()

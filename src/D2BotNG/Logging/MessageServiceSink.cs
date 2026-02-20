@@ -12,15 +12,13 @@ namespace D2BotNG.Logging;
 public class MessageServiceSink : ILogEventSink
 {
     private static MessageService? _messageService;
-    private static LoggerRegistry? _loggerRegistry;
 
     /// <summary>
-    /// Set the MessageService and LoggerRegistry instances. Call this after the DI container is built.
+    /// Set the MessageService instance. Call this after the DI container is built.
     /// </summary>
-    public static void Initialize(MessageService messageService, LoggerRegistry loggerRegistry)
+    public static void Initialize(MessageService messageService)
     {
         _messageService = messageService;
-        _loggerRegistry = loggerRegistry;
     }
 
     public void Emit(LogEvent logEvent)
@@ -28,17 +26,6 @@ public class MessageServiceSink : ILogEventSink
         if (_messageService == null)
         {
             return; // Not initialized yet, skip
-        }
-
-        // Extract source context for level filtering
-        var sourceContext = logEvent.Properties.TryGetValue("SourceContext", out var value)
-            ? value.ToString().Trim('"')
-            : null;
-
-        // Check per-logger level filtering
-        if (_loggerRegistry != null && !_loggerRegistry.ShouldLog(sourceContext, logEvent.Level))
-        {
-            return;
         }
 
         var message = logEvent.RenderMessage();

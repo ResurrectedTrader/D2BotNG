@@ -173,14 +173,13 @@ public class ItemRepository : IDisposable
             }
 
             var files = Directory.GetFiles(_mulesDir, "*.txt", SearchOption.AllDirectories);
-            _logger.LogInformation("Loading {Count} entity files from {MulesDir}", files.Length, _mulesDir);
 
             foreach (var file in files)
             {
                 await LoadEntityFromFileAsync(file);
             }
 
-            _logger.LogInformation("Loaded {Count} entities with items", _entities.Count);
+            _logger.LogInformation("Loaded {Count} entities with items from {MulesDir}", _entities.Count, _mulesDir);
         }
         finally
         {
