@@ -30,11 +30,12 @@ public class MessageServiceSink : ILogEventSink
             return; // Not initialized yet, skip
         }
 
-        // Check per-logger level filtering
+        // Extract source context for level filtering
         var sourceContext = logEvent.Properties.TryGetValue("SourceContext", out var value)
             ? value.ToString().Trim('"')
             : null;
 
+        // Check per-logger level filtering
         if (_loggerRegistry != null && !_loggerRegistry.ShouldLog(sourceContext, logEvent.Level))
         {
             return;

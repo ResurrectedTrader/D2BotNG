@@ -21,6 +21,11 @@ const LOG_LEVEL_OPTIONS = [
   { value: String(SinkLogLevel.FATAL), label: "Fatal" },
 ];
 
+const SET_ALL_OPTIONS = [
+  { value: "", label: "Set all..." },
+  ...LOG_LEVEL_OPTIONS,
+];
+
 export function LoggingSettings() {
   const logLevels = useLogLevels();
   const setLogLevel = useSetLogLevel();
@@ -30,6 +35,15 @@ export function LoggingSettings() {
       setLogLevel.mutate({ category, level });
     },
     [setLogLevel],
+  );
+
+  const handleSetAll = useCallback(
+    (level: SinkLogLevel) => {
+      for (const entry of logLevels) {
+        setLogLevel.mutate({ category: entry.category, level });
+      }
+    },
+    [logLevels, setLogLevel],
   );
 
   const sorted = [...logLevels].sort((a, b) =>
@@ -47,6 +61,21 @@ export function LoggingSettings() {
           <p className="text-sm text-zinc-500">No loggers registered yet.</p>
         ) : (
           <div className="space-y-3">
+            <div className="flex items-center gap-4 border-b border-zinc-700 pb-3">
+              <span className="min-w-0 flex-1 text-sm font-medium text-zinc-200">
+                Set All
+              </span>
+              <div className="w-40 shrink-0">
+                <Select
+                  options={SET_ALL_OPTIONS}
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value)
+                      handleSetAll(Number(e.target.value) as SinkLogLevel);
+                  }}
+                />
+              </div>
+            </div>
             {sorted.map((entry) => (
               <div key={entry.category} className="flex items-center gap-4">
                 <span

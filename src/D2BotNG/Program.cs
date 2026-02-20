@@ -10,11 +10,14 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Events;
+using Serilog.Extensions.Logging; // For SerilogLoggerFactory
 
 namespace D2BotNG;
 
 internal static class Program
 {
+    private static readonly Serilog.ILogger Logger = TrackingLoggerFactory.ForContext(typeof(Program));
+
     [STAThread]
     private static void Main(string[] args)
     {
@@ -38,6 +41,9 @@ internal static class Program
             var builder = WebApplication.CreateBuilder(args);
             builder.Host.UseSerilog();
 
+            // Wrap ILoggerFactory to track all logger categories (last registration wins)
+            builder.Services.AddSingleton<ILoggerFactory>(_ => new TrackingLoggerFactory(new SerilogLoggerFactory()));
+
             ConfigureServices(builder.Services);
 
             var app = builder.Build();
@@ -46,6 +52,7 @@ internal static class Program
             var messageService = app.Services.GetRequiredService<MessageService>();
             var loggerRegistry = app.Services.GetRequiredService<LoggerRegistry>();
             MessageServiceSink.Initialize(messageService, loggerRegistry);
+            TrackingLoggerFactory.Initialize(loggerRegistry);
 
             // Migrate legacy data files using the configured base path from settings
             var settingsRepo = app.Services.GetRequiredService<SettingsRepository>();
@@ -55,7 +62,7 @@ internal static class Program
                 : settings.BasePath;
             Migration.MigrateIfNeeded(basePath);
 
-            Log.Information("D2BotNG starting in {Mode} mode...", headless ? "headless" : "GUI");
+            Logger.Information("D2BotNG starting in {Mode} mode...", headless ? "headless" : "GUI");
 
             ConfigureApp(app, devUi);
 
@@ -81,11 +88,11 @@ internal static class Program
                 RunWithGui(app, serverUrl, settingsRepo);
             }
 
-            Log.Information("D2BotNG shutting down...");
+            Logger.Information("D2BotNG shutting down...");
         }
         catch (Exception ex)
         {
-            Log.Fatal(ex, "D2BotNG crashed");
+            Logger.Fatal(ex, "D2BotNG crashed");
             MessageBox.Show(
                 $"D2BotNG encountered a fatal error:\n\n{ex.Message}",
                 "Fatal Error",
@@ -123,7 +130,7 @@ internal static class Program
             throw new Exception("Server failed to start within timeout");
         }
 
-        Log.Information("Server is ready at {Url}", serverUrl);
+        Logger.Information("Server is ready at {Url}", serverUrl);
 
         // Check if we should start minimized
         var settings = settingsRepo.GetAsync().GetAwaiter().GetResult();
@@ -225,7 +232,6 @@ internal static class Program
 
         // Add logger registry (per-logger level filtering for UI console)
         services.AddSingleton<LoggerRegistry>();
-        services.AddSingleton<ILoggerProvider, TrackingLoggerProvider>();
 
         // Add engines
         services.AddSingleton<ProfileEngine>();
@@ -284,15 +290,15 @@ internal static class Program
         {
             // Development mode: UI from file system, rendering assets from embedded
             var wwwrootPath = Path.Combine(AppContext.BaseDirectory, "wwwroot");
-            Log.Information("Serving UI from file system: {Path}", wwwrootPath);
-            Log.Information("Serving rendering assets from embedded resources");
+            Logger.Information("Serving UI from file system: {Path}", wwwrootPath);
+            Logger.Information("Serving rendering assets from embedded resources");
             var physicalProvider = new PhysicalFileProvider(wwwrootPath);
             fileProvider = new CompositeFileProvider(physicalProvider, embeddedProvider);
         }
         else
         {
             // Production mode: serve from embedded resources
-            Log.Information("Serving UI from embedded resources");
+            Logger.Information("Serving UI from embedded resources");
             fileProvider = embeddedProvider;
         }
 

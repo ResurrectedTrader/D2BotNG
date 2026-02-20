@@ -12,6 +12,7 @@ namespace D2BotNG.Logging;
 /// </summary>
 public class LoggerRegistry
 {
+    private const string Prefix = "D2BotNG.";
     private readonly ConcurrentDictionary<string, LogEventLevel> _levels = new();
     private readonly EventBroadcaster _eventBroadcaster;
     private const LogEventLevel DefaultLevel = LogEventLevel.Information;
@@ -21,12 +22,15 @@ public class LoggerRegistry
         _eventBroadcaster = eventBroadcaster;
     }
 
+    private static string Shorten(string category) =>
+        category.StartsWith(Prefix) ? category[Prefix.Length..] : category;
+
     /// <summary>
     /// Register a logger category. If already registered, does nothing.
     /// </summary>
     public void Register(string category)
     {
-        if (_levels.TryAdd(category, DefaultLevel))
+        if (_levels.TryAdd(Shorten(category), DefaultLevel))
         {
             BroadcastSnapshot();
         }
@@ -49,7 +53,7 @@ public class LoggerRegistry
         if (sourceContext == null)
             return level >= DefaultLevel;
 
-        if (_levels.TryGetValue(sourceContext, out var minLevel))
+        if (_levels.TryGetValue(Shorten(sourceContext), out var minLevel))
             return level >= minLevel;
 
         return level >= DefaultLevel;

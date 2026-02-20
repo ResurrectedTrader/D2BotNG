@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
-using Serilog;
+using D2BotNG.Logging;
 using static D2BotNG.Windows.NativeMethods;
 using static D2BotNG.Windows.NativeTypes;
 
@@ -9,7 +9,7 @@ namespace D2BotNG.Windows;
 
 public static class Extensions
 {
-    private static readonly Serilog.ILogger Logger = Log.ForContext(typeof(Extensions));
+    private static readonly Serilog.ILogger Logger = TrackingLoggerFactory.ForContext(typeof(Extensions));
 
     public static bool SendMessage(this Process proc, MessageType messageType, string data)
     {
