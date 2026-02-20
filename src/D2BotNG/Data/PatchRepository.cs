@@ -26,7 +26,8 @@ public class PatchRepository : FileRepository<Patch, PatchList>
 
     public async Task<List<Patch>> GetPatchesForVersionAsync(string version)
     {
-        return (await GetAllAsync()).Where(p => p.Version == version).ToList();
+        var patches = await GetAllAsync();
+        return patches.Where(p => p.Version.Equals(version, StringComparison.OrdinalIgnoreCase)).ToList();
     }
 
     public static string GetModuleName(D2Module module)

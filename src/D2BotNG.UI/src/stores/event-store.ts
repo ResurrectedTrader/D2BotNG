@@ -14,6 +14,7 @@ import type { Item } from "@/generated/items_pb";
 import type { Settings } from "@/generated/settings_pb";
 import type { UpdateStatus } from "@/generated/updates_pb";
 import type { Event, KeyUsage, MessageColor } from "@/generated/events_pb";
+import type { LogLevelEntry } from "@/generated/logging_pb";
 
 const MAX_MESSAGES = 100_000;
 
@@ -71,6 +72,9 @@ interface EventState {
   // Console messages - unified
   messages: MessageEntry[];
 
+  // Log levels (session-only)
+  logLevels: LogLevelEntry[];
+
   // Actions
   handleEvent: (event: Event) => void;
   clearMessages: (source: string) => void;
@@ -91,6 +95,7 @@ export const useEventStore = create<EventState>((set, get) => ({
   settings: null,
   updateStatus: null,
   messages: [],
+  logLevels: [],
 
   setConnected: (connected) => set({ isConnected: connected }),
 
@@ -190,6 +195,11 @@ export const useEventStore = create<EventState>((set, get) => ({
         set({ entitiesVersion: get().entitiesVersion + 1 });
         break;
       }
+
+      case "logLevelsSnapshot": {
+        set({ logLevels: [...event.event.value.levels] });
+        break;
+      }
     }
   },
 
@@ -211,6 +221,7 @@ export const useEventStore = create<EventState>((set, get) => ({
       settings: null,
       updateStatus: null,
       messages: [],
+      logLevels: [],
     }),
 }));
 
@@ -305,4 +316,9 @@ export function useIsLoading(): boolean {
 /** Get all items (memoized with shallow equality) */
 export function useItems(): Item[] {
   return useEventStore(useShallow((state) => state.items));
+}
+
+/** Get all log level entries (memoized with shallow equality) */
+export function useLogLevels(): LogLevelEntry[] {
+  return useEventStore(useShallow((state) => state.logLevels));
 }

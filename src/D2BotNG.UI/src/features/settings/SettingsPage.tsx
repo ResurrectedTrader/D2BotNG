@@ -21,7 +21,9 @@ import {
   type DiscordValidationErrors,
 } from "./DiscordSettings";
 import { DevSettings } from "./AppSettings";
+import { LoggingSettings } from "./LoggingSettings";
 import { CheckIcon, ArrowPathIcon } from "@heroicons/react/24/outline";
+import { Tab, TabGroup, TabList, TabPanel, TabPanels } from "@headlessui/react";
 
 export function SettingsPage() {
   const isLoading = useIsLoading();
@@ -186,52 +188,72 @@ export function SettingsPage() {
             Configure your D2Bot server and application settings.
           </p>
         </div>
-
-        <Button
-          onClick={handleSave}
-          disabled={!isDirty || updateSettings.isPending}
-        >
-          {updateSettings.isPending ? (
-            <ArrowPathIcon className="h-4 w-4 animate-spin" />
-          ) : (
-            <CheckIcon className="h-4 w-4" />
-          )}
-          Save Changes
-        </Button>
       </div>
 
-      {/* Settings sections */}
-      <div className="space-y-4">
-        <DevSettings />
+      <TabGroup>
+        <TabList className="flex gap-1 border-b border-zinc-700">
+          <Tab className="px-4 py-2 text-sm font-medium text-zinc-400 outline-none transition-colors hover:text-zinc-200 data-[selected]:border-b-2 data-[selected]:border-d2-gold data-[selected]:text-zinc-100">
+            General
+          </Tab>
+          <Tab className="px-4 py-2 text-sm font-medium text-zinc-400 outline-none transition-colors hover:text-zinc-200 data-[selected]:border-b-2 data-[selected]:border-d2-gold data-[selected]:text-zinc-100">
+            Logging
+          </Tab>
+        </TabList>
 
-        <GeneralSettings
-          server={localSettings.server}
-          game={localSettings.game}
-          display={localSettings.display}
-          startMinimized={localSettings.startMinimized || false}
-          closeAction={localSettings.closeAction || CloseAction.ASK}
-          basePath={localSettings.basePath || ""}
-          onServerChange={handleServerChange}
-          onGameChange={handleGameChange}
-          onDisplayChange={handleDisplayChange}
-          onStartMinimizedChange={handleStartMinimizedChange}
-          onCloseActionChange={handleCloseActionChange}
-          onBasePathChange={handleBasePathChange}
-        />
+        <TabPanels className="mt-4">
+          <TabPanel>
+            <div className="space-y-4">
+              <div className="flex justify-end">
+                <Button
+                  onClick={handleSave}
+                  disabled={!isDirty || updateSettings.isPending}
+                >
+                  {updateSettings.isPending ? (
+                    <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckIcon className="h-4 w-4" />
+                  )}
+                  Save Changes
+                </Button>
+              </div>
 
-        <DiscordSettings
-          discord={localSettings.discord}
-          onChange={handleDiscordChange}
-          errors={discordErrors}
-        />
-      </div>
+              <DevSettings />
 
-      {/* Dirty indicator */}
-      {isDirty && (
-        <div className="fixed bottom-4 right-4 rounded-lg bg-zinc-800 px-4 py-2 text-sm text-zinc-300 shadow-lg ring-1 ring-zinc-700">
-          You have unsaved changes
-        </div>
-      )}
+              <GeneralSettings
+                server={localSettings.server}
+                game={localSettings.game}
+                display={localSettings.display}
+                startMinimized={localSettings.startMinimized || false}
+                closeAction={localSettings.closeAction || CloseAction.ASK}
+                basePath={localSettings.basePath || ""}
+                onServerChange={handleServerChange}
+                onGameChange={handleGameChange}
+                onDisplayChange={handleDisplayChange}
+                onStartMinimizedChange={handleStartMinimizedChange}
+                onCloseActionChange={handleCloseActionChange}
+                onBasePathChange={handleBasePathChange}
+              />
+
+              <DiscordSettings
+                discord={localSettings.discord}
+                onChange={handleDiscordChange}
+                errors={discordErrors}
+              />
+            </div>
+
+            {/* Dirty indicator */}
+            {isDirty && (
+              <div className="fixed bottom-4 right-4 rounded-lg bg-zinc-800 px-4 py-2 text-sm text-zinc-300 shadow-lg ring-1 ring-zinc-700">
+                You have unsaved changes
+              </div>
+            )}
+          </TabPanel>
+
+          <TabPanel>
+            <LoggingSettings />
+          </TabPanel>
+        </TabPanels>
+      </TabGroup>
     </div>
   );
 }

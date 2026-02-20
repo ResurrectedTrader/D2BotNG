@@ -7,6 +7,7 @@ using D2BotNG.Services;
 using D2BotNG.UI;
 using D2BotNG.Windows;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Events;
 
@@ -43,7 +44,8 @@ internal static class Program
 
             // Initialize the MessageService sink for logging to console panel (do this early)
             var messageService = app.Services.GetRequiredService<MessageService>();
-            MessageServiceSink.Initialize(messageService);
+            var loggerRegistry = app.Services.GetRequiredService<LoggerRegistry>();
+            MessageServiceSink.Initialize(messageService, loggerRegistry);
 
             // Migrate legacy data files using the configured base path from settings
             var settingsRepo = app.Services.GetRequiredService<SettingsRepository>();
@@ -221,6 +223,10 @@ internal static class Program
         // Add message service (centralized console messages)
         services.AddSingleton<MessageService>();
 
+        // Add logger registry (per-logger level filtering for UI console)
+        services.AddSingleton<LoggerRegistry>();
+        services.AddSingleton<ILoggerProvider, TrackingLoggerProvider>();
+
         // Add engines
         services.AddSingleton<ProfileEngine>();
         services.AddSingleton<ScheduleEngine>();
@@ -268,6 +274,7 @@ internal static class Program
         app.MapGrpcService<FileServiceImpl>().EnableGrpcWeb();
         app.MapGrpcService<UpdateServiceImpl>().EnableGrpcWeb();
         app.MapGrpcService<ItemServiceImpl>().EnableGrpcWeb();
+        app.MapGrpcService<LoggingServiceImpl>().EnableGrpcWeb();
 
         // Serve static files - embedded resources by default, file system with --dev-ui flag
         var embeddedProvider = new EmbeddedResourceFileProvider(typeof(Program).Assembly);
