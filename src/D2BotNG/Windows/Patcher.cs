@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using D2BotNG.Core.Protos;
 using static D2BotNG.Windows.NativeMethods;
 using static D2BotNG.Windows.NativeTypes;
 
@@ -13,7 +14,7 @@ public class Patcher
         _logger = logger;
     }
 
-    public bool ApplyPatch(Process process, string module, int offset, byte[] bytes)
+    public bool ApplyPatch(Process process, string module, Patch patch)
     {
         try
         {
@@ -40,10 +41,10 @@ public class Patcher
                 return false;
             }
 
-            var targetAddress = moduleBase + offset;
+            var targetAddress = moduleBase + patch.Offset;
 
             // Change memory protection
-            if (!VirtualProtectEx(hProcess, targetAddress, (uint)bytes.Length, PAGE_EXECUTE_READWRITE, out uint oldProtection))
+            if (!VirtualProtectEx(hProcess, targetAddress, (uint)patch.Data.Length, PAGE_EXECUTE_READWRITE, out uint oldProtection))
             {
                 _logger.LogError("Failed to change memory protection at {Address:X}", targetAddress);
                 return false;
@@ -52,23 +53,23 @@ public class Patcher
             try
             {
                 // Write the patch bytes
-                if (!WriteProcessMemory(hProcess, targetAddress, bytes, (uint)bytes.Length, out _))
+                if (!WriteProcessMemory(hProcess, targetAddress, patch.Data.ToByteArray(), (uint)patch.Data.Length, out _))
                 {
                     _logger.LogError("Failed to write patch at {Address:X}", targetAddress);
                     return false;
                 }
 
-                _logger.LogDebug("Applied patch to {Module}+{Offset:X} ({ByteCount} bytes)", module, offset, bytes.Length);
+                _logger.LogDebug("Applied patch {Name} to {Module}+{Offset:X} ({ByteCount} bytes)", patch.Name, module, patch.Offset, patch.Data.Length);
                 return true;
             }
             finally
             {
-                VirtualProtectEx(hProcess, targetAddress, (uint)bytes.Length, oldProtection, out _);
+                VirtualProtectEx(hProcess, targetAddress, (uint)patch.Data.Length, oldProtection, out _);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to apply patch to {Module}+{Offset:X}", module, offset);
+            _logger.LogError(ex, "Failed to apply patch to {Module}+{Offset:X}", module, patch.Offset);
             return false;
         }
     }

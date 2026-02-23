@@ -60,25 +60,13 @@ public class GameLauncher
             // Step 5: Apply patches
             await ApplyPatchesAsync(process, gameDir, config.Visible);
 
-            // Step 6: Resume process
-            _processManager.ResumeProcess(process);
-
-            // Step 7: Wait for process to initialize (ready for input)
-            if (!process.WaitForInputIdle(30000)) // 30 second timeout
-            {
-                throw new TimeoutException("Timed out waiting for window to be ready for input");
-            }
-
-            // Step 8: Overwrite DACL to be able to inject.
+            // Step 6: Overwrite DACL to be able to inject.
             if (!_daclOverwriter.OverwriteDacl(process))
             {
                 throw new ApplicationException("Failed to overwrite DACL");
             }
 
-            // Step 9: Wait for main window
-            await WaitForMainWindowAsync(process, TimeSpan.FromSeconds(30), cancellationToken);
-
-            // Step 10: Inject D2BS.dll
+            // Step 7: Inject D2BS.dll
             if (!string.IsNullOrEmpty(config.D2BSPath))
             {
                 if (!_processManager.InjectDll(process, config.D2BSPath))
@@ -86,6 +74,18 @@ public class GameLauncher
                     throw new ApplicationException($"Failed to inject {config.D2BSPath} into {processId}");
                 }
             }
+
+            // Step 8: Resume process
+            _processManager.ResumeProcess(process);
+
+            // Step 9: Wait for process to initialize (ready for input)
+            if (!process.WaitForInputIdle(30000)) // 30 second timeout
+            {
+                throw new TimeoutException("Timed out waiting for window to be ready for input");
+            }
+
+            // Step 10: Wait for main window
+            await WaitForMainWindowAsync(process, TimeSpan.FromSeconds(30), cancellationToken);
 
             // Step 11: Set window title
             if (!string.IsNullOrEmpty(config.ProfileName) && process.MainWindowHandle != 0)
@@ -121,18 +121,21 @@ public class GameLauncher
     {
         try
         {
+            var i = 0;
             foreach (var file in Directory.GetFiles(gameDirectory, "*.dat*", SearchOption.AllDirectories))
             {
                 try
                 {
                     File.Delete(file);
+                    i++;
                 }
                 catch
                 {
                     // Ignore individual file deletion failures
                 }
             }
-            _logger.LogDebug("Deleted cache files from {Directory}", gameDirectory);
+            if (i > 0)
+                _logger.LogDebug("Deleted {Count} cache files from {Directory}", i, gameDirectory);
         }
         catch (Exception ex)
         {
@@ -163,11 +166,17 @@ public class GameLauncher
                 _logger.LogDebug("Skipping patch {Patch} as window configured to be visible", patch.Name);
                 continue;
             }
+
+            if (patch.Name.StartsWith("rdblock"))
+            {
+                _logger.LogDebug("Skipping patch {Patch} (no idea why, that is what D2Bot does)", patch.Name);
+                continue;
+            }
+
             var moduleName = PatchRepository.GetModuleName(patch.Module);
             var modulePath = Path.Combine(gameDir, moduleName);
 
-            var bytes = patch.Data.ToByteArray();
-            if (!_patcher.ApplyPatch(process, modulePath, patch.Offset, bytes))
+            if (!_patcher.ApplyPatch(process, modulePath, patch))
             {
                 _logger.LogWarning("Failed to apply patch {Patch}", patch.Name);
             }
