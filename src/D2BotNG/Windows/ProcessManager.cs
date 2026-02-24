@@ -6,15 +6,33 @@ using static D2BotNG.Windows.NativeTypes;
 
 namespace D2BotNG.Windows;
 
-public class ProcessManager
+public class ProcessManager : IDisposable
 {
     private readonly ILogger<ProcessManager> _logger;
     private readonly DaclOverwriter _daclOverwriter;
+    private nint _jobHandle;
 
     public ProcessManager(ILogger<ProcessManager> logger, DaclOverwriter daclOverwriter)
     {
         _logger = logger;
         _daclOverwriter = daclOverwriter;
+
+        // Create a job object with KILL_ON_JOB_CLOSE so all child game processes
+        // are automatically terminated if D2BotNG exits or crashes.
+        _jobHandle = CreateJobObjectW(0, null);
+        if (_jobHandle != 0)
+        {
+            var info = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if (!SetInformationJobObject(_jobHandle, JobObjectExtendedLimitInformation, ref info, Marshal.SizeOf(info)))
+            {
+                logger.LogWarning("Failed to configure job object, child processes may orphan on crash");
+            }
+        }
+        else
+        {
+            logger.LogWarning("Failed to create job object, child processes may orphan on crash");
+        }
     }
 
     public bool InjectDll(Process process, string dllPath)
@@ -106,7 +124,15 @@ public class ProcessManager
 
     public async Task TerminateAsync(Process process, TimeSpan gracePeriod)
     {
-        if (process.HasExited) return;
+        try
+        {
+            if (process.HasExited) return;
+        }
+        catch (InvalidOperationException)
+        {
+            // Process already gone (e.g. killed by job object)
+            return;
+        }
 
         // Try graceful close first
         if (process.MainWindowHandle != 0)
@@ -192,6 +218,16 @@ public class ProcessManager
             return null;
         }
 
+        // Assign to job object before closing handles — process is still suspended,
+        // so it's guaranteed to be in the job before it runs any code.
+        if (_jobHandle != 0)
+        {
+            if (!AssignProcessToJobObject(_jobHandle, processInfo.hProcess))
+            {
+                _logger.LogWarning("Failed to assign process {Pid} to job object", processInfo.dwProcessId);
+            }
+        }
+
         // Close handles - we'll use Process object instead
         using (new SafeProcessHandle(processInfo.hThread, ownsHandle: true)) { }
         using (new SafeProcessHandle(processInfo.hProcess, ownsHandle: true)) { }
@@ -218,6 +254,15 @@ public class ProcessManager
                 using var threadHandle = new SafeProcessHandle(rawThreadHandle, ownsHandle: true);
                 ResumeThread(threadHandle.DangerousGetHandle());
             }
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_jobHandle != 0)
+        {
+            CloseHandle(_jobHandle);
+            _jobHandle = 0;
         }
     }
 }

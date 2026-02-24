@@ -77,6 +77,19 @@ public static class NativeMethods
 
     #endregion
 
+    #region kernel32.dll - Job Objects
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern nint CreateJobObjectW(nint lpJobAttributes, string? lpName);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool SetInformationJobObject(nint hJob, int jobObjectInfoClass, ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION lpJobObjectInfo, int cbJobObjectInfoLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool AssignProcessToJobObject(nint hJob, nint hProcess);
+
+    #endregion
+
     #region user32.dll - Window Management
 
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
