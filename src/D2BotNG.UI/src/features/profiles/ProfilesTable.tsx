@@ -21,13 +21,14 @@ import {
   type DragStartEvent,
   type DragEndEvent,
   type DragOverEvent,
+  type DragMoveEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext,
   sortableKeyboardCoordinates,
   useSortable,
 } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
+
 import {
   Table,
   TableHead,
@@ -150,14 +151,12 @@ interface SortableProfileRowProps {
   visibleColumns: { key: ProfileColumnKey; label: string }[];
   actions: ReturnType<typeof useProfileActions>;
   isSelected: boolean;
-  isGhostDrag?: boolean;
   hasHover: boolean;
   onClone: (profile: Profile) => void;
   onDelete: (profile: Profile) => void;
   onSelect: (name: string, ctrlKey: boolean, shiftKey: boolean) => void;
   onNavigate: (name: string) => void;
   onRowContextMenu?: (e: React.MouseEvent, profileName: string) => void;
-  isDragOverlay?: boolean;
 }
 
 function SortableProfileRow({
@@ -166,23 +165,16 @@ function SortableProfileRow({
   visibleColumns,
   actions,
   isSelected,
-  isGhostDrag,
   hasHover,
   onClone,
   onDelete,
   onSelect,
   onNavigate,
   onRowContextMenu,
-  isDragOverlay,
 }: SortableProfileRowProps) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: profile.name });
+  const { attributes, listeners, setNodeRef, isDragging } = useSortable({
+    id: profile.name,
+  });
 
   // For mobile: always build action items for the dropdown
   const actionItems = useProfileActionItems({
@@ -191,11 +183,6 @@ function SortableProfileRow({
     onClone,
     onDelete,
   });
-
-  // Only apply transform to the dragging item to prevent other items from shifting
-  const style = isDragging
-    ? { transform: CSS.Transform.toString(transform), transition }
-    : {};
   const state = status?.state ?? RunState.STOPPED;
   const windowVisible = status?.windowVisible ?? false;
 
@@ -205,12 +192,10 @@ function SortableProfileRow({
   return (
     <tr
       ref={setNodeRef}
-      style={style}
       className={clsx(
         "border-b border-zinc-800 cursor-pointer hover:bg-zinc-800/50 transition-colors",
-        (isDragging || isGhostDrag) && "opacity-50 bg-zinc-800",
-        isDragOverlay && "bg-zinc-900 shadow-lg border border-zinc-700",
-        isSelected && !isDragging && !isGhostDrag && "bg-blue-900/30",
+        isDragging && "opacity-30",
+        isSelected && "bg-blue-900/30",
       )}
       onClick={(e) =>
         !isDragging &&
@@ -357,6 +342,10 @@ export function ProfilesTable({
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [overGroupId, setOverGroupId] = useState<string | null>(null);
+  const [insertIndicator, setInsertIndicator] = useState<{
+    id: string;
+    position: "before" | "after";
+  } | null>(null);
   const anchorRef = useRef<string | null>(null);
 
   // Table-level context menu
@@ -497,20 +486,23 @@ export function ProfilesTable({
     };
   }, [profiles]);
 
-  // All profile IDs for sortable context - must match visual render order
-  const allProfileIds = useMemo(() => {
+  // All profile IDs in visual render order, plus section edge sets for indicator shifting
+  const { allProfileIds, sectionStarts, sectionEnds } = useMemo(() => {
     const ids: string[] = [];
-    // Ungrouped profiles first (matches render order)
-    for (const profile of ungroupedProfiles) {
-      ids.push(profile.name);
+    const starts = new Set<string>();
+    const ends = new Set<string>();
+
+    function addSection(items: Profile[]) {
+      if (items.length === 0) return;
+      starts.add(items[0].name);
+      ends.add(items[items.length - 1].name);
+      for (const p of items) ids.push(p.name);
     }
-    // Then grouped profiles in group order (matches render order)
-    for (const group of groupedProfiles) {
-      for (const profile of group.profiles) {
-        ids.push(profile.name);
-      }
-    }
-    return ids;
+
+    addSection(ungroupedProfiles);
+    for (const group of groupedProfiles) addSection(group.profiles);
+
+    return { allProfileIds: ids, sectionStarts: starts, sectionEnds: ends };
   }, [ungroupedProfiles, groupedProfiles]);
 
   // Track expanded state for each group (all expanded by default)
@@ -551,14 +543,55 @@ export function ProfilesTable({
     const draggedId = event.active.id as string;
     setActiveId(draggedId);
 
-    // If dragging a selected profile, drag all selected profiles
     // If dragging an unselected profile, select only that one
-    if (selectedProfiles.has(draggedId) && selectedProfiles.size > 1) {
-      // Keep current selection - dragging multiple
-    } else {
+    if (!selectedProfiles.has(draggedId) || selectedProfiles.size <= 1) {
       onSelectionChange(new Set([draggedId]));
     }
   };
+
+  // Shared indicator computation — called from both handleDragOver and handleDragMove.
+  // Determines which row to show the indicator on, shifting through consecutive
+  // dragged items at section edges so the indicator can appear before the first
+  // or after the last item even when they are being dragged.
+  function updateInsertIndicator(
+    over: NonNullable<DragOverEvent["over"]>,
+    delta: { y: number },
+    initialRect: { top: number; height: number } | null,
+  ) {
+    const overId = over.id as string;
+    if (overId.startsWith(GROUP_DROP_PREFIX) || !initialRect) return;
+
+    const activeCenterY = initialRect.top + delta.y + initialRect.height / 2;
+    const isAfter = activeCenterY > over.rect.top + over.rect.height / 2;
+
+    let targetId = overId;
+    const position: "before" | "after" = isAfter ? "after" : "before";
+    const overIdx = allProfileIds.indexOf(overId);
+
+    if (overIdx !== -1) {
+      if (position === "before") {
+        let idx = overIdx - 1;
+        while (idx >= 0 && selectedProfiles.has(allProfileIds[idx])) idx--;
+        const firstDragged = allProfileIds[idx + 1];
+        if (idx + 1 < overIdx && sectionStarts.has(firstDragged)) {
+          targetId = firstDragged;
+        }
+      } else {
+        let idx = overIdx + 1;
+        while (
+          idx < allProfileIds.length &&
+          selectedProfiles.has(allProfileIds[idx])
+        )
+          idx++;
+        const lastDragged = allProfileIds[idx - 1];
+        if (idx - 1 > overIdx && sectionEnds.has(lastDragged)) {
+          targetId = lastDragged;
+        }
+      }
+    }
+
+    setInsertIndicator({ id: targetId, position });
+  }
 
   const handleDragOver = (event: DragOverEvent) => {
     const { over } = event;
@@ -567,20 +600,35 @@ export function ProfilesTable({
       return;
     }
 
-    // Check if over a group header
     const overId = over.id as string;
     if (overId.startsWith(GROUP_DROP_PREFIX)) {
       setOverGroupId(overId);
-    } else {
-      // Over a profile - find its group
-      const overProfile = profiles.find((p) => p.name === overId);
-      if (overProfile) {
-        setOverGroupId(
-          overProfile.group
-            ? `${GROUP_DROP_PREFIX}${overProfile.group}`
-            : UNGROUPED_DROP_ID,
-        );
-      }
+      setInsertIndicator(null);
+      return;
+    }
+
+    // Update group highlight
+    const overProfile = profiles.find((p) => p.name === overId);
+    if (overProfile) {
+      setOverGroupId(
+        overProfile.group
+          ? `${GROUP_DROP_PREFIX}${overProfile.group}`
+          : UNGROUPED_DROP_ID,
+      );
+    }
+
+    updateInsertIndicator(over, event.delta, event.active.rect.current.initial);
+  };
+
+  // Fires on every pointer move — updates the before/after position when the
+  // pointer crosses an item's center without the `over` target changing.
+  const handleDragMove = (event: DragMoveEvent) => {
+    if (event.over) {
+      updateInsertIndicator(
+        event.over,
+        event.delta,
+        event.active.rect.current.initial,
+      );
     }
   };
 
@@ -588,6 +636,7 @@ export function ProfilesTable({
     const { active, over } = event;
     setActiveId(null);
     setOverGroupId(null);
+    setInsertIndicator(null);
 
     if (!over) return;
 
@@ -597,13 +646,17 @@ export function ProfilesTable({
     // Determine which profiles are being dragged (preserving visual order)
     const draggedNames = allProfileIds.filter((id) => selectedProfiles.has(id));
 
-    // If the dragged item is the drop target, nothing to do
     if (draggedNames.length === 1 && draggedId === overId) return;
 
-    // Don't drop onto one of the dragged items
-    if (draggedNames.includes(overId)) return;
-
     const draggedSet = new Set(draggedNames);
+
+    // Determine before/after from pointer position
+    const activeRect = active.rect.current.translated;
+    const isAfter =
+      !overId.startsWith(GROUP_DROP_PREFIX) &&
+      activeRect != null &&
+      activeRect.top + activeRect.height / 2 >
+        over.rect.top + over.rect.height / 2;
 
     let targetGroup: string;
     let targetIndex: number;
@@ -618,7 +671,7 @@ export function ProfilesTable({
             []);
       targetIndex = groupProfiles.filter((p) => !draggedSet.has(p.name)).length;
     } else {
-      // Dropped on a profile - insert at that position
+      // Dropped on a profile
       const overProfile = profiles.find((p) => p.name === overId);
       if (!overProfile) return;
 
@@ -629,12 +682,34 @@ export function ProfilesTable({
           : (groupedProfiles.find((g) => g.name === targetGroup)?.profiles ??
             []);
 
-      // Find index of the profile we're dropping on (excluding dragged items)
       const filteredProfiles = groupProfiles.filter(
         (p) => !draggedSet.has(p.name),
       );
-      targetIndex = filteredProfiles.findIndex((p) => p.name === overId);
-      if (targetIndex === -1) targetIndex = filteredProfiles.length;
+
+      if (draggedSet.has(overId)) {
+        // Over a dragged item — find the nearest non-dragged neighbor
+        const overIdx = groupProfiles.findIndex((p) => p.name === overId);
+        if (isAfter) {
+          // Find next non-dragged item after over
+          const next = groupProfiles
+            .slice(overIdx + 1)
+            .find((p) => !draggedSet.has(p.name));
+          targetIndex = next
+            ? filteredProfiles.indexOf(next)
+            : filteredProfiles.length;
+        } else {
+          // Find previous non-dragged item before over
+          const prev = groupProfiles
+            .slice(0, overIdx)
+            .reverse()
+            .find((p) => !draggedSet.has(p.name));
+          targetIndex = prev ? filteredProfiles.indexOf(prev) + 1 : 0;
+        }
+      } else {
+        targetIndex = filteredProfiles.findIndex((p) => p.name === overId);
+        if (targetIndex === -1) targetIndex = filteredProfiles.length;
+        if (isAfter) targetIndex += 1;
+      }
     }
 
     // Send newGroup if any dragged profile is moving to a different group
@@ -653,6 +728,7 @@ export function ProfilesTable({
   const handleDragCancel = () => {
     setActiveId(null);
     setOverGroupId(null);
+    setInsertIndicator(null);
   };
 
   // Total columns: Name + Status + visible stats + (Actions on mobile only)
@@ -679,10 +755,13 @@ export function ProfilesTable({
     onSelectionChange(newSelected);
   };
 
+  const activeProfile = activeId
+    ? profiles.find((p) => p.name === activeId)
+    : null;
+
   const renderGroupHeader = (group: ProfileGroup) => {
     const isExpanded = expandedGroups.has(group.name);
     const groupDropId = `${GROUP_DROP_PREFIX}${group.name}`;
-    const isOver = overGroupId === groupDropId;
     const groupProfileNames = group.profiles.map((p) => p.name);
     const allSelected = groupProfileNames.every((name) =>
       selectedProfiles.has(name),
@@ -690,6 +769,9 @@ export function ProfilesTable({
     const someSelected = groupProfileNames.some((name) =>
       selectedProfiles.has(name),
     );
+    const isDragFromOtherGroup =
+      activeProfile != null && (activeProfile.group || "") !== group.name;
+    const isOver = overGroupId === groupDropId && isDragFromOtherGroup;
 
     return (
       <tr
@@ -697,7 +779,7 @@ export function ProfilesTable({
         data-group-drop-id={groupDropId}
         className={clsx(
           "bg-zinc-800/50 cursor-pointer hover:bg-zinc-800 transition-colors",
-          isOver && activeId && "bg-blue-900/30 ring-1 ring-blue-500/50",
+          isOver && "ring-1 ring-zinc-400/50",
           allSelected && "bg-blue-900/20",
           someSelected && !allSelected && "bg-blue-900/10",
         )}
@@ -731,9 +813,20 @@ export function ProfilesTable({
     );
   };
 
-  const activeProfile = activeId
-    ? profiles.find((p) => p.name === activeId)
-    : null;
+  const insertIndicatorRow = (
+    <tr aria-hidden>
+      <td
+        colSpan={100}
+        style={{
+          padding: 0,
+          border: "none",
+          height: "2px",
+          lineHeight: 0,
+          backgroundColor: "#a1a1aa",
+        }}
+      />
+    </tr>
+  );
 
   return (
     <>
@@ -742,6 +835,7 @@ export function ProfilesTable({
         collisionDetection={closestCenter}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
+        onDragMove={handleDragMove}
         onDragEnd={handleDragEnd}
         onDragCancel={handleDragCancel}
       >
@@ -768,32 +862,29 @@ export function ProfilesTable({
           <TableBody>
             <SortableContext items={allProfileIds}>
               {/* Ungrouped profiles first - no header, always visible */}
-              {ungroupedProfiles.length > 0 && (
-                <>
-                  {ungroupedProfiles.map((profile) => (
-                    <SortableProfileRow
-                      key={profile.name}
-                      profile={profile}
-                      status={statuses[profile.name]}
-                      visibleColumns={visibleColumns}
-                      actions={actions}
-                      isSelected={selectedProfiles.has(profile.name)}
-                      isGhostDrag={
-                        activeId !== null &&
-                        activeId !== profile.name &&
-                        selectedProfiles.has(profile.name) &&
-                        selectedProfiles.size > 1
-                      }
-                      hasHover={hasHover}
-                      onClone={onClone}
-                      onDelete={onDelete}
-                      onSelect={handleSelect}
-                      onNavigate={handleNavigate}
-                      onRowContextMenu={handleRowContextMenu}
-                    />
-                  ))}
-                </>
-              )}
+              {ungroupedProfiles.map((profile) => (
+                <Fragment key={profile.name}>
+                  {insertIndicator?.id === profile.name &&
+                    insertIndicator.position === "before" &&
+                    insertIndicatorRow}
+                  <SortableProfileRow
+                    profile={profile}
+                    status={statuses[profile.name]}
+                    visibleColumns={visibleColumns}
+                    actions={actions}
+                    isSelected={selectedProfiles.has(profile.name)}
+                    hasHover={hasHover}
+                    onClone={onClone}
+                    onDelete={onDelete}
+                    onSelect={handleSelect}
+                    onNavigate={handleNavigate}
+                    onRowContextMenu={handleRowContextMenu}
+                  />
+                  {insertIndicator?.id === profile.name &&
+                    insertIndicator.position === "after" &&
+                    insertIndicatorRow}
+                </Fragment>
+              ))}
 
               {/* Grouped profiles with collapsible headers */}
               {groupedProfiles.map((group) => (
@@ -801,26 +892,27 @@ export function ProfilesTable({
                   {renderGroupHeader(group)}
                   {expandedGroups.has(group.name) &&
                     group.profiles.map((profile) => (
-                      <SortableProfileRow
-                        key={profile.name}
-                        profile={profile}
-                        status={statuses[profile.name]}
-                        visibleColumns={visibleColumns}
-                        actions={actions}
-                        isSelected={selectedProfiles.has(profile.name)}
-                        isGhostDrag={
-                          activeId !== null &&
-                          activeId !== profile.name &&
-                          selectedProfiles.has(profile.name) &&
-                          selectedProfiles.size > 1
-                        }
-                        hasHover={hasHover}
-                        onClone={onClone}
-                        onDelete={onDelete}
-                        onSelect={handleSelect}
-                        onNavigate={handleNavigate}
-                        onRowContextMenu={handleRowContextMenu}
-                      />
+                      <Fragment key={profile.name}>
+                        {insertIndicator?.id === profile.name &&
+                          insertIndicator.position === "before" &&
+                          insertIndicatorRow}
+                        <SortableProfileRow
+                          profile={profile}
+                          status={statuses[profile.name]}
+                          visibleColumns={visibleColumns}
+                          actions={actions}
+                          isSelected={selectedProfiles.has(profile.name)}
+                          hasHover={hasHover}
+                          onClone={onClone}
+                          onDelete={onDelete}
+                          onSelect={handleSelect}
+                          onNavigate={handleNavigate}
+                          onRowContextMenu={handleRowContextMenu}
+                        />
+                        {insertIndicator?.id === profile.name &&
+                          insertIndicator.position === "after" &&
+                          insertIndicatorRow}
+                      </Fragment>
                     ))}
                 </Fragment>
               ))}
@@ -828,32 +920,27 @@ export function ProfilesTable({
           </TableBody>
         </Table>
 
-        <DragOverlay>
+        <DragOverlay dropAnimation={null}>
           {activeProfile && (
-            <div className="relative">
-              <table className="w-full">
-                <tbody>
-                  <SortableProfileRow
-                    profile={activeProfile}
-                    status={statuses[activeProfile.name]}
-                    visibleColumns={visibleColumns}
-                    actions={actions}
-                    isSelected={selectedProfiles.has(activeProfile.name)}
-                    hasHover={hasHover}
-                    onClone={onClone}
-                    onDelete={onDelete}
-                    onSelect={handleSelect}
-                    onNavigate={handleNavigate}
-                    isDragOverlay
-                  />
-                </tbody>
-              </table>
-              {selectedProfiles.size > 1 && (
-                <div className="absolute -top-2 -right-2 bg-blue-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center shadow-lg">
-                  {selectedProfiles.size}
-                </div>
-              )}
-            </div>
+            <table className="w-full opacity-80">
+              <tbody>
+                <tr className="bg-zinc-900 shadow-lg border border-zinc-700">
+                  <TableCell className="w-px whitespace-nowrap">
+                    <div className="flex items-center gap-2">
+                      <Bars2Icon className="h-4 w-4 text-zinc-500" />
+                      <span className="font-medium text-zinc-100">
+                        {activeProfile.name}
+                      </span>
+                      {selectedProfiles.size > 1 && (
+                        <span className="bg-blue-500 text-white text-xs font-bold rounded-full px-1.5 py-0.5 leading-none">
+                          +{selectedProfiles.size - 1}
+                        </span>
+                      )}
+                    </div>
+                  </TableCell>
+                </tr>
+              </tbody>
+            </table>
           )}
         </DragOverlay>
       </DndContext>
