@@ -117,7 +117,7 @@ export function GeneralSettings({
           <PasswordInput
             id="server-password"
             label="Password"
-            tooltip="Protects the web UI and Discord bot. Clients must authenticate to access controls."
+            tooltip="Protects the web UI. Clients must authenticate to access controls."
             placeholder="Optional"
             value={server?.password || ""}
             onChange={(e) => onServerChange({ password: e.target.value })}

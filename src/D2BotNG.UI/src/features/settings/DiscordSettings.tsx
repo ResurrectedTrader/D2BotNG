@@ -4,7 +4,14 @@
  * Card for configuring Discord integration.
  */
 
-import { Card, CardHeader, CardContent, Input, Button } from "@/components/ui";
+import {
+  Card,
+  CardHeader,
+  CardContent,
+  Input,
+  PasswordInput,
+  Button,
+} from "@/components/ui";
 import { useTestDiscord } from "@/hooks";
 import { ArrowPathIcon } from "@heroicons/react/24/outline";
 import type { DiscordSettings as DiscordSettingsType } from "@/generated/settings_pb";
@@ -86,6 +93,16 @@ export function DiscordSettings({
               onChange={(e) => onChange({ serverId: e.target.value })}
               disabled={!discord?.enabled}
               error={errors?.serverId}
+            />
+
+            <PasswordInput
+              id="discord-password"
+              label="Password"
+              tooltip="Optional password for Discord bot commands. Users must /identify with this password to use commands."
+              placeholder="Optional"
+              value={discord?.password || ""}
+              onChange={(e) => onChange({ password: e.target.value })}
+              disabled={!discord?.enabled}
             />
 
             {/* Test button */}

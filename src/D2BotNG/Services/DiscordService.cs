@@ -307,7 +307,7 @@ public class DiscordService : BackgroundService
         };
 
         // Add identify command only if password is configured
-        if (settings.Server.HasPassword)
+        if (settings.Discord.HasPassword)
         {
             commands.Add(new SlashCommandBuilder()
                 .WithName("identify")
@@ -333,32 +333,38 @@ public class DiscordService : BackgroundService
     {
         try
         {
-            // Check authentication for privileged commands
             var settings = await _settingsRepository.GetAsync();
             var userId = command.User.Id.ToString();
-            var privilegedCommands = new[] { "start", "stop", "restart", "mule", "schedule" };
 
-            if (privilegedCommands.Contains(command.Data.Name) && settings.Server.HasPassword)
+            // Only help and identify are unauthenticated; all other commands require password (if one is set)
+            if (command.Data.Name != "help" && command.Data.Name != "identify")
             {
-                if (!_authenticatedUsers.Contains(userId))
+                if (settings.Discord.HasPassword && !_authenticatedUsers.Contains(userId))
                 {
                     await command.RespondAsync(embed: CreateErrorEmbed("Authentication Required",
-                        "You must authenticate first. Use `/identify` with the server password."));
+                        "You must authenticate first. Use `/identify` with the bot password."), ephemeral: true);
                     return;
                 }
             }
 
+            // Commands that return multiple embeds
             if (command.Data.Name == "list")
             {
                 var embeds = await HandleList();
-                await command.RespondAsync(embeds: embeds);
+                await command.RespondAsync(embeds: embeds, ephemeral: true);
+                return;
+            }
+
+            if (command.Data.Name == "status")
+            {
+                var embeds = await HandleStatus(command);
+                await command.RespondAsync(embeds: embeds, ephemeral: true);
                 return;
             }
 
             var embed = command.Data.Name switch
             {
-                "help" => await HandleHelp(settings.Server.HasPassword),
-                "status" => await HandleStatus(command),
+                "help" => await HandleHelp(settings.Discord.HasPassword),
                 "start" => await HandleStart(command),
                 "stop" => await HandleStop(command),
                 "restart" => await HandleRestart(command),
@@ -368,14 +374,14 @@ public class DiscordService : BackgroundService
                 _ => CreateErrorEmbed("Unknown Command", "This command is not recognized.")
             };
 
-            await command.RespondAsync(embed: embed);
+            await command.RespondAsync(embed: embed, ephemeral: true);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error handling slash command: {Command}", command.Data.Name);
             try
             {
-                await command.RespondAsync(embed: CreateErrorEmbed("Error", ex.Message));
+                await command.RespondAsync(embed: CreateErrorEmbed("Error", ex.Message), ephemeral: true);
             }
             catch
             {
@@ -437,40 +443,48 @@ public class DiscordService : BackgroundService
         return embeds.ToArray();
     }
 
-    private async Task<Embed> HandleStatus(SocketSlashCommand command)
+    private async Task<Embed[]> HandleStatus(SocketSlashCommand command)
     {
         var profileArg = command.Data.Options.First().Value.ToString()!;
         var profiles = await GetTargetProfiles(profileArg);
 
         if (profiles.Count == 0)
         {
-            return CreateErrorEmbed("Not Found", $"Profile '{profileArg}' not found.");
+            return [CreateErrorEmbed("Not Found", $"Profile '{profileArg}' not found.")];
         }
 
-        var embed = new EmbedBuilder()
-            .WithTitle("Profile Status")
-            .WithColor(ColorInfo);
+        const int maxFieldsPerEmbed = 25;
+        var embeds = new List<Embed>();
 
-        foreach (var profile in profiles)
+        foreach (var chunk in profiles.Chunk(maxFieldsPerEmbed))
         {
-            var instance = _profileEngine.GetInstance(profile.Name);
-            var state = instance?.State.ToString() ?? "Stopped";
-            var emoji = GetStateEmoji(instance?.State);
-            var status = instance?.Status ?? "N/A";
+            var embed = new EmbedBuilder()
+                .WithTitle(embeds.Count == 0 ? "Profile Status" : "Profile Status (cont.)")
+                .WithColor(ColorInfo);
 
-            var fieldValue = $"**State:** {state}\n" +
-                           $"**Runs:** {profile.Runs} | **Chickens:** {profile.Chickens}\n" +
-                           $"**Deaths:** {profile.Deaths} | **Crashes:** {profile.Crashes}";
-
-            if (!string.IsNullOrWhiteSpace(status))
+            foreach (var profile in chunk)
             {
-                fieldValue += $"\n**Status:** {status}";
+                var instance = _profileEngine.GetInstance(profile.Name);
+                var state = instance?.State.ToString() ?? "Stopped";
+                var emoji = GetStateEmoji(instance?.State);
+                var status = instance?.Status ?? "N/A";
+
+                var fieldValue = $"**State:** {state}\n" +
+                               $"**Runs:** {profile.Runs} | **Chickens:** {profile.Chickens}\n" +
+                               $"**Deaths:** {profile.Deaths} | **Crashes:** {profile.Crashes}";
+
+                if (!string.IsNullOrWhiteSpace(status))
+                {
+                    fieldValue += $"\n**Status:** {status}";
+                }
+
+                embed.AddField($"{emoji} {profile.Name}", fieldValue);
             }
 
-            embed.AddField($"{emoji} {profile.Name}", fieldValue);
+            embeds.Add(embed.Build());
         }
 
-        return embed.Build();
+        return embeds.ToArray();
     }
 
     private async Task<Embed> HandleStart(SocketSlashCommand command)
@@ -575,12 +589,12 @@ public class DiscordService : BackgroundService
         var password = command.Data.Options.First().Value.ToString()!;
         var settings = await _settingsRepository.GetAsync();
 
-        if (!settings.Server.HasPassword)
+        if (!settings.Discord.HasPassword)
         {
             return CreateInfoEmbed("Not Required", "No password is configured, authentication not required.");
         }
 
-        if (settings.Server.Password != password)
+        if (settings.Discord.Password != password)
         {
             return CreateErrorEmbed("Authentication Failed", "Incorrect password.");
         }

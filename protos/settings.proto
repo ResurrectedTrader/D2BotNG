@@ -76,6 +76,7 @@ message DiscordSettings {
   bool enabled = 1;
   string token = 2;
   string server_id = 3;
+  optional string password = 4;
 }
 
 message LimedropSettings {
