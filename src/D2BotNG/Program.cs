@@ -154,6 +154,10 @@ internal static class Program
         }
 
         Application.Run(form);
+
+        // Form closed — shut down the ASP.NET Core host so all hosted services get StopAsync called
+        app.StopAsync(TimeSpan.FromSeconds(30)).GetAwaiter().GetResult();
+        serverTask.GetAwaiter().GetResult();
     }
 
     private static bool WaitForServerReady(string url, Task serverTask, TimeSpan timeout)

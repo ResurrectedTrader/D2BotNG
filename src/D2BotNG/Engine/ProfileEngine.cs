@@ -10,7 +10,7 @@ namespace D2BotNG.Engine;
 /// <summary>
 /// Main engine for managing profile lifecycles, key management, and snapshot broadcasting.
 /// </summary>
-public class ProfileEngine : IDisposable
+public class ProfileEngine
 {
     private readonly ILogger<ProfileEngine> _logger;
     private readonly ProfileRepository _profileRepository;
@@ -693,11 +693,8 @@ public class ProfileEngine : IDisposable
         _instances[newName] = instance;
     }
 
-    public void Dispose()
+    public async Task StopAsync()
     {
-        foreach (var instance in _instances.Values)
-        {
-            instance.Dispose();
-        }
+        await StopAllAsync();
     }
 }

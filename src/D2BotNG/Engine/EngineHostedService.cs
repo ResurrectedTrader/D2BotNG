@@ -22,10 +22,12 @@ public class EngineHostedService : IHostedService
         _scheduleEngine.Start();
     }
 
-    public Task StopAsync(CancellationToken cancellationToken)
+    public async Task StopAsync(CancellationToken cancellationToken)
     {
-        _scheduleEngine.Dispose();
-        _profileEngine.Dispose();
-        return Task.CompletedTask;
+        // Stop scheduler first so it doesn't restart profiles during shutdown
+        await _scheduleEngine.StopAsync();
+
+        // Gracefully stop all game processes and dispose resources
+        await _profileEngine.StopAsync();
     }
 }

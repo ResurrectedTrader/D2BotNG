@@ -6,7 +6,7 @@ namespace D2BotNG.Engine;
 /// <summary>
 /// Engine for managing schedule-based profile activation
 /// </summary>
-public class ScheduleEngine : IDisposable
+public class ScheduleEngine
 {
     private readonly ILogger<ScheduleEngine> _logger;
     private readonly ScheduleRepository _scheduleRepository;
@@ -113,10 +113,22 @@ public class ScheduleEngine : IDisposable
         return false;
     }
 
-    public void Dispose()
+    public async Task StopAsync()
     {
         _shutdownCts.Cancel();
-        _monitorTask?.Wait(TimeSpan.FromSeconds(5));
+
+        if (_monitorTask is not null)
+        {
+            try
+            {
+                await _monitorTask.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (TimeoutException)
+            {
+                // Monitor task didn't stop in time — it will exit on its own
+            }
+        }
+
         _shutdownCts.Dispose();
     }
 }
