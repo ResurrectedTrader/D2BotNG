@@ -185,81 +185,92 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
 
     public override async Task<Empty> Reorder(ReorderProfileRequest request, ServerCallContext context)
     {
-        var profile = await _profileRepository.GetByKeyAsync(request.ProfileName);
-        if (profile == null)
-        {
-            throw RpcExceptions.NotFound("Profile", request.ProfileName);
-        }
+        if (request.ProfileNames.Count == 0)
+            return new Empty();
 
+        var movingNames = new HashSet<string>(request.ProfileNames);
+
+        // Validate all profiles exist
         var allProfiles = (await _profileRepository.GetAllAsync()).ToList();
+        var notFound = request.ProfileNames.Where(n => !allProfiles.Any(p => p.Name == n)).ToList();
+        if (notFound.Count > 0)
+            throw RpcExceptions.NotFound("Profile(s)", string.Join(", ", notFound));
 
-        // Determine target group
-        var targetGroup = request.HasNewGroup ? request.NewGroup : profile.Group;
+        // Determine target group - use group of first profile if not specified
+        var firstProfile = allProfiles.First(p => p.Name == request.ProfileNames[0]);
+        var targetGroup = request.HasNewGroup ? request.NewGroup : firstProfile.Group;
 
-        // Update group if changed
-        if (request.HasNewGroup && request.NewGroup != profile.Group)
+        // Update group for any profiles that need it
+        if (request.HasNewGroup)
         {
-            profile.Group = request.NewGroup;
-            await _profileRepository.UpdateAsync(profile);
-            // Refresh the list after update
+            foreach (var name in request.ProfileNames)
+            {
+                var profile = allProfiles.First(p => p.Name == name);
+                if (profile.Group != request.NewGroup)
+                {
+                    profile.Group = request.NewGroup;
+                    await _profileRepository.UpdateAsync(profile);
+                }
+            }
+            // Refresh the list after updates
             allProfiles = (await _profileRepository.GetAllAsync()).ToList();
         }
 
-        // Find profiles in target group (excluding the one being moved)
+        // Find profiles in target group (excluding the ones being moved)
         var groupProfiles = allProfiles
             .Select((p, index) => (Profile: p, Index: index))
-            .Where(x => x.Profile.Group == targetGroup && x.Profile.Name != request.ProfileName)
+            .Where(x => x.Profile.Group == targetGroup && !movingNames.Contains(x.Profile.Name))
             .ToList();
 
-        // Calculate global index
+        // Calculate global index (in the list with moved items removed)
+        // We need to compute the index in the "remaining" list (all profiles minus moved ones)
         int globalIndex;
         if (groupProfiles.Count == 0)
         {
             // No other profiles in target group - find where this group should be
-            // Groups are ordered: ungrouped first, then alphabetically by group name
             if (string.IsNullOrEmpty(targetGroup))
             {
-                // Ungrouped goes at the beginning
                 globalIndex = 0;
             }
             else
             {
-                // Find the first profile of a group that comes after targetGroup alphabetically
                 var afterGroup = allProfiles
+                    .Where(x => !movingNames.Contains(x.Name))
                     .Select((p, index) => (Profile: p, Index: index))
                     .Where(x => !string.IsNullOrEmpty(x.Profile.Group) &&
-                                string.Compare(x.Profile.Group, targetGroup, StringComparison.Ordinal) > 0 &&
-                                x.Profile.Name != request.ProfileName)
+                                string.Compare(x.Profile.Group, targetGroup, StringComparison.Ordinal) > 0)
                     .OrderBy(x => x.Index)
                     .FirstOrDefault();
 
-                globalIndex = afterGroup.Profile != null ? afterGroup.Index : allProfiles.Count - 1;
+                var remaining = allProfiles.Where(p => !movingNames.Contains(p.Name)).ToList();
+                globalIndex = afterGroup.Profile != null ? afterGroup.Index : remaining.Count;
             }
         }
         else if (request.NewIndex <= 0)
         {
-            // Insert at beginning of group
-            globalIndex = groupProfiles[0].Index;
+            // Insert at beginning of group - convert group-local index to global remaining index
+            var targetName = groupProfiles[0].Profile.Name;
+            var remaining = allProfiles.Where(p => !movingNames.Contains(p.Name)).ToList();
+            globalIndex = remaining.FindIndex(p => p.Name == targetName);
         }
         else if (request.NewIndex >= groupProfiles.Count)
         {
-            // Insert at end of group - after the last profile in the group
-            globalIndex = groupProfiles[^1].Index + 1;
-            // Adjust if moving from before to after (index will shift)
-            var currentIndex = allProfiles.FindIndex(p => p.Name == request.ProfileName);
-            if (currentIndex < groupProfiles[^1].Index)
-                globalIndex--;
+            // Insert at end of group
+            var targetName = groupProfiles[^1].Profile.Name;
+            var remaining = allProfiles.Where(p => !movingNames.Contains(p.Name)).ToList();
+            globalIndex = remaining.FindIndex(p => p.Name == targetName) + 1;
         }
         else
         {
             // Insert at specific position within group
-            globalIndex = groupProfiles[request.NewIndex].Index;
+            var targetName = groupProfiles[request.NewIndex].Profile.Name;
+            var remaining = allProfiles.Where(p => !movingNames.Contains(p.Name)).ToList();
+            globalIndex = remaining.FindIndex(p => p.Name == targetName);
         }
 
-        // Clamp to valid range
-        globalIndex = Math.Clamp(globalIndex, 0, allProfiles.Count - 1);
+        globalIndex = Math.Max(globalIndex, 0);
 
-        await _profileRepository.MoveToIndexAsync(request.ProfileName, globalIndex);
+        await _profileRepository.MoveMultipleToIndexAsync(request.ProfileNames.ToList(), globalIndex);
 
         await _profileEngine.BroadcastProfilesSnapshotAsync();
 

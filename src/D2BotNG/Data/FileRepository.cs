@@ -182,23 +182,42 @@ public abstract class FileRepository<TItem, TList> : IDisposable
         }
     }
 
-    public async Task MoveToIndexAsync(string key, int newIndex)
+    /// <summary>
+    /// Moves multiple items to a target index, preserving their relative order.
+    /// The target index is relative to the list with the moved items removed.
+    /// </summary>
+    public async Task MoveMultipleToIndexAsync(IReadOnlyList<string> keys, int newIndex)
     {
         await EnsureLoadedAsync();
 
         await Lock.WaitAsync();
         try
         {
-            var currentIndex = _data.FindIndex(e => GetKey(e) == key);
-            if (currentIndex < 0)
-                throw new KeyNotFoundException($"{typeof(TItem).Name} '{key}' not found");
+            var keySet = new HashSet<string>(keys);
+            var itemsToMove = new List<TItem>();
+            var remaining = new List<TItem>();
 
-            if (newIndex < 0 || newIndex >= _data.Count)
-                throw new ArgumentOutOfRangeException(nameof(newIndex), $"Index must be between 0 and {_data.Count - 1}");
+            foreach (var item in _data)
+            {
+                if (keySet.Contains(GetKey(item)))
+                    itemsToMove.Add(item);
+                else
+                    remaining.Add(item);
+            }
 
-            var entity = _data[currentIndex];
-            _data.RemoveAt(currentIndex);
-            _data.Insert(newIndex, entity);
+            if (itemsToMove.Count != keys.Count)
+            {
+                var missing = keys.Where(k => !itemsToMove.Any(i => GetKey(i) == k));
+                throw new KeyNotFoundException(
+                    $"{typeof(TItem).Name}(s) not found: {string.Join(", ", missing)}");
+            }
+
+            newIndex = Math.Clamp(newIndex, 0, remaining.Count);
+
+            remaining.InsertRange(newIndex, itemsToMove);
+
+            _data.Clear();
+            _data.AddRange(remaining);
             await SaveAsync();
         }
         finally

@@ -183,16 +183,16 @@ export function useProfileActions() {
 
   const reorder = useMutation({
     mutationFn: async ({
-      profileName,
+      profileNames,
       newIndex,
       newGroup,
     }: {
-      profileName: string;
+      profileNames: string[];
       newIndex: number;
       newGroup?: string;
     }) => {
       const request = create(ReorderProfileRequestSchema, {
-        profileName,
+        profileNames,
         newIndex,
         newGroup,
       });

@@ -99,7 +99,7 @@ message ProfileState {
 }
 
 message ReorderProfileRequest {
-  string profile_name = 1;
+  repeated string profile_names = 1;
   int32 new_index = 2;
   optional string new_group = 3;
 }

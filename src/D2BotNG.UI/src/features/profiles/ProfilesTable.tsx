@@ -150,6 +150,7 @@ interface SortableProfileRowProps {
   visibleColumns: { key: ProfileColumnKey; label: string }[];
   actions: ReturnType<typeof useProfileActions>;
   isSelected: boolean;
+  isGhostDrag?: boolean;
   hasHover: boolean;
   onClone: (profile: Profile) => void;
   onDelete: (profile: Profile) => void;
@@ -165,6 +166,7 @@ function SortableProfileRow({
   visibleColumns,
   actions,
   isSelected,
+  isGhostDrag,
   hasHover,
   onClone,
   onDelete,
@@ -206,9 +208,9 @@ function SortableProfileRow({
       style={style}
       className={clsx(
         "border-b border-zinc-800 cursor-pointer hover:bg-zinc-800/50 transition-colors",
-        isDragging && "opacity-50 bg-zinc-800",
+        (isDragging || isGhostDrag) && "opacity-50 bg-zinc-800",
         isDragOverlay && "bg-zinc-900 shadow-lg border border-zinc-700",
-        isSelected && "bg-blue-900/30",
+        isSelected && !isDragging && !isGhostDrag && "bg-blue-900/30",
       )}
       onClick={(e) =>
         !isDragging &&
@@ -546,7 +548,16 @@ export function ProfilesTable({
   };
 
   const handleDragStart = (event: DragStartEvent) => {
-    setActiveId(event.active.id as string);
+    const draggedId = event.active.id as string;
+    setActiveId(draggedId);
+
+    // If dragging a selected profile, drag all selected profiles
+    // If dragging an unselected profile, select only that one
+    if (selectedProfiles.has(draggedId) && selectedProfiles.size > 1) {
+      // Keep current selection - dragging multiple
+    } else {
+      onSelectionChange(new Set([draggedId]));
+    }
   };
 
   const handleDragOver = (event: DragOverEvent) => {
@@ -580,13 +591,19 @@ export function ProfilesTable({
 
     if (!over) return;
 
-    const activeId = active.id as string;
+    const draggedId = active.id as string;
     const overId = over.id as string;
 
-    if (activeId === overId) return;
+    // Determine which profiles are being dragged (preserving visual order)
+    const draggedNames = allProfileIds.filter((id) => selectedProfiles.has(id));
 
-    const activeProfile = profiles.find((p) => p.name === activeId);
-    if (!activeProfile) return;
+    // If the dragged item is the drop target, nothing to do
+    if (draggedNames.length === 1 && draggedId === overId) return;
+
+    // Don't drop onto one of the dragged items
+    if (draggedNames.includes(overId)) return;
+
+    const draggedSet = new Set(draggedNames);
 
     let targetGroup: string;
     let targetIndex: number;
@@ -599,7 +616,7 @@ export function ProfilesTable({
           ? ungroupedProfiles
           : (groupedProfiles.find((g) => g.name === targetGroup)?.profiles ??
             []);
-      targetIndex = groupProfiles.filter((p) => p.name !== activeId).length;
+      targetIndex = groupProfiles.filter((p) => !draggedSet.has(p.name)).length;
     } else {
       // Dropped on a profile - insert at that position
       const overProfile = profiles.find((p) => p.name === overId);
@@ -612,27 +629,24 @@ export function ProfilesTable({
           : (groupedProfiles.find((g) => g.name === targetGroup)?.profiles ??
             []);
 
-      // Find index of the profile we're dropping on (excluding the active one)
-      const filteredProfiles = groupProfiles.filter((p) => p.name !== activeId);
+      // Find index of the profile we're dropping on (excluding dragged items)
+      const filteredProfiles = groupProfiles.filter(
+        (p) => !draggedSet.has(p.name),
+      );
       targetIndex = filteredProfiles.findIndex((p) => p.name === overId);
       if (targetIndex === -1) targetIndex = filteredProfiles.length;
     }
 
-    // Only call API if something changed
-    const currentGroup = activeProfile.group || "";
-    const currentIndex =
-      currentGroup === ""
-        ? ungroupedProfiles.findIndex((p) => p.name === activeId)
-        : (groupedProfiles
-            .find((g) => g.name === currentGroup)
-            ?.profiles.findIndex((p) => p.name === activeId) ?? -1);
-
-    if (currentGroup === targetGroup && currentIndex === targetIndex) return;
+    // Send newGroup if any dragged profile is moving to a different group
+    const groupChanged = draggedNames.some((name) => {
+      const p = profiles.find((pr) => pr.name === name);
+      return p && (p.group || "") !== targetGroup;
+    });
 
     actions.reorder.mutate({
-      profileName: activeId,
+      profileNames: draggedNames,
       newIndex: targetIndex,
-      newGroup: targetGroup !== currentGroup ? targetGroup : undefined,
+      newGroup: groupChanged ? targetGroup : undefined,
     });
   };
 
@@ -764,6 +778,12 @@ export function ProfilesTable({
                       visibleColumns={visibleColumns}
                       actions={actions}
                       isSelected={selectedProfiles.has(profile.name)}
+                      isGhostDrag={
+                        activeId !== null &&
+                        activeId !== profile.name &&
+                        selectedProfiles.has(profile.name) &&
+                        selectedProfiles.size > 1
+                      }
                       hasHover={hasHover}
                       onClone={onClone}
                       onDelete={onDelete}
@@ -788,6 +808,12 @@ export function ProfilesTable({
                         visibleColumns={visibleColumns}
                         actions={actions}
                         isSelected={selectedProfiles.has(profile.name)}
+                        isGhostDrag={
+                          activeId !== null &&
+                          activeId !== profile.name &&
+                          selectedProfiles.has(profile.name) &&
+                          selectedProfiles.size > 1
+                        }
                         hasHover={hasHover}
                         onClone={onClone}
                         onDelete={onDelete}
@@ -804,23 +830,30 @@ export function ProfilesTable({
 
         <DragOverlay>
           {activeProfile && (
-            <table className="w-full">
-              <tbody>
-                <SortableProfileRow
-                  profile={activeProfile}
-                  status={statuses[activeProfile.name]}
-                  visibleColumns={visibleColumns}
-                  actions={actions}
-                  isSelected={selectedProfiles.has(activeProfile.name)}
-                  hasHover={hasHover}
-                  onClone={onClone}
-                  onDelete={onDelete}
-                  onSelect={handleSelect}
-                  onNavigate={handleNavigate}
-                  isDragOverlay
-                />
-              </tbody>
-            </table>
+            <div className="relative">
+              <table className="w-full">
+                <tbody>
+                  <SortableProfileRow
+                    profile={activeProfile}
+                    status={statuses[activeProfile.name]}
+                    visibleColumns={visibleColumns}
+                    actions={actions}
+                    isSelected={selectedProfiles.has(activeProfile.name)}
+                    hasHover={hasHover}
+                    onClone={onClone}
+                    onDelete={onDelete}
+                    onSelect={handleSelect}
+                    onNavigate={handleNavigate}
+                    isDragOverlay
+                  />
+                </tbody>
+              </table>
+              {selectedProfiles.size > 1 && (
+                <div className="absolute -top-2 -right-2 bg-blue-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center shadow-lg">
+                  {selectedProfiles.size}
+                </div>
+              )}
+            </div>
           )}
         </DragOverlay>
       </DndContext>
