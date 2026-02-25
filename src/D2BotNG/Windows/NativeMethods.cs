@@ -186,4 +186,20 @@ public static class NativeMethods
         nint pSacl);
 
     #endregion
+
+    /// <summary>
+    /// Async polling wrapper around WaitForSingleObject.
+    /// Polls instead of blocking so the calling thread is released between checks.
+    /// </summary>
+    public static async Task<bool> WaitForSingleObjectAsync(nint handle, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (WaitForSingleObject(handle, 0) == 0) // WAIT_OBJECT_0
+                return true;
+            await Task.Delay(50);
+        }
+        return false;
+    }
 }

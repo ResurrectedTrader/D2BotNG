@@ -14,7 +14,7 @@ public class Patcher
         _logger = logger;
     }
 
-    public bool ApplyPatch(Process process, string module, Patch patch)
+    public async Task<bool> ApplyPatchAsync(Process process, string module, Patch patch)
     {
         try
         {
@@ -33,7 +33,7 @@ public class Patcher
             // Get module base address via CreateRemoteThread + LoadLibraryW
             // Works for both .exe and .dll — LoadLibraryW on an already-mapped exe returns its base address
             // This works on suspended processes because the remote thread is not suspended
-            var moduleBase = LoadModuleRemotely(hProcess, module);
+            var moduleBase = await LoadModuleRemotelyAsync(hProcess, module);
 
             if (moduleBase == 0)
             {
@@ -79,7 +79,7 @@ public class Patcher
     /// Works on suspended processes because CreateRemoteThread creates a new, non-suspended thread.
     /// Returns the module base address (LoadLibrary's return value) or 0 on failure.
     /// </summary>
-    private nint LoadModuleRemotely(nint processHandle, string modulePath)
+    private async Task<nint> LoadModuleRemotelyAsync(nint processHandle, string modulePath)
     {
         var pathBytes = System.Text.Encoding.Unicode.GetBytes(modulePath + '\0');
 
@@ -119,8 +119,12 @@ public class Patcher
 
             using var threadHandle = new SafeProcessHandle(rawThreadHandle, ownsHandle: true);
 
-            // Wait for LoadLibraryW to complete
-            WaitForSingleObject(threadHandle.DangerousGetHandle(), INFINITE);
+            // Poll instead of blocking so the thread is released between checks
+            if (!await WaitForSingleObjectAsync(threadHandle.DangerousGetHandle(), TimeSpan.FromSeconds(10)))
+            {
+                _logger.LogError("Timed out waiting for LoadLibraryW in target process for {ModulePath}", modulePath);
+                return 0;
+            }
 
             // LoadLibrary's return value is the module base address (or 0 on failure)
             // Retrieved via the thread's exit code
@@ -143,4 +147,5 @@ public class Patcher
             VirtualFreeEx(processHandle, remoteMemory, 0, MEM_RELEASE);
         }
     }
+
 }

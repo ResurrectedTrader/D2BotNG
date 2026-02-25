@@ -58,7 +58,10 @@ public class GameLauncher
             process.EnableRaisingEvents = true;
 
             // Step 5: Apply patches
-            await ApplyPatchesAsync(process, gameDir, config.Visible);
+            if (!await ApplyPatchesAsync(process, gameDir, config.Visible))
+            {
+                throw new ApplicationException("Failed to apply patches");
+            }
 
             // Step 6: Overwrite DACL to be able to inject.
             if (!_daclOverwriter.OverwriteDacl(process))
@@ -69,7 +72,7 @@ public class GameLauncher
             // Step 7: Inject D2BS.dll
             if (!string.IsNullOrEmpty(config.D2BSPath))
             {
-                if (!_processManager.InjectDll(process, config.D2BSPath))
+                if (!await _processManager.InjectDllAsync(process, config.D2BSPath))
                 {
                     throw new ApplicationException($"Failed to inject {config.D2BSPath} into {processId}");
                 }
@@ -79,10 +82,7 @@ public class GameLauncher
             _processManager.ResumeProcess(process);
 
             // Step 9: Wait for process to initialize (ready for input)
-            if (!process.WaitForInputIdle(30000)) // 30 second timeout
-            {
-                throw new TimeoutException("Timed out waiting for window to be ready for input");
-            }
+            await WaitForInputIdleAsync(process, TimeSpan.FromSeconds(30), cancellationToken);
 
             // Step 10: Wait for main window
             await WaitForMainWindowAsync(process, TimeSpan.FromSeconds(30), cancellationToken);
@@ -143,7 +143,7 @@ public class GameLauncher
         }
     }
 
-    private async Task ApplyPatchesAsync(Process process, string gameDir, bool visible)
+    private async Task<bool> ApplyPatchesAsync(Process process, string gameDir, bool visible)
     {
         var settings = await _settingsRepository.GetAsync();
         var version = settings.Game?.GameVersion;
@@ -151,7 +151,7 @@ public class GameLauncher
         if (string.IsNullOrEmpty(version))
         {
             _logger.LogWarning("No D2 version configured, skipping patches");
-            return;
+            return true;
         }
 
         var patches = await _patchRepository.GetPatchesForVersionAsync(version);
@@ -176,11 +176,14 @@ public class GameLauncher
             var moduleName = PatchRepository.GetModuleName(patch.Module);
             var modulePath = Path.Combine(gameDir, moduleName);
 
-            if (!_patcher.ApplyPatch(process, modulePath, patch))
+            if (!await _patcher.ApplyPatchAsync(process, modulePath, patch))
             {
                 _logger.LogWarning("Failed to apply patch {Patch}", patch.Name);
+                return false;
             }
         }
+
+        return true;
     }
 
     /// <summary>
@@ -220,6 +223,27 @@ public class GameLauncher
         }
 
         return sb.ToString().TrimEnd();
+    }
+
+    private static async Task WaitForInputIdleAsync(Process process, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (process.HasExited)
+                throw new InvalidOperationException($"Game process exited with code {process.ExitCode}");
+
+            // Non-blocking check (timeout=0 returns immediately)
+            if (process.WaitForInputIdle(0))
+                return;
+
+            await Task.Delay(100, cancellationToken);
+        }
+
+        throw new TimeoutException("Timed out waiting for window to be ready for input");
     }
 
     private static async Task WaitForMainWindowAsync(Process process, TimeSpan timeout, CancellationToken cancellationToken)
