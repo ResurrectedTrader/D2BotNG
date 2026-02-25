@@ -42,7 +42,7 @@ public static class Extensions
                     WM_COPYDATA,
                     0,
                     pCopyData,
-                    SMTO_NOTIMEOUTIFNOTHUNG,
+                    SMTO_ABORTIFHUNG,
                     250,
                     out _);
 
