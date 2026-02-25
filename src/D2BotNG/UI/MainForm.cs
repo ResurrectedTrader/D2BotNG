@@ -13,22 +13,10 @@ namespace D2BotNG.UI;
 
 public class MainForm : Form
 {
-    private const int ResizeBorderSize = 3;
-
     // ReSharper disable InconsistentNaming — Win32 API constants
     private const int WM_SYSCOMMAND = 0x112;
     private const int SC_MINIMIZE = 0xF020;
-    private const int WM_NCHITTEST = 0x84;
     private const int WM_EXITSIZEMOVE = 0x232;
-    private const int HTCLIENT = 1;
-    private const int HTLEFT = 10;
-    private const int HTRIGHT = 11;
-    private const int HTTOP = 12;
-    private const int HTTOPLEFT = 13;
-    private const int HTTOPRIGHT = 14;
-    private const int HTBOTTOM = 15;
-    private const int HTBOTTOMLEFT = 16;
-    private const int HTBOTTOMRIGHT = 17;
     // ReSharper restore InconsistentNaming
 
     private readonly WebView2 _webView;
@@ -113,40 +101,11 @@ public class MainForm : Form
             return;
         }
 
-        if (m.Msg == WM_NCHITTEST && WindowState != FormWindowState.Maximized)
-        {
-            var pt = PointToClient(new Point(m.LParam.ToInt32() & 0xFFFF, m.LParam.ToInt32() >> 16));
-            var hitTest = GetHitTest(pt);
-            if (hitTest != HTCLIENT)
-            {
-                m.Result = hitTest;
-                return;
-            }
-        }
-        else if (m.Msg == WM_EXITSIZEMOVE)
+        if (m.Msg == WM_EXITSIZEMOVE)
         {
             _ = SaveWindowSettingsAsync();
         }
         base.WndProc(ref m);
-    }
-
-    private int GetHitTest(Point pt)
-    {
-        var left = pt.X < ResizeBorderSize;
-        var right = pt.X >= ClientSize.Width - ResizeBorderSize;
-        var top = pt.Y < ResizeBorderSize;
-        var bottom = pt.Y >= ClientSize.Height - ResizeBorderSize;
-
-        if (top && left) return HTTOPLEFT;
-        if (top && right) return HTTOPRIGHT;
-        if (bottom && left) return HTBOTTOMLEFT;
-        if (bottom && right) return HTBOTTOMRIGHT;
-        if (left) return HTLEFT;
-        if (right) return HTRIGHT;
-        if (top) return HTTOP;
-        if (bottom) return HTBOTTOM;
-
-        return HTCLIENT;
     }
 
     private async void OnFormLoad(object? sender, EventArgs e)

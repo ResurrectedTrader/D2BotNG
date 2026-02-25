@@ -7,7 +7,7 @@ import { useUpdateSettings } from "@/hooks/useSettings";
 import { CloseAction } from "@/generated/settings_pb";
 
 const TITLEBAR_HEIGHT = 32;
-const RESIZE_BORDER = 6;
+const RESIZE_BORDER = 3;
 
 function isWebView(): boolean {
   return !!(window as any).chrome?.webview;
