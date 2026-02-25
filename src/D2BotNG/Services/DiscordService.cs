@@ -25,6 +25,7 @@ public class DiscordService : BackgroundService
     // Track current Discord settings to detect changes
     private bool _currentEnabled;
     private string? _currentToken;
+    private string? _currentPassword;
     private readonly SemaphoreSlim _reconnectLock = new(1, 1);
     private CancellationTokenSource? _clientCts;
 
@@ -93,6 +94,17 @@ public class DiscordService : BackgroundService
                 _guildId = guildId;
             }
 
+            // Clear authenticated users if password changed
+            if (discord.Password != _currentPassword)
+            {
+                _currentPassword = discord.Password;
+                if (_authenticatedUsers.Count > 0)
+                {
+                    _authenticatedUsers.Clear();
+                    _logger.LogInformation("Discord password changed, cleared authenticated users");
+                }
+            }
+
             // Handle connection state changes
             if (enabledChanged || (newEnabled && tokenChanged))
             {
@@ -155,6 +167,7 @@ public class DiscordService : BackgroundService
 
             _currentEnabled = true;
             _currentToken = token;
+            _currentPassword = (await _settingsRepository.GetAsync()).Discord.Password;
 
             _logger.LogInformation("Discord bot started");
         }
@@ -261,7 +274,6 @@ public class DiscordService : BackgroundService
 
     private async Task RegisterSlashCommandsAsync(IGuild guild)
     {
-        var settings = await _settingsRepository.GetAsync();
         var commands = new List<SlashCommandBuilder>
         {
             new SlashCommandBuilder()
@@ -304,16 +316,11 @@ public class DiscordService : BackgroundService
                     choices: [new ApplicationCommandOptionChoiceProperties { Name = "enable", Value = "enable" },
                               new ApplicationCommandOptionChoiceProperties { Name = "disable", Value = "disable" }])
                 .AddOption("profile", ApplicationCommandOptionType.String, "Profile name or 'all'", isRequired: true),
-        };
-
-        // Add identify command only if password is configured
-        if (settings.Discord.HasPassword)
-        {
-            commands.Add(new SlashCommandBuilder()
+            new SlashCommandBuilder()
                 .WithName("identify")
                 .WithDescription("Authenticate for privileged commands")
-                .AddOption("password", ApplicationCommandOptionType.String, "Server password", isRequired: true));
-        }
+                .AddOption("password", ApplicationCommandOptionType.String, "Server password", isRequired: true),
+        };
 
         try
         {

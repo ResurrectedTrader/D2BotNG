@@ -140,6 +140,14 @@ public static class NativeTypes
 
     // Hit test values (int - LRESULT cast to int)
     public const int HTCAPTION = 2;
+    public const int HTLEFT = 10;
+    public const int HTRIGHT = 11;
+    public const int HTTOP = 12;
+    public const int HTTOPLEFT = 13;
+    public const int HTTOPRIGHT = 14;
+    public const int HTBOTTOM = 15;
+    public const int HTBOTTOMLEFT = 16;
+    public const int HTBOTTOMRIGHT = 17;
 
     // Special window handles
     public static readonly nint HWND_MESSAGE = -3;

@@ -528,6 +528,11 @@ public class ProfileEngine
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error running profile {Name}", profileName);
+
+            // Clean up handle mapping
+            if (instance.Process?.MainWindowHandle is > 0 and var handle)
+                _handleToProfile.TryRemove(handle, out _);
+
             await instance.SetErrorAsync(ex.Message);
             await NotifyProfileStateChangedAsync(profileName);
 

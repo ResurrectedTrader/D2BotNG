@@ -12,8 +12,8 @@ public class MessageService
 {
     private readonly EventBroadcaster _eventBroadcaster;
 
-    private const int MaxHistorySize = 100_000;
-    private readonly List<Message> _history = [];
+    private const int MaxHistorySize = 10_000;
+    private readonly Queue<Message> _history = new();
     private readonly Lock _historyLock = new();
 
     public MessageService(EventBroadcaster eventBroadcaster)
@@ -46,9 +46,9 @@ public class MessageService
         // Add to history
         lock (_historyLock)
         {
-            _history.Add(msg);
+            _history.Enqueue(msg);
             while (_history.Count > MaxHistorySize)
-                _history.RemoveAt(0);
+                _history.Dequeue();
         }
 
         // Broadcast to all clients
@@ -81,7 +81,10 @@ public class MessageService
     {
         lock (_historyLock)
         {
-            _history.RemoveAll(m => m.Source == source);
+            var kept = _history.Where(m => m.Source != source).ToArray();
+            _history.Clear();
+            foreach (var m in kept)
+                _history.Enqueue(m);
         }
     }
 }

@@ -35,7 +35,7 @@ public class ProcessManager : IDisposable
         }
     }
 
-    public bool InjectDll(Process process, string dllPath)
+    public async Task<bool> InjectDllAsync(Process process, string dllPath)
     {
         if (!File.Exists(dllPath))
         {
@@ -105,7 +105,8 @@ public class ProcessManager : IDisposable
                 }
 
                 using var threadHandle = new SafeProcessHandle(rawThreadHandle, ownsHandle: true);
-                WaitForSingleObject(threadHandle.DangerousGetHandle(), 5000);
+                // Poll instead of blocking so the thread is released between checks
+                await WaitForSingleObjectAsync(threadHandle.DangerousGetHandle(), TimeSpan.FromSeconds(5));
 
                 _logger.LogDebug("Successfully injected {Dll} into process {Pid}", dllPath, process.Id);
                 return true;
@@ -249,11 +250,10 @@ public class ProcessManager : IDisposable
         foreach (ProcessThread thread in process.Threads)
         {
             var rawThreadHandle = OpenThread(THREAD_SUSPEND_RESUME, false, (uint)thread.Id);
-            if (rawThreadHandle != 0)
-            {
-                using var threadHandle = new SafeProcessHandle(rawThreadHandle, ownsHandle: true);
-                ResumeThread(threadHandle.DangerousGetHandle());
-            }
+            if (rawThreadHandle == 0) continue;
+
+            using var threadHandle = new SafeProcessHandle(rawThreadHandle, ownsHandle: true);
+            ResumeThread(threadHandle.DangerousGetHandle());
         }
     }
 

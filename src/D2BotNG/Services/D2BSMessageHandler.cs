@@ -192,7 +192,7 @@ public class D2BSMessageHandler : BackgroundService
         if (!uint.TryParse(args[0], out var msgId)) return false;
         if (!int.TryParse(args[1], out var wParam)) return false;
         NativeMethods.SendMessageTimeout(instance.Process.MainWindowHandle, msgId, wParam, 0,
-            NativeTypes.SMTO_NOTIMEOUTIFNOTHUNG, 250u, out _);
+            NativeTypes.SMTO_ABORTIFHUNG, 250u, out _);
         return true;
     }
 

@@ -210,6 +210,9 @@ public record ProfileMessage
     [JsonPropertyName("args")]
     [JsonConverter(typeof(StringListCoercingConverter))]
     public string[] Arguments { get; set; } = [];
+
+    public override string ToString() =>
+        $"ProfileMessage {{ Profile = {Profile}, Function = {Function}, Arguments = [{string.Join(", ", Arguments)}] }}";
 }
 
 /// <summary>

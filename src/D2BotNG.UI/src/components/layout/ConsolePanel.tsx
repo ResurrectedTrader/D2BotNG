@@ -58,8 +58,6 @@ export function ConsolePanel() {
     if (typeof window === "undefined") return "";
     return localStorage.getItem(STORAGE_FILTER_KEY) || "";
   });
-  const [filterError, setFilterError] = useState(false);
-
   const [isCollapsed, setIsCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
     const stored = localStorage.getItem(STORAGE_COLLAPSED_KEY);
@@ -116,7 +114,7 @@ export function ConsolePanel() {
   };
 
   // Build messages based on source selection and regex filter
-  const messages: MessageEntryWithLabel[] = useMemo(() => {
+  const { messages, filterError } = useMemo(() => {
     let filtered: MessageEntryWithLabel[];
 
     // Empty selectedSources = show all, otherwise filter to selected
@@ -148,16 +146,13 @@ export function ConsolePanel() {
             regex.test(timestamp)
           );
         });
-        setFilterError(false);
       } catch {
         // Invalid regex - show error state but don't filter
-        setFilterError(true);
+        return { messages: filtered, filterError: true };
       }
-    } else {
-      setFilterError(false);
     }
 
-    return filtered;
+    return { messages: filtered, filterError: false };
   }, [selectedSources, availableSources, allMessages, filter]);
 
   // Persist selected sources

@@ -364,6 +364,16 @@ export function CharactersPage() {
     return <LoadingSpinner fullPage />;
   }
 
+  if (entities.length === 0) {
+    return (
+      <EmptyState
+        icon={UserIcon}
+        title="No characters yet"
+        description="This view shows characters that have been logged with the mule logger. Start the mule logger on a profile to begin tracking character inventories."
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
