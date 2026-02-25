@@ -4,10 +4,12 @@
  * Displays console log entries with timestamps and colored messages.
  * Uses MessageColor from the event stream for coloring.
  * Shows item tooltip on hover for messages with items.
+ * Uses virtualized scrolling for performance with large message lists.
  */
 
-import { useEffect, memo, useMemo, useState, Fragment, useRef } from "react";
+import { useEffect, memo, useState, Fragment, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import clsx from "clsx";
 import { MessageColor } from "@/generated/events_pb";
 import type { Item } from "@/generated/items_pb";
@@ -209,7 +211,7 @@ const ConsoleRow = memo(function ConsoleRow({
   }, [cursorPos]);
 
   return (
-    <div className="col-span-full grid grid-cols-subgrid gap-2 border-b border-zinc-800/50 px-2 py-0.5 font-mono text-xs hover:bg-zinc-800/50">
+    <div className="grid grid-cols-[auto_1fr] gap-2 border-b border-zinc-800/50 px-2 py-0.5 font-mono text-xs hover:bg-zinc-800/50 sm:grid-cols-[auto_auto_1fr]">
       {/* Timestamp - hidden on mobile, time only on sm, full on lg */}
       <span className="hidden whitespace-nowrap text-zinc-500 sm:inline">
         <span className="hidden lg:inline">{date} </span>
@@ -246,16 +248,35 @@ export function ConsoleOutput({
   className,
 }: ConsoleOutputProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const isAtBottomRef = useRef(true);
 
-  // Memoize reversed array to avoid recreating on every render
-  const reversedMessages = useMemo(() => [...messages].reverse(), [messages]);
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => containerRef.current,
+    estimateSize: () => 24,
+    overscan: 50,
+  });
 
-  // Auto-scroll to bottom when new messages arrive
+  // Track whether user is at the bottom of the scroll container
   useEffect(() => {
-    if (autoScroll && containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    const el = containerRef.current;
+    if (!el) return;
+
+    const handleScroll = () => {
+      isAtBottomRef.current =
+        el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+    };
+
+    el.addEventListener("scroll", handleScroll, { passive: true });
+    return () => el.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // Auto-scroll to bottom only when user is already at the bottom
+  useEffect(() => {
+    if (autoScroll && isAtBottomRef.current && messages.length > 0) {
+      virtualizer.scrollToIndex(messages.length - 1, { align: "end" });
     }
-  }, [messages.length, autoScroll]);
+  }, [messages.length, autoScroll, virtualizer]);
 
   return (
     <div
@@ -270,10 +291,28 @@ export function ConsoleOutput({
           No console output yet...
         </div>
       ) : (
-        <div className="grid grid-cols-[auto_1fr] sm:grid-cols-[auto_auto_1fr]">
-          {/* Render in reverse order so newest is at bottom */}
-          {reversedMessages.map((entry) => (
-            <ConsoleRow key={entry.id} entry={entry} />
+        <div
+          style={{
+            height: virtualizer.getTotalSize(),
+            width: "100%",
+            position: "relative",
+          }}
+        >
+          {virtualizer.getVirtualItems().map((virtualItem) => (
+            <div
+              key={virtualItem.key}
+              data-index={virtualItem.index}
+              ref={virtualizer.measureElement}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                transform: `translateY(${virtualItem.start}px)`,
+              }}
+            >
+              <ConsoleRow entry={messages[virtualItem.index]} />
+            </div>
           ))}
         </div>
       )}

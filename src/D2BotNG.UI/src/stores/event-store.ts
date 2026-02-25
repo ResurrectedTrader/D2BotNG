@@ -16,7 +16,10 @@ import type { UpdateStatus } from "@/generated/updates_pb";
 import type { Event, KeyUsage, MessageColor } from "@/generated/events_pb";
 import type { LogLevelEntry } from "@/generated/logging_pb";
 
-const MAX_MESSAGES = 100_000;
+const MAX_MESSAGES = 10_000;
+
+/** Stable empty array reference for selectors */
+const EMPTY_MESSAGES: MessageEntry[] = [];
 
 /** Console message with unique ID for React key (wraps proto Message) */
 export interface MessageEntry {
@@ -69,8 +72,9 @@ interface EventState {
   // Update status
   updateStatus: UpdateStatus | null;
 
-  // Console messages - unified
+  // Console messages (chronological order, newest last)
   messages: MessageEntry[];
+  messagesBySource: Map<string, MessageEntry[]>;
 
   // Log levels (session-only)
   logLevels: LogLevelEntry[];
@@ -95,6 +99,7 @@ export const useEventStore = create<EventState>((set, get) => ({
   settings: null,
   updateStatus: null,
   messages: [],
+  messagesBySource: new Map(),
   logLevels: [],
 
   setConnected: (connected) => set({ isConnected: connected }),
@@ -174,8 +179,30 @@ export const useEventStore = create<EventState>((set, get) => ({
           color: msg.color,
           item: msg.item,
         };
-        const newMessages = [entry, ...get().messages];
-        set({ messages: newMessages.slice(0, MAX_MESSAGES) });
+
+        const messages = [...get().messages, entry];
+        const messagesBySource = new Map(get().messagesBySource);
+        const sourceList = messagesBySource.get(entry.source);
+        messagesBySource.set(
+          entry.source,
+          sourceList ? [...sourceList, entry] : [entry],
+        );
+
+        if (messages.length > MAX_MESSAGES) {
+          const trimmed = messages.slice(-MAX_MESSAGES);
+          const rebuiltBySource = new Map<string, MessageEntry[]>();
+          for (const m of trimmed) {
+            let list = rebuiltBySource.get(m.source);
+            if (!list) {
+              list = [];
+              rebuiltBySource.set(m.source, list);
+            }
+            list.push(m);
+          }
+          set({ messages: trimmed, messagesBySource: rebuiltBySource });
+        } else {
+          set({ messages, messagesBySource });
+        }
         break;
       }
 
@@ -204,8 +231,11 @@ export const useEventStore = create<EventState>((set, get) => ({
   },
 
   clearMessages: (source) => {
+    const messagesBySource = new Map(get().messagesBySource);
+    messagesBySource.delete(source);
     set({
       messages: get().messages.filter((m) => m.source !== source),
+      messagesBySource,
     });
   },
 
@@ -221,6 +251,7 @@ export const useEventStore = create<EventState>((set, get) => ({
       settings: null,
       updateStatus: null,
       messages: [],
+      messagesBySource: new Map(),
       logLevels: [],
     }),
 }));
@@ -291,16 +322,16 @@ export function useUpdateStatus(): UpdateStatus | null {
   return useEventStore((state) => state.updateStatus);
 }
 
-/** Get messages for a specific source (memoized with shallow equality) */
+/** Get messages for a specific source (O(1) map lookup) */
 export function useMessages(source: string): MessageEntry[] {
   return useEventStore(
-    useShallow((state) => state.messages.filter((m) => m.source === source)),
+    (state) => state.messagesBySource.get(source) ?? EMPTY_MESSAGES,
   );
 }
 
-/** Get all messages (memoized with shallow equality) */
+/** Get all messages */
 export function useAllMessages(): MessageEntry[] {
-  return useEventStore(useShallow((state) => state.messages));
+  return useEventStore((state) => state.messages);
 }
 
 /** Get connection status */
