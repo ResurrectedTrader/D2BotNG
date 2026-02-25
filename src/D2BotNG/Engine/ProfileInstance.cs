@@ -52,6 +52,7 @@ public class ProfileInstance : IDisposable
 
     public void SetGameProcess(Process process)
     {
+        Process?.Dispose();
         Process = process;
         StartedAt = DateTime.UtcNow;
         LastHeartbeat = null;

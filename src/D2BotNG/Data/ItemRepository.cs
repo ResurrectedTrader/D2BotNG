@@ -108,12 +108,12 @@ public class ItemRepository : IDisposable
         {
             try
             {
-                queryRegex = new Regex(query, RegexOptions.IgnoreCase | RegexOptions.Compiled);
+                queryRegex = new Regex(query, RegexOptions.IgnoreCase);
             }
             catch (RegexParseException)
             {
                 // Invalid regex, treat as literal string
-                queryRegex = new Regex(Regex.Escape(query), RegexOptions.IgnoreCase | RegexOptions.Compiled);
+                queryRegex = new Regex(Regex.Escape(query), RegexOptions.IgnoreCase);
             }
         }
 
@@ -360,6 +360,7 @@ public class ItemRepository : IDisposable
 
         // Cancel any pending reload and start a new debounce
         _reloadCts?.Cancel();
+        _reloadCts?.Dispose();
         _reloadCts = new CancellationTokenSource();
         var token = _reloadCts.Token;
 
@@ -393,6 +394,7 @@ public class ItemRepository : IDisposable
         if (_disposed) return;
         _disposed = true;
 
+        _reloadCts?.Dispose();
         _watcher?.Dispose();
         _loadLock.Dispose();
     }
