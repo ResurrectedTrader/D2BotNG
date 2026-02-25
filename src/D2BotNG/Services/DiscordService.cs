@@ -304,16 +304,11 @@ public class DiscordService : BackgroundService
                     choices: [new ApplicationCommandOptionChoiceProperties { Name = "enable", Value = "enable" },
                               new ApplicationCommandOptionChoiceProperties { Name = "disable", Value = "disable" }])
                 .AddOption("profile", ApplicationCommandOptionType.String, "Profile name or 'all'", isRequired: true),
-        };
-
-        // Add identify command only if password is configured
-        if (settings.Discord.HasPassword)
-        {
-            commands.Add(new SlashCommandBuilder()
+            new SlashCommandBuilder()
                 .WithName("identify")
                 .WithDescription("Authenticate for privileged commands")
-                .AddOption("password", ApplicationCommandOptionType.String, "Server password", isRequired: true));
-        }
+                .AddOption("password", ApplicationCommandOptionType.String, "Server password", isRequired: true),
+        };
 
         try
         {
