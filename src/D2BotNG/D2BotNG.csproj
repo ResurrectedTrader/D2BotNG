@@ -66,10 +66,20 @@
     </Folder>
   </ItemGroup>
 
-  <!-- Embed wwwroot files as resources for single-file deployment -->
-  <!-- Exclude rendering assets (explicitly included from Resources folder) -->
+  <!-- UI source files for incremental build detection -->
   <ItemGroup>
-    <EmbeddedResource Include="wwwroot\**\*" Exclude="wwwroot\assets\rendering\**" LinkBase="wwwroot" />
+    <UISourceFiles Include="..\D2BotNG.UI\src\**\*" />
+    <UISourceFiles Include="..\D2BotNG.UI\index.html" />
+    <UISourceFiles Include="..\D2BotNG.UI\package.json" />
+    <UISourceFiles Include="..\D2BotNG.UI\package-lock.json" />
+    <UISourceFiles Include="..\D2BotNG.UI\vite.config.ts" />
+    <UISourceFiles Include="..\D2BotNG.UI\tailwind.config.ts" />
+    <UISourceFiles Include="..\D2BotNG.UI\tsconfig.json" />
+    <UISourceFiles Include="..\D2BotNG.UI\tsconfig.node.json" />
+    <UISourceFiles Include="..\D2BotNG.UI\postcss.config.js" />
+    <UISourceFiles Include="..\D2BotNG.UI\eslint.config.js" />
+    <UISourceFiles Include="..\D2BotNG.UI\buf.gen.yaml" />
+    <UISourceFiles Include="..\..\protos\*.proto" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -96,28 +106,28 @@
   </ItemGroup>
 
   <!--
-    Build UI before C# build.
-    Skip with: dotnet build -p:SkipUIBuild=true
-
-    Outputs=".ui-build-always-run" - non-existent file forces target to run every build,
-    not just when C# files change.
+    Build UI before C# build. Incremental: skips when no UI sources changed.
+    Skip entirely with: dotnet build -p:SkipUIBuild=true
   -->
-  <Target Name="FormatUI" BeforeTargets="BuildUI" Condition="'$(SkipUIBuild)' != 'true' And '$(RunFormat)' == 'true'" Outputs=".ui-format-always-run">
+  <!-- Embed wwwroot files as resources for single-file deployment (lazy evaluation after BuildUI) -->
+  <!-- Exclude rendering assets (explicitly included from Resources folder) -->
+  <Target Name="CollectUIResources" BeforeTargets="PrepareForBuild" DependsOnTargets="BuildUI">
+    <ItemGroup>
+      <EmbeddedResource Include="wwwroot\**\*" Exclude="wwwroot\assets\rendering\**" LinkBase="wwwroot" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="FormatUI" BeforeTargets="BuildUI" Condition="'$(SkipUIBuild)' != 'true' And '$(RunFormat)' == 'true'">
     <Exec Command="npm run format" WorkingDirectory="..\D2BotNG.UI" ContinueOnError="true" />
   </Target>
 
-  <Target Name="BuildUI" BeforeTargets="PrepareForBuild" Condition="'$(SkipUIBuild)' != 'true'" Outputs=".ui-build-always-run">
-    <!--
-      Vite outputs files with content hashes (e.g., index-abc123.js).
-      MSBuild caches glob results (wwwroot\**\*) in .cache files.
-      When Vite creates new hashed files, the stale cache causes build errors.
-      Delete .cache files BEFORE npm build so MSBuild re-evaluates globs with new files.
-    -->
-    <ItemGroup>
-      <CacheFiles Include="$(BaseIntermediateOutputPath)**\*.cache" />
-    </ItemGroup>
-    <Delete Files="@(CacheFiles)" ContinueOnError="true" />
+  <Target Name="BuildUI"
+          BeforeTargets="CollectUIResources"
+          Condition="'$(SkipUIBuild)' != 'true'"
+          Inputs="@(UISourceFiles)"
+          Outputs="$(BaseIntermediateOutputPath)ui-build.stamp">
     <Exec Command="npm run build" WorkingDirectory="..\D2BotNG.UI" />
+    <Touch Files="$(BaseIntermediateOutputPath)ui-build.stamp" AlwaysCreate="true" />
   </Target>
 
   <!--
