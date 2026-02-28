@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using D2BotNG.Core.Protos;
 using static D2BotNG.Windows.NativeMethods;
 using static D2BotNG.Windows.NativeTypes;
@@ -81,7 +82,7 @@ public class Patcher
     /// </summary>
     private async Task<nint> LoadModuleRemotelyAsync(nint processHandle, string modulePath)
     {
-        var pathBytes = System.Text.Encoding.Unicode.GetBytes(modulePath + '\0');
+        var pathBytes = Encoding.Unicode.GetBytes(modulePath + '\0');
 
         // Allocate memory in target process for the DLL path string
         var remoteMemory = VirtualAllocEx(processHandle, 0, (uint)pathBytes.Length, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);

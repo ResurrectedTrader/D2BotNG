@@ -42,7 +42,7 @@ message Settings {
   DiscordSettings discord = 3;
   CloseAction close_action = 4;
   DisplaySettings display = 5;
-  LimedropSettings limedrop = 6;
+  LegacyApiSettings legacy_api = 6;
   GameSettings game = 7;
   string base_path = 8; // Application base directory. Settings/profiles etc., will be created in data/ subdirectory. Expects to have a d2bs directory and d2bs.ini file inside.
   WindowSettings window = 9;
@@ -79,18 +79,22 @@ message DiscordSettings {
   optional string password = 4;
 }
 
-message LimedropSettings {
+message LegacyApiSettings {
   bool enabled = 1;
-  string ip = 2;
-  int32 port = 3;
-  repeated string profiles = 4;
-  repeated LimedropUser users = 5;
+  repeated string profiles = 2;
+  repeated LegacyApiUser users = 3;
 }
 
-message LimedropUser {
+enum LegacyApiPermissions {
+  LEGACY_API_PERMISSIONS_UNDEFINED = 0; // Used as a default value if deserialization fails.
+  LEGACY_API_PERMISSIONS_PUBLIC = 1;
+  LEGACY_API_PERMISSIONS_ADMIN = 2;
+}
+
+message LegacyApiUser {
   string name = 1;
   string api_key = 2;
-  int32 flag = 3;
+  LegacyApiPermissions permissions = 3;
 }
 
 message ListDirectoryRequest {

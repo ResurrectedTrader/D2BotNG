@@ -5,6 +5,7 @@ using System.Drawing.Text;
 using System.Runtime.InteropServices;
 using D2BotNG.Core.Protos;
 using D2BotNG.Utilities;
+using JetBrains.Annotations;
 
 namespace D2BotNG.Rendering;
 
@@ -23,20 +24,21 @@ public class ItemRenderer
     private const int TooltipTextPadding = 14;
     private const int TooltipMinWidth = 100;
     private const int TooltipBottomPadding = 6;
+    private const float FontSize = 12;
 
     private readonly ILogger<ItemRenderer> _logger;
     private readonly PaletteManager _paletteManager;
     private readonly ConcurrentDictionary<string, byte[]> _dc6Cache = new();
     private readonly byte[] _fallbackDc6;
     private readonly PrivateFontCollection _fontCollection = new();
-    private FontFamily? _exocetFontFamily;
+    private FontFamily? _fontFamily;
 
     /// <summary>
     /// Maps ItemFont enum to font family names
     /// </summary>
     private static readonly Dictionary<ItemFont, string> FontFamilyMap = new()
     {
-        { ItemFont.Exocet, "Exocet Blizzard OT Light" },
+        { ItemFont.Exocet, "kodia" },
         { ItemFont.Consolas, "Consolas" },
         { ItemFont.System, "Segoe UI" }
     };
@@ -46,18 +48,17 @@ public class ItemRenderer
         _logger = logger;
         _paletteManager = paletteManager;
         _fallbackDc6 = LoadDc6Resource("box");
-        LoadExocetFont();
+        LoadFont();
     }
 
-
     /// <summary>
-    /// Loads the Exocet font from embedded resources
+    /// Loads the Kodia font from embedded resources
     /// </summary>
-    private void LoadExocetFont()
+    private void LoadFont()
     {
         try
         {
-            using var stream = EmbeddedResourceLoader.LoadStream("D2BotNG.Resources.exocet-blizzard-light.ttf");
+            using var stream = EmbeddedResourceLoader.LoadStream("D2BotNG.wwwroot.assets.kodia.ttf");
             if (stream == null) return;
 
             var fontData = new byte[stream.Length];
@@ -67,7 +68,7 @@ public class ItemRenderer
             try
             {
                 _fontCollection.AddMemoryFont(handle.AddrOfPinnedObject(), fontData.Length);
-                _exocetFontFamily = _fontCollection.Families.FirstOrDefault();
+                _fontFamily = _fontCollection.Families.FirstOrDefault();
             }
             finally
             {
@@ -76,18 +77,18 @@ public class ItemRenderer
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to load Exocet font, falling back to system fonts");
+            _logger.LogDebug(ex, "Failed to load font, falling back to system fonts");
         }
     }
 
     /// <summary>
-    /// Creates a font, using the embedded Exocet font if available
+    /// Creates a font, using the embedded font if available for the Exocet/D2 style
     /// </summary>
     private Font CreateFont(string fontFamily, float size, FontStyle style = FontStyle.Regular)
     {
-        if (_exocetFontFamily != null && fontFamily.Contains("Exocet"))
+        if (_fontFamily != null && fontFamily.Contains("kodia", StringComparison.OrdinalIgnoreCase))
         {
-            return new Font(_exocetFontFamily, size, style);
+            return new Font(_fontFamily, size, style);
         }
 
         return new Font(fontFamily, size, style);
@@ -104,6 +105,7 @@ public class ItemRenderer
     /// <summary>
     /// Renders an item to a PNG image
     /// </summary>
+    [UsedImplicitly]
     public byte[] RenderItem(Item item)
     {
         using var bitmap = RenderItemBitmap(item);
@@ -113,6 +115,7 @@ public class ItemRenderer
     /// <summary>
     /// Renders an item with its sockets to a PNG image
     /// </summary>
+    [UsedImplicitly]
     public byte[] RenderItemWithSockets(Item item)
     {
         // First render the base item to get dimensions
@@ -180,7 +183,7 @@ public class ItemRenderer
 
         // Graphics settings (match reference implementation)
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+        graphics.TextRenderingHint = TextRenderingHint.SingleBitPerPixelGridFit;
 
         // Black background
         graphics.Clear(Color.Black);
@@ -523,7 +526,7 @@ public class ItemRenderer
         int y = top - 1;
         var currentColor = D2Colors.White;
 
-        using var font = CreateFont(fontFamily, 9);
+        using var font = CreateFont(fontFamily, FontSize);
 
         foreach (var line in lines)
         {
@@ -565,7 +568,7 @@ public class ItemRenderer
                 {
                     // ÿc[code] format
                     char code = segment[1];
-                    if (code is (>= '0' and <= '9') or ':' or ';' or '<')
+                    if (code is >= '0' and <= '9' or ':' or ';' or '<')
                         currentColor = D2Colors.GetTextColor(code);
                     segment = segment.Length > 2 ? segment[2..] : "";
                 }
@@ -616,7 +619,7 @@ public class ItemRenderer
     {
         using var bmp = new Bitmap(1, 1);
         using var graphics = Graphics.FromImage(bmp);
-        using var font = CreateFont(fontFamily, 9);
+        using var font = CreateFont(fontFamily, FontSize);
 
         float maxWidth = 0;
         foreach (var line in lines)

@@ -1,8 +1,10 @@
+using System.Net;
 using D2BotNG.Core.Protos;
 using D2BotNG.Data;
-using D2BotNG.Data.LegacyModels;
 using D2BotNG.Engine;
+using D2BotNG.Legacy.Models;
 using Discord;
+using Discord.Net;
 using Discord.WebSocket;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
@@ -142,7 +144,7 @@ public class SettingsServiceImpl : SettingsService.SettingsServiceBase
                 Message = $"Connected successfully to server: {guild.Name}"
             };
         }
-        catch (Discord.Net.HttpException ex) when (ex.HttpCode == System.Net.HttpStatusCode.Unauthorized)
+        catch (HttpException ex) when (ex.HttpCode == HttpStatusCode.Unauthorized)
         {
             return new TestDiscordResponse { Success = false, Message = "Invalid bot token" };
         }

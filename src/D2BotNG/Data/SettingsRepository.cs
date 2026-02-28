@@ -1,4 +1,5 @@
 using D2BotNG.Core.Protos;
+using D2BotNG.Legacy.Models;
 using D2BotNG.Utilities;
 using Microsoft.Win32;
 
@@ -30,8 +31,15 @@ public class SettingsRepository
                 var json = await File.ReadAllTextAsync(_filePath);
                 _settings = ProtobufJsonConfig.Parser.Parse<Settings>(json);
             }
-            _settings ??= CreateDefault();
+            else
+            {
+                _settings = CreateDefault();
+            }
+
             EnsureDefaults(_settings);
+
+            _settings.LegacyApi ??= await Migration.MigrateLegacyApiAsync(_settings) ?? new LegacyApiSettings();
+
             _loaded = true;
         }
         finally
@@ -54,34 +62,35 @@ public class SettingsRepository
             {
                 ShowItemHeader = true,
             },
-            Limedrop = new LimedropSettings
-            {
-                Ip = "127.0.0.1",
-                Port = 8080
-            },
+            LegacyApi = new LegacyApiSettings(),
             Game = new GameSettings
             {
-                D2InstallPath = GetDefaultD2InstallPath(),
+                D2InstallPath = DefaultD2InstallPath,
             },
             BasePath = AppContext.BaseDirectory,
         };
     }
 
-    private static string GetDefaultD2InstallPath()
+    private static string DefaultD2InstallPath
     {
-        try
+        get
         {
-            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Blizzard Entertainment\Diablo II");
-            var installPath = key?.GetValue("InstallPath")?.ToString();
-            if (!string.IsNullOrEmpty(installPath))
-                return installPath;
-        }
-        catch
-        {
-            // Registry access failed, fall back to desktop
-        }
+            if (field != null) return field;
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(@"Software\Blizzard Entertainment\Diablo II");
+                var installPath = key?.GetValue("InstallPath")?.ToString();
+                if (!string.IsNullOrEmpty(installPath))
+                    field = installPath;
+            }
+            catch (Exception)
+            {
+                // Registry access failed, fall back to desktop
+            }
 
-        return Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+            field ??= Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+            return field;
+        }
     }
 
     private static void EnsureDefaults(Settings settings)
@@ -89,13 +98,13 @@ public class SettingsRepository
         // Ensure Game config exists with default D2 install path
         if (settings.Game == null)
         {
-            settings.Game = new GameSettings { D2InstallPath = GetDefaultD2InstallPath(), GameVersion = "1.14d" };
+            settings.Game = new GameSettings { D2InstallPath = DefaultD2InstallPath, GameVersion = "1.14d" };
         }
         else
         {
             if (string.IsNullOrEmpty(settings.Game.D2InstallPath))
             {
-                settings.Game.D2InstallPath = GetDefaultD2InstallPath();
+                settings.Game.D2InstallPath = DefaultD2InstallPath;
             }
             if (string.IsNullOrEmpty(settings.Game.GameVersion))
             {

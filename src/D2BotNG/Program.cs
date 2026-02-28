@@ -1,21 +1,26 @@
 using D2BotNG.Data;
-using D2BotNG.Data.LegacyModels;
 using D2BotNG.Engine;
+using D2BotNG.Legacy.Api;
+using D2BotNG.Legacy.Models;
 using D2BotNG.Logging;
 using D2BotNG.Rendering;
 using D2BotNG.Services;
 using D2BotNG.UI;
 using D2BotNG.Windows;
+using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.FileProviders;
 using Serilog;
 using Serilog.Events;
-using Serilog.Extensions.Logging; // For SerilogLoggerFactory
+using Serilog.Extensions.Logging;
+using ILogger = Serilog.ILogger;
+
+// For SerilogLoggerFactory
 
 namespace D2BotNG;
 
 internal static class Program
 {
-    private static readonly Serilog.ILogger Logger = TrackingLoggerFactory.ForContext(typeof(Program));
+    private static readonly ILogger Logger = TrackingLoggerFactory.ForContext(typeof(Program));
 
     [STAThread]
     private static void Main(string[] args)
@@ -55,14 +60,14 @@ internal static class Program
             TrackingLoggerFactory.Initialize(loggerRegistry);
 
             // Migrate legacy data files using the configured base path from settings
-            var settingsRepo = app.Services.GetRequiredService<SettingsRepository>();
-            var settings = settingsRepo.GetAsync().GetAwaiter().GetResult();
+            var settingsRepository = app.Services.GetRequiredService<SettingsRepository>();
+            var settings = settingsRepository.GetAsync().GetAwaiter().GetResult();
             var basePath = string.IsNullOrWhiteSpace(settings.BasePath)
                 ? AppContext.BaseDirectory
                 : settings.BasePath;
             Migration.MigrateIfNeeded(basePath);
 
-            Logger.Information("D2BotNG starting in {Mode} mode...", headless ? "headless" : "GUI");
+            Logger.Information("D2BotNG starting in {Mode} mode on port {Port}...", headless ? "headless" : "GUI", settings.Server.Port);
 
             ConfigureApp(app, devUi);
 
@@ -87,7 +92,7 @@ internal static class Program
             else
             {
                 // GUI mode: run server in background and show WinForms UI
-                RunWithGui(app, serverUrl, settingsRepo);
+                RunWithGui(app, serverUrl, settingsRepository);
             }
 
             Logger.Information("D2BotNG shutting down...");
@@ -155,8 +160,12 @@ internal static class Program
 
         Application.Run(form);
 
-        // Form closed — shut down the ASP.NET Core host so all hosted services get StopAsync called
-        app.StopAsync(TimeSpan.FromSeconds(30)).GetAwaiter().GetResult();
+        // Form closed — signal the host to shut down. Use StopApplication() instead of
+        // app.StopAsync() to avoid a race: RunAsync() internally calls WaitForShutdownAsync()
+        // which calls Host.StopAsync() when the shutdown signal fires. Calling app.StopAsync()
+        // directly would trigger a concurrent second Host.StopAsync(), causing hosted services
+        // (e.g. ScheduleEngine) to have StopAsync called twice and hit disposed resources.
+        app.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
         serverTask.GetAwaiter().GetResult();
     }
 
@@ -244,12 +253,21 @@ internal static class Program
         // Add update manager
         services.AddSingleton<UpdateManager>();
 
+        // Add legacy API services
+        services.AddHttpClient();
+        services.AddSingleton<SessionManager>();
+        services.AddSingleton<NotificationQueue>();
+        services.AddSingleton<WebhookService>();
+        services.AddSingleton<GameActionScheduler>();
+        services.AddScoped<LegacyApiHandler>();
+
         // Add hosted services
         services.AddHostedService<EngineHostedService>();
         services.AddHostedService<ErrorDialogWatcher>();
         services.AddHostedService<UpdateCheckBackgroundService>();
         services.AddHostedService<D2BSMessageHandler>();
         services.AddHostedService<DiscordService>();
+        services.AddHostedService(sp => sp.GetRequiredService<GameActionScheduler>());
 
         // CORS for development
         services.AddCors(options =>
@@ -268,6 +286,10 @@ internal static class Program
     {
         // Use CORS
         app.UseCors();
+
+        // Legacy D2Bot# API compatibility middleware (before gRPC-Web
+        // so it sees the raw request body before the gRPC-Web stream wrapping)
+        app.UseMiddleware<LegacyApiMiddleware>();
 
         // Enable gRPC-Web
         app.UseGrpcWeb(new GrpcWebOptions { DefaultEnabled = true });
@@ -309,7 +331,7 @@ internal static class Program
         app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = fileProvider });
 
         // Configure content types for game asset files
-        var contentTypeProvider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
+        var contentTypeProvider = new FileExtensionContentTypeProvider();
         contentTypeProvider.Mappings[".dc6"] = "application/octet-stream";
         contentTypeProvider.Mappings[".dat"] = "application/octet-stream";
         contentTypeProvider.Mappings[".PL2"] = "application/octet-stream";

@@ -10,5 +10,6 @@ export { SettingsPage } from "./SettingsPage";
 // Settings sections
 export { GeneralSettings } from "./GeneralSettings";
 export { DiscordSettings } from "./DiscordSettings";
+export { LegacyApiSettings } from "./LegacyApiSettings";
 export { DevSettings } from "./AppSettings";
 export { LoggingSettings } from "./LoggingSettings";

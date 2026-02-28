@@ -4,12 +4,13 @@ using System.Text;
 using D2BotNG.Logging;
 using static D2BotNG.Windows.NativeMethods;
 using static D2BotNG.Windows.NativeTypes;
+using ILogger = Serilog.ILogger;
 
 namespace D2BotNG.Windows;
 
 public static class Extensions
 {
-    private static readonly Serilog.ILogger Logger = TrackingLoggerFactory.ForContext(typeof(Extensions));
+    private static readonly ILogger Logger = TrackingLoggerFactory.ForContext(typeof(Extensions));
 
     public static bool SendMessage(this Process proc, MessageType messageType, string data)
     {

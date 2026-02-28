@@ -1,9 +1,10 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using D2BotNG.Core.Protos;
-using D2BotNG.Data.LegacyModels;
 using D2BotNG.Data;
 using D2BotNG.Engine;
+using D2BotNG.Legacy.Api;
+using D2BotNG.Legacy.Models;
 using D2BotNG.Utilities;
 using D2BotNG.Windows;
 
@@ -21,6 +22,8 @@ public class D2BSMessageHandler : BackgroundService
     private readonly KeyListRepository _keyListRepository;
     private readonly MessageService _messageService;
     private readonly DataCache _dataCache;
+    private readonly WebhookService _webhookService;
+    private readonly NotificationQueue _notificationQueue;
 
     public D2BSMessageHandler(
         ILogger<D2BSMessageHandler> logger,
@@ -29,7 +32,9 @@ public class D2BSMessageHandler : BackgroundService
         ProfileRepository profileRepository,
         KeyListRepository keyListRepository,
         MessageService messageService,
-        DataCache dataCache)
+        DataCache dataCache,
+        WebhookService webhookService,
+        NotificationQueue notificationQueue)
     {
         _logger = logger;
         _messageWindow = messageWindow;
@@ -38,6 +43,8 @@ public class D2BSMessageHandler : BackgroundService
         _keyListRepository = keyListRepository;
         _messageService = messageService;
         _dataCache = dataCache;
+        _webhookService = webhookService;
+        _notificationQueue = notificationQueue;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -125,7 +132,17 @@ public class D2BSMessageHandler : BackgroundService
 
             case "start":
                 if (args.Length > 0)
-                    await _profileEngine.StartProfileAsync(args[0]);
+                    await HandleStartAsync(args);
+                break;
+
+            case "setTag":
+                if (args.Length > 0 && !string.IsNullOrEmpty(args[0]))
+                    await HandleSetTagAsync(profile, args[0]);
+                break;
+
+            case "setNotify":
+                if (args.Length > 0 && !string.IsNullOrEmpty(args[0]))
+                    HandleSetNotify(args);
                 break;
 
             case "CDKeyInUse":
@@ -336,6 +353,51 @@ public class D2BSMessageHandler : BackgroundService
             await _keyListRepository.HoldKeyAsync(profile.KeyList, keyName);
         }
         _messageService.AddMessage(profile.Name, $"Key disabled: {keyName}", MessageColor.ColorRed);
+    }
+
+    private async Task HandleStartAsync(string[] args)
+    {
+        var targetProfile = await _profileRepository.GetByKeyAsync(args[0]);
+        if (targetProfile == null) return;
+
+        if (args.Length > 1 && !string.IsNullOrEmpty(args[1]))
+        {
+            targetProfile.InfoTag = args[1];
+            await _profileEngine.UpdateProfileAndNotifyAsync(targetProfile);
+        }
+
+        await _profileEngine.StartProfileAsync(targetProfile.Name);
+    }
+
+    private async Task HandleSetTagAsync(Profile profile, string tag)
+    {
+        profile.InfoTag = tag;
+        await _profileEngine.UpdateProfileAndNotifyAsync(profile);
+
+        var instance = _profileEngine.GetInstance(profile.Name);
+        var export = LegacyProfileExport.FromProfile(profile, instance);
+        _webhookService.EmitEventAsync("setTag", JsonSerializer.Serialize(export));
+    }
+
+    private void HandleSetNotify(string[] args)
+    {
+        try
+        {
+            var gameAction = JsonSerializer.Deserialize<LegacyGameAction>(args[0]);
+            if (gameAction == null) return;
+
+            var status = args.Length > 1 && !string.IsNullOrEmpty(args[1]) ? args[1] : "success";
+            _notificationQueue.Enqueue(gameAction.Profile, new LegacyResponse
+            {
+                Request = "GameActionNotify",
+                Status = status,
+                Body = args[0]
+            });
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Failed to deserialize setNotify game action");
+        }
     }
 
     private async Task HandleStopScheduleAsync(string profileName)

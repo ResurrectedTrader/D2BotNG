@@ -50,7 +50,8 @@ Legacy D2Bot data files (JSONL format in `data/`) are automatically migrated to 
 - **Non-destructive** - Original `data/` files are left intact
 - **Per-file** - Each file is migrated independently; existing files in `data/ng/` are skipped. Delete a specific file to re-migrate it
 - **IRC profiles dropped** - Legacy IRC-type profiles are not migrated
-- **Settings not migrated** - Settings did not exist in the legacy format; `settings.json` is created fresh
+- **Legacy API migrated** - `server.json` users and profiles are imported into Legacy API settings when no existing configuration is found
+- **Settings not migrated** - Other settings did not exist in the legacy format; `d2botng.json` is created fresh
 - **Format change** - Legacy JSONL (one JSON object per line) is converted to protobuf JSON (single document with typed wrapper messages)
 
 No manual steps are required. To force re-migration of a specific file, delete it from `data/ng/` and restart.
@@ -67,6 +68,7 @@ No manual steps are required. To force re-migration of a specific file, delete i
 - **Drag & Drop** - Reorder profiles with drag-and-drop
 - **Dual Mode** - GUI (WebView2 desktop app) or headless server
 - **Console** - Real-time console output with source filtering, regex search, D2 color codes
+- **Legacy API** - Backwards-compatible HTTP API for external tools like Limedrop
 
 ### Remote Access
 

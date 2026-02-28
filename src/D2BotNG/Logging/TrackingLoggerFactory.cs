@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Serilog;
+using ILogger = Serilog.ILogger;
 
 namespace D2BotNG.Logging;
 
@@ -30,7 +31,7 @@ public class TrackingLoggerFactory : ILoggerFactory
     /// Create a static Serilog logger while also tracking the category in the registry.
     /// Use instead of Log.ForContext() for static loggers that should appear in the UI.
     /// </summary>
-    public static Serilog.ILogger ForContext(Type source)
+    public static ILogger ForContext(Type source)
     {
         var category = source.FullName ?? source.Name;
         if (category.StartsWith("D2BotNG."))
