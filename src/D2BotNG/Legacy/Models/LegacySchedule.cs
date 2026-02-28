@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 using D2BotNG.Core.Protos;
 using JetBrains.Annotations;
 
-namespace D2BotNG.Data.LegacyModels;
+namespace D2BotNG.Legacy.Models;
 
 [UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
 public class LegacySchedule

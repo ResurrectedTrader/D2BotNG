@@ -1,3 +1,5 @@
+using D2BotNG.Core.Protos;
+
 namespace D2BotNG.Data;
 
 /// <summary>
@@ -7,19 +9,24 @@ namespace D2BotNG.Data;
 public class Paths
 {
     private readonly SettingsRepository _settingsRepository;
-    private string _basePath;
+    public string BasePath { get; private set; }
 
     public Paths(SettingsRepository settingsRepository)
     {
         _settingsRepository = settingsRepository;
-        _basePath = ResolveBasePath(settingsRepository.GetAsync().GetAwaiter().GetResult());
-        _settingsRepository.SettingsChanged += (_, settings) => _basePath = ResolveBasePath(settings);
+        BasePath = ResolveBasePath(settingsRepository.GetAsync().GetAwaiter().GetResult());
+        _settingsRepository.SettingsChanged += (_, settings) => BasePath = ResolveBasePath(settings);
     }
 
-    private static string ResolveBasePath(Core.Protos.Settings settings) =>
+    private static string ResolveBasePath(Settings settings) =>
         string.IsNullOrWhiteSpace(settings.BasePath)
             ? AppContext.BaseDirectory
             : settings.BasePath;
+
+    /// <summary>
+    /// Gets the legacy data directory (data/) used by the old D2Bot framework.
+    /// </summary>
+    public string LegacyDataDirectory => Path.Combine(BasePath, "data");
 
     /// <summary>
     /// Gets the data directory for storing profiles, keys, schedules, etc.
@@ -28,7 +35,7 @@ public class Paths
     {
         get
         {
-            var dir = Path.Combine(_basePath, "data", "ng");
+            var dir = Path.Combine(LegacyDataDirectory, "ng");
             Directory.CreateDirectory(dir);
             return dir;
         }
@@ -41,7 +48,7 @@ public class Paths
     {
         get
         {
-            var dir = Path.Combine(_basePath, "d2bs", "kolbot", "mules");
+            var dir = Path.Combine(D2BSDirectory, "kolbot", "mules");
             Directory.CreateDirectory(dir);
             return dir;
         }
@@ -54,7 +61,7 @@ public class Paths
     {
         get
         {
-            var dir = Path.Combine(_basePath, "d2bs");
+            var dir = Path.Combine(BasePath, "d2bs");
             Directory.CreateDirectory(dir);
             return dir;
         }

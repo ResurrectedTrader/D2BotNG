@@ -3,6 +3,7 @@ using D2BotNG.Data;
 using D2BotNG.Engine;
 using Discord;
 using Discord.WebSocket;
+using Color = Discord.Color;
 using MessageType = D2BotNG.Windows.MessageType;
 
 namespace D2BotNG.Services;
@@ -30,9 +31,9 @@ public class DiscordService : BackgroundService
     private CancellationTokenSource? _clientCts;
 
     // Embed colors
-    private static readonly Discord.Color ColorSuccess = new(87, 242, 135);  // Green
-    private static readonly Discord.Color ColorError = new(237, 66, 69);     // Red
-    private static readonly Discord.Color ColorInfo = new(88, 101, 242);     // Blurple
+    private static readonly Color ColorSuccess = new(87, 242, 135);  // Green
+    private static readonly Color ColorError = new(237, 66, 69);     // Red
+    private static readonly Color ColorInfo = new(88, 101, 242);     // Blurple
 
     public DiscordService(
         ILogger<DiscordService> logger,
@@ -635,7 +636,7 @@ public class DiscordService : BackgroundService
         _ => "⚫"
     };
 
-    private static Embed CreateEmbed(string title, string description, Discord.Color color) =>
+    private static Embed CreateEmbed(string title, string description, Color color) =>
         new EmbedBuilder()
             .WithTitle(title)
             .WithDescription(description)

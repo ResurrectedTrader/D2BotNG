@@ -3,7 +3,7 @@ using D2BotNG.Core.Protos;
 using Google.Protobuf;
 using JetBrains.Annotations;
 
-namespace D2BotNG.Data.LegacyModels;
+namespace D2BotNG.Legacy.Models;
 
 /// <summary>
 /// Represents the patch format used by the legacy D2Bot framework.

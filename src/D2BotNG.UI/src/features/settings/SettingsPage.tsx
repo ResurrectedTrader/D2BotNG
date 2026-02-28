@@ -1,20 +1,27 @@
 /**
  * SettingsPage component
  *
- * Main settings page with all settings cards and a save button.
+ * Main settings page with tabbed sections and a save button.
  */
 
 import { useState, useCallback, useEffect } from "react";
+import { clone, create } from "@bufbuild/protobuf";
 import { Button, LoadingSpinner } from "@/components/ui";
-import { useUpdateSettings, type SettingsInput } from "@/hooks/useSettings";
+import { useUpdateSettings } from "@/hooks/useSettings";
 import { useSettings, useIsLoading } from "@/stores/event-store";
 import type {
+  Settings,
   ServerSettings as ServerSettingsType,
   DiscordSettings as DiscordSettingsType,
   DisplaySettings as DisplaySettingsType,
   GameSettings as GameSettingsType,
+  LegacyApiSettings as LegacyApiSettingsType,
 } from "@/generated/settings_pb";
-import { CloseAction, ItemFont } from "@/generated/settings_pb";
+import {
+  CloseAction,
+  LegacyApiSettingsSchema,
+  SettingsSchema,
+} from "@/generated/settings_pb";
 import { GeneralSettings } from "./GeneralSettings";
 import {
   DiscordSettings,
@@ -22,16 +29,20 @@ import {
 } from "./DiscordSettings";
 import { DevSettings } from "./AppSettings";
 import { LoggingSettings } from "./LoggingSettings";
+import { LegacyApiSettings } from "./LegacyApiSettings";
 import { CheckIcon, ArrowPathIcon } from "@heroicons/react/24/outline";
 import { Tab, TabGroup, TabList, TabPanel, TabPanels } from "@headlessui/react";
+
+const tabClass =
+  "px-4 py-2 text-sm font-medium text-zinc-400 outline-none transition-colors hover:text-zinc-200 data-[selected]:border-b-2 data-[selected]:border-d2-gold data-[selected]:text-zinc-100";
 
 export function SettingsPage() {
   const isLoading = useIsLoading();
   const settings = useSettings();
   const updateSettings = useUpdateSettings();
 
-  // Local state for form
-  const [localSettings, setLocalSettings] = useState<SettingsInput>({});
+  // Local state for form — full Settings message, deep-cloned from the store
+  const [localSettings, setLocalSettings] = useState<Settings | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [discordErrors, setDiscordErrors] = useState<DiscordValidationErrors>(
     {},
@@ -40,17 +51,7 @@ export function SettingsPage() {
   // Initialize local state when settings load
   useEffect(() => {
     if (settings) {
-      setLocalSettings({
-        startMinimized: settings.startMinimized,
-        closeAction: settings.closeAction,
-        basePath: settings.basePath,
-        server: settings.server ? { ...settings.server } : undefined,
-        discord: settings.discord ? { ...settings.discord } : undefined,
-        display: settings.display
-          ? { ...settings.display }
-          : { itemFont: ItemFont.EXOCET },
-        game: settings.game ? { ...settings.game } : undefined,
-      });
+      setLocalSettings(clone(SettingsSchema, settings));
       setIsDirty(false);
     }
   }, [settings]);
@@ -58,10 +59,13 @@ export function SettingsPage() {
   // Handler for server settings changes
   const handleServerChange = useCallback(
     (updates: Partial<ServerSettingsType>) => {
-      setLocalSettings((prev) => ({
-        ...prev,
-        server: { ...prev.server, ...updates } as ServerSettingsType,
-      }));
+      setLocalSettings((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          server: { ...prev.server, ...updates } as ServerSettingsType,
+        };
+      });
       setIsDirty(true);
     },
     [],
@@ -70,10 +74,13 @@ export function SettingsPage() {
   // Handler for discord settings changes
   const handleDiscordChange = useCallback(
     (updates: Partial<DiscordSettingsType>) => {
-      setLocalSettings((prev) => ({
-        ...prev,
-        discord: { ...prev.discord, ...updates } as DiscordSettingsType,
-      }));
+      setLocalSettings((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          discord: { ...prev.discord, ...updates } as DiscordSettingsType,
+        };
+      });
       setIsDirty(true);
       // Clear errors for fields being edited
       if (
@@ -97,10 +104,13 @@ export function SettingsPage() {
   // Handler for display settings changes
   const handleDisplayChange = useCallback(
     (updates: Partial<DisplaySettingsType>) => {
-      setLocalSettings((prev) => ({
-        ...prev,
-        display: { ...prev.display, ...updates } as DisplaySettingsType,
-      }));
+      setLocalSettings((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          display: { ...prev.display, ...updates } as DisplaySettingsType,
+        };
+      });
       setIsDirty(true);
     },
     [],
@@ -108,35 +118,63 @@ export function SettingsPage() {
 
   // Handler for game settings changes
   const handleGameChange = useCallback((updates: Partial<GameSettingsType>) => {
-    setLocalSettings((prev) => ({
-      ...prev,
-      game: { ...prev.game, ...updates } as GameSettingsType,
-    }));
+    setLocalSettings((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        game: { ...prev.game, ...updates } as GameSettingsType,
+      };
+    });
     setIsDirty(true);
   }, []);
 
   // Handler for start minimized changes
   const handleStartMinimizedChange = useCallback((value: boolean) => {
-    setLocalSettings((prev) => ({ ...prev, startMinimized: value }));
+    setLocalSettings((prev) => {
+      if (!prev) return prev;
+      return { ...prev, startMinimized: value };
+    });
     setIsDirty(true);
   }, []);
 
   // Handler for close action changes
   const handleCloseActionChange = useCallback((value: CloseAction) => {
-    setLocalSettings((prev) => ({ ...prev, closeAction: value }));
+    setLocalSettings((prev) => {
+      if (!prev) return prev;
+      return { ...prev, closeAction: value };
+    });
     setIsDirty(true);
   }, []);
 
   // Handler for base path changes
   const handleBasePathChange = useCallback((value: string) => {
-    setLocalSettings((prev) => ({ ...prev, basePath: value }));
+    setLocalSettings((prev) => {
+      if (!prev) return prev;
+      return { ...prev, basePath: value };
+    });
     setIsDirty(true);
   }, []);
+
+  // Handler for legacy API settings changes
+  const handleLegacyApiChange = useCallback(
+    (updates: Partial<LegacyApiSettingsType>) => {
+      setLocalSettings((prev) => {
+        if (!prev) return prev;
+        const base = prev.legacyApi
+          ? clone(LegacyApiSettingsSchema, prev.legacyApi)
+          : create(LegacyApiSettingsSchema);
+        Object.assign(base, updates);
+        return { ...prev, legacyApi: base };
+      });
+      setIsDirty(true);
+    },
+    [],
+  );
 
   // Validate Discord settings
   const validateDiscord = useCallback((): DiscordValidationErrors => {
     const errors: DiscordValidationErrors = {};
-    const discord = localSettings.discord;
+    const discord = localSettings?.discord;
 
     if (discord?.enabled) {
       if (!discord.token?.trim()) {
@@ -148,10 +186,12 @@ export function SettingsPage() {
     }
 
     return errors;
-  }, [localSettings.discord]);
+  }, [localSettings?.discord]);
 
   // Save handler
   const handleSave = useCallback(() => {
+    if (!localSettings) return;
+
     // Validate Discord settings
     const errors = validateDiscord();
     if (Object.keys(errors).length > 0) {
@@ -169,7 +209,7 @@ export function SettingsPage() {
 
   // Loading state - waiting for initial data from event stream
   // DevSettings is always shown so users can change backend URL if needed
-  if (isLoading) {
+  if (isLoading || !localSettings) {
     return (
       <div className="space-y-4">
         <DevSettings />
@@ -180,7 +220,7 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-4">
-      {/* Header */}
+      {/* Header with save button */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-zinc-100">Settings</h1>
@@ -188,65 +228,60 @@ export function SettingsPage() {
             Configure your D2Bot server and application settings.
           </p>
         </div>
+        <Button
+          onClick={handleSave}
+          disabled={!isDirty || updateSettings.isPending}
+        >
+          {updateSettings.isPending ? (
+            <ArrowPathIcon className="h-4 w-4 animate-spin" />
+          ) : (
+            <CheckIcon className="h-4 w-4" />
+          )}
+          Save Changes
+        </Button>
       </div>
+
+      <DevSettings />
 
       <TabGroup>
         <TabList className="flex gap-1 border-b border-zinc-700">
-          <Tab className="px-4 py-2 text-sm font-medium text-zinc-400 outline-none transition-colors hover:text-zinc-200 data-[selected]:border-b-2 data-[selected]:border-d2-gold data-[selected]:text-zinc-100">
-            General
-          </Tab>
-          <Tab className="px-4 py-2 text-sm font-medium text-zinc-400 outline-none transition-colors hover:text-zinc-200 data-[selected]:border-b-2 data-[selected]:border-d2-gold data-[selected]:text-zinc-100">
-            Logging
-          </Tab>
+          <Tab className={tabClass}>General</Tab>
+          <Tab className={tabClass}>Discord</Tab>
+          <Tab className={tabClass}>Legacy API</Tab>
+          <Tab className={tabClass}>Logging</Tab>
         </TabList>
 
         <TabPanels className="mt-4">
           <TabPanel>
-            <div className="space-y-4">
-              <div className="flex justify-end">
-                <Button
-                  onClick={handleSave}
-                  disabled={!isDirty || updateSettings.isPending}
-                >
-                  {updateSettings.isPending ? (
-                    <ArrowPathIcon className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <CheckIcon className="h-4 w-4" />
-                  )}
-                  Save Changes
-                </Button>
-              </div>
+            <GeneralSettings
+              server={localSettings.server}
+              game={localSettings.game}
+              display={localSettings.display}
+              startMinimized={localSettings.startMinimized}
+              closeAction={localSettings.closeAction}
+              basePath={localSettings.basePath}
+              onServerChange={handleServerChange}
+              onGameChange={handleGameChange}
+              onDisplayChange={handleDisplayChange}
+              onStartMinimizedChange={handleStartMinimizedChange}
+              onCloseActionChange={handleCloseActionChange}
+              onBasePathChange={handleBasePathChange}
+            />
+          </TabPanel>
 
-              <DevSettings />
+          <TabPanel>
+            <DiscordSettings
+              discord={localSettings.discord}
+              onChange={handleDiscordChange}
+              errors={discordErrors}
+            />
+          </TabPanel>
 
-              <GeneralSettings
-                server={localSettings.server}
-                game={localSettings.game}
-                display={localSettings.display}
-                startMinimized={localSettings.startMinimized || false}
-                closeAction={localSettings.closeAction || CloseAction.ASK}
-                basePath={localSettings.basePath || ""}
-                onServerChange={handleServerChange}
-                onGameChange={handleGameChange}
-                onDisplayChange={handleDisplayChange}
-                onStartMinimizedChange={handleStartMinimizedChange}
-                onCloseActionChange={handleCloseActionChange}
-                onBasePathChange={handleBasePathChange}
-              />
-
-              <DiscordSettings
-                discord={localSettings.discord}
-                onChange={handleDiscordChange}
-                errors={discordErrors}
-              />
-            </div>
-
-            {/* Dirty indicator */}
-            {isDirty && (
-              <div className="fixed bottom-4 right-4 rounded-lg bg-zinc-800 px-4 py-2 text-sm text-zinc-300 shadow-lg ring-1 ring-zinc-700">
-                You have unsaved changes
-              </div>
-            )}
+          <TabPanel>
+            <LegacyApiSettings
+              legacyApi={localSettings.legacyApi}
+              onChange={handleLegacyApiChange}
+            />
           </TabPanel>
 
           <TabPanel>
@@ -254,6 +289,13 @@ export function SettingsPage() {
           </TabPanel>
         </TabPanels>
       </TabGroup>
+
+      {/* Dirty indicator */}
+      {isDirty && (
+        <div className="fixed bottom-4 right-4 rounded-lg bg-zinc-800 px-4 py-2 text-sm text-zinc-300 shadow-lg ring-1 ring-zinc-700">
+          You have unsaved changes
+        </div>
+      )}
     </div>
   );
 }

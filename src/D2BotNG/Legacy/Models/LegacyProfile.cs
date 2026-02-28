@@ -1,7 +1,7 @@
 using System.Text.Json.Serialization;
 using D2BotNG.Core.Protos;
 
-namespace D2BotNG.Data.LegacyModels;
+namespace D2BotNG.Legacy.Models;
 
 /// <summary>
 /// Represents the profile format used by the legacy D2Bot framework.

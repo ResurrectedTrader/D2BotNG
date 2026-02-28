@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using D2BotNG.Core.Protos;
-using D2BotNG.Data.LegacyModels;
+using D2BotNG.Legacy.Models;
 using D2BotNG.Services;
 using Google.Protobuf.WellKnownTypes;
 
@@ -101,7 +101,20 @@ public class ItemRepository : IDisposable
         string? query,
         ModeFilter? modeFilter)
     {
-        var allItems = new List<Item>();
+        return SearchWithContext(entityPath, query, modeFilter)
+            .Select(r => r.Item)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Search items with entity context (account, character, mode).
+    /// </summary>
+    public IReadOnlyList<ItemSearchResult> SearchWithContext(
+        string? entityPath,
+        string? query,
+        ModeFilter? modeFilter)
+    {
+        var results = new List<ItemSearchResult>();
         Regex? queryRegex = null;
 
         if (!string.IsNullOrWhiteSpace(query))
@@ -136,20 +149,26 @@ public class ItemRepository : IDisposable
                     continue;
             }
 
+            // Extract account from path (second component: realm/account/character)
+            var parts = path.Split('/');
+            var account = parts.Length > 1 ? parts[1] : "";
+
             // Add matching items
             foreach (var item in entity.Items)
             {
                 if (queryRegex == null || MatchesQuery(item, queryRegex))
                 {
-                    allItems.Add(item);
+                    results.Add(new ItemSearchResult(item, account, entity.DisplayName, entity.Mode));
                 }
             }
         }
 
-        return allItems
-            .OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
+        return results
+            .OrderBy(r => r.Item.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
+
+    public record ItemSearchResult(Item Item, string Account, string Character, EntityMode Mode);
 
     private static bool MatchesQuery(Item item, Regex query)
     {

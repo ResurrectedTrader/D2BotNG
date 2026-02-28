@@ -3,15 +3,16 @@ using D2BotNG.Core.Protos;
 using D2BotNG.Logging;
 using D2BotNG.Utilities;
 using Google.Protobuf;
+using ILogger = Serilog.ILogger;
 
-namespace D2BotNG.Data.LegacyModels;
+namespace D2BotNG.Legacy.Models;
 
 /// <summary>
 /// Migrates legacy JSONL data files from data/ to modern protobuf JSON in data/ng/.
 /// </summary>
 public static class Migration
 {
-    private static readonly Serilog.ILogger Logger = TrackingLoggerFactory.ForContext(typeof(Migration));
+    private static readonly ILogger Logger = TrackingLoggerFactory.ForContext(typeof(Migration));
     /// <summary>
     /// Migrates legacy data files individually from data/ to data/ng/.
     /// Each file is migrated independently - if a modern file already exists, it is skipped.
@@ -42,6 +43,44 @@ public static class Migration
             legacyDir, modernDir, "patch.json", "patches.json",
             (collection, legacy) => collection.Patches.Add(legacy.ToModern()),
             c => c.Patches.Count, "patches");
+    }
+
+    /// <summary>
+    /// Attempts to migrate legacy server.json (WebConfig) into LegacyApiSettings.
+    /// Returns null if no server.json exists or migration fails.
+    /// </summary>
+    public static async Task<LegacyApiSettings?> MigrateLegacyApiAsync(Settings settings)
+    {
+        var serverJsonPath = Path.Combine(settings.BasePath, "data", "server.json");
+        if (!File.Exists(serverJsonPath))
+            return null;
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(serverJsonPath);
+            var webConfig = JsonSerializer.Deserialize<LegacyWebConfig>(json);
+            if (webConfig == null) return null;
+
+            var legacyApi = new LegacyApiSettings();
+            legacyApi.Profiles.AddRange(webConfig.Profiles);
+
+            foreach (var user in webConfig.Users)
+                legacyApi.Users.Add(user.ToModern());
+
+            if (legacyApi.Users.Count > 0 || legacyApi.Profiles.Count > 0)
+                legacyApi.Enabled = true;
+
+            Logger.Information(
+                "Migrated server.json: {ProfileCount} profiles, {UserCount} users",
+                legacyApi.Profiles.Count, legacyApi.Users.Count);
+
+            return legacyApi;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Failed to migrate server.json");
+            return null;
+        }
     }
 
     private static void MigrateLegacyFile<TLegacy, TCollection>(
