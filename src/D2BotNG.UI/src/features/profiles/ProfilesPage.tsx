@@ -162,7 +162,9 @@ export function ProfilesPage() {
                   variant="secondary"
                   size="sm"
                   onClick={() => actions.start.mutate(startableNames)}
-                  disabled={startableNames.length === 0 || actions.start.isPending}
+                  disabled={
+                    startableNames.length === 0 || actions.start.isPending
+                  }
                 >
                   {actions.start.isPending ? (
                     <ArrowPathIcon className="h-4 w-4 animate-spin" />
@@ -177,7 +179,9 @@ export function ProfilesPage() {
                   variant="secondary"
                   size="sm"
                   onClick={() => actions.stop.mutate(stoppableNames)}
-                  disabled={stoppableNames.length === 0 || actions.stop.isPending}
+                  disabled={
+                    stoppableNames.length === 0 || actions.stop.isPending
+                  }
                 >
                   {actions.stop.isPending ? (
                     <ArrowPathIcon className="h-4 w-4 animate-spin" />
@@ -212,7 +216,8 @@ export function ProfilesPage() {
                       size="sm"
                       onClick={() => actions.hideWindow.mutate(visibleNames)}
                       disabled={
-                        visibleNames.length === 0 || actions.hideWindow.isPending
+                        visibleNames.length === 0 ||
+                        actions.hideWindow.isPending
                       }
                     >
                       {actions.hideWindow.isPending ? (
@@ -235,7 +240,9 @@ export function ProfilesPage() {
             {hasProfiles && (
               <Dropdown
                 items={columnSelectorItems}
-                trigger={<ViewColumnsIcon className="h-5 w-5" aria-hidden="true" />}
+                trigger={
+                  <ViewColumnsIcon className="h-5 w-5" aria-hidden="true" />
+                }
               />
             )}
           </div>

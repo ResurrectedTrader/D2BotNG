@@ -26,7 +26,9 @@ export function Layout() {
         <Header onMenuClick={() => setSidebarOpen(true)} />
 
         {/* Page content - scrollable container for sticky headers */}
-        <main className={`flex-1 overflow-y-auto ${showConsolePanel ? "pb-64" : "pb-6"}`}>
+        <main
+          className={`flex-1 overflow-y-auto ${showConsolePanel ? "pb-64" : "pb-6"}`}
+        >
           <div className="px-4 sm:px-6 lg:px-8">
             <Outlet />
           </div>

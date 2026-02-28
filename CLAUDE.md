@@ -235,7 +235,7 @@ Item/mule data lives in `d2bs/kolbot/mules/` (*.txt files, watched by FileSystem
 ## Workflow
 
 - **After making backend changes**, always build with format + inspect and check the SARIF output:
-  `dotnet build -p:RunFormat=true -p:RunInspect=true -p:SkipUIBuild=true --no-restore` then review `src/D2BotNG/obj/inspect.sarif`
+  `dotnet build -p:RunFormat=true -p:RunInspect=true -p:SkipUIBuild=true` then review `src/D2BotNG/obj/inspect.sarif`
 - **If no UI changes were made**, skip the UI build for faster iteration:
   `dotnet build -p:SkipUIBuild=true`
 

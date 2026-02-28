@@ -100,10 +100,7 @@ export function ProfileDetailPage() {
             {isNewProfile ? "New Profile" : profile?.name}
           </h1>
           {!isNewProfile && status && (
-            <ProfileStatusBadge
-              state={status.state}
-              status={status.status}
-            />
+            <ProfileStatusBadge state={status.state} status={status.status} />
           )}
         </div>
       </div>

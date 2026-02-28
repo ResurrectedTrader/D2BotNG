@@ -24,10 +24,7 @@ export interface TableHeadProps extends HTMLAttributes<HTMLTableSectionElement> 
 
 export function TableHead({ className, children, ...props }: TableHeadProps) {
   return (
-    <thead
-      className={clsx("bg-zinc-900", className)}
-      {...props}
-    >
+    <thead className={clsx("bg-zinc-900", className)} {...props}>
       {children}
     </thead>
   );
