@@ -49,6 +49,9 @@ internal static class Program
             // Wrap ILoggerFactory to track all logger categories (last registration wins)
             builder.Services.AddSingleton<ILoggerFactory>(_ => new TrackingLoggerFactory(new SerilogLoggerFactory()));
 
+            // Reduce shutdown timeout so Kestrel doesn't wait 30s draining connections
+            builder.Services.Configure<HostOptions>(options => options.ShutdownTimeout = TimeSpan.Zero);
+
             ConfigureServices(builder.Services);
 
             var app = builder.Build();
@@ -114,16 +117,18 @@ internal static class Program
 
     private static void RunWithGui(WebApplication app, string serverUrl, SettingsRepository settingsRepo)
     {
-        // Start server in background
-        var serverTask = Task.Run(() => app.RunAsync(serverUrl));
+        // Start server directly (not RunAsync which adds WaitForShutdownAsync overhead
+        // and makes clean shutdown difficult — we manage the lifecycle ourselves).
+        app.Urls.Add(serverUrl);
+        var startTask = app.StartAsync();
 
         // Wait for server to be ready (use localhost for health check since 0.0.0.0 won't respond to client requests)
         var healthCheckUrl = serverUrl.Replace("0.0.0.0", "127.0.0.1");
-        if (!WaitForServerReady(healthCheckUrl, serverTask, TimeSpan.FromSeconds(30)))
+        if (!WaitForServerReady(healthCheckUrl, startTask, TimeSpan.FromSeconds(30)))
         {
-            if (serverTask.IsFaulted)
+            if (startTask.IsFaulted)
             {
-                var innerEx = serverTask.Exception!.GetBaseException();
+                var innerEx = startTask.Exception!.GetBaseException();
                 if (innerEx.Message.Contains("address already in use", StringComparison.OrdinalIgnoreCase))
                 {
                     throw new Exception(
@@ -132,7 +137,7 @@ internal static class Program
                         "Close the other application or change the port in d2botng.json.",
                         innerEx);
                 }
-                throw serverTask.Exception.GetBaseException();
+                throw startTask.Exception.GetBaseException();
             }
             throw new Exception("Server failed to start within timeout");
         }
@@ -160,13 +165,9 @@ internal static class Program
 
         Application.Run(form);
 
-        // Form closed — signal the host to shut down. Use StopApplication() instead of
-        // app.StopAsync() to avoid a race: RunAsync() internally calls WaitForShutdownAsync()
-        // which calls Host.StopAsync() when the shutdown signal fires. Calling app.StopAsync()
-        // directly would trigger a concurrent second Host.StopAsync(), causing hosted services
-        // (e.g. ScheduleEngine) to have StopAsync called twice and hit disposed resources.
-        app.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
-        serverTask.GetAwaiter().GetResult();
+        // Form closed — stop the host directly. Since we used StartAsync (not RunAsync),
+        // there's no WaitForShutdownAsync in play, so this is the single StopAsync call.
+        app.StopAsync().GetAwaiter().GetResult();
     }
 
     private static bool WaitForServerReady(string url, Task serverTask, TimeSpan timeout)

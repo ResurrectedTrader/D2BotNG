@@ -113,7 +113,7 @@ public class ScheduleEngine
         return false;
     }
 
-    public async Task StopAsync()
+    public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         _shutdownCts.Cancel();
 
@@ -121,11 +121,11 @@ public class ScheduleEngine
         {
             try
             {
-                await _monitorTask.WaitAsync(TimeSpan.FromSeconds(5));
+                await _monitorTask.WaitAsync(cancellationToken);
             }
-            catch (TimeoutException)
+            catch (OperationCanceledException)
             {
-                // Monitor task didn't stop in time — it will exit on its own
+                // Host forcing shutdown — monitor task will exit on its own
             }
         }
 

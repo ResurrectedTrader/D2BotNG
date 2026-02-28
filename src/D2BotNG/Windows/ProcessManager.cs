@@ -123,7 +123,7 @@ public class ProcessManager : IDisposable
         }
     }
 
-    public async Task TerminateAsync(Process process, TimeSpan gracePeriod)
+    public async Task TerminateAsync(Process process, TimeSpan gracePeriod, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -143,7 +143,8 @@ public class ProcessManager : IDisposable
             var deadline = DateTime.UtcNow + gracePeriod;
             while (!process.HasExited && DateTime.UtcNow < deadline)
             {
-                await Task.Delay(100);
+                try { await Task.Delay(100, cancellationToken); }
+                catch (OperationCanceledException) { break; }
             }
         }
 

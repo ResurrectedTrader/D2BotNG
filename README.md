@@ -65,10 +65,11 @@ No manual steps are required. To force re-migration of a specific file, delete i
 - **Discord Integration** - Slash commands for remote control (/list, /start, /stop, /restart, /mule, /schedule)
 - **Key Management** - Visual dashboard with round-robin rotation, usage tracking, hold/release
 - **Scheduling** - Automated profile scheduling with time-based rules (supports overnight ranges)
-- **Drag & Drop** - Reorder profiles with drag-and-drop
+- **Drag & Drop** - Reorder profiles and groups with drag-and-drop
 - **Dual Mode** - GUI (WebView2 desktop app) or headless server
+- **Crash Safety** - Job objects auto-kill child game processes if the manager crashes
 - **Console** - Real-time console output with source filtering, regex search, D2 color codes
-- **Legacy API** - Backwards-compatible HTTP API for external tools like Limedrop
+- **Legacy API** - Backwards-compatible D2Bot# HTTP API for external tools (Limedrop, D2BS scripts) with AES session auth, webhooks, and game action scheduling
 
 ### Remote Access
 
@@ -85,6 +86,8 @@ Edit `d2botng.json` or use the Settings page in the UI:
 ```
 
 When a password is set, the web UI will prompt for it on connection.
+
+The Discord bot password is separate from the UI password — configure it independently in the Discord settings section.
 
 ### Discord Bot
 
@@ -199,7 +202,7 @@ src/
     Windows/         # Win32 interop, DLL injection, IPC
     Data/            # Protobuf JSON persistence (data/ng/)
     Rendering/       # DC6 sprite decoding
-    Controllers/     # REST endpoints (item images)
+    Legacy/          # D2Bot# API compatibility (middleware, handler, models, migration)
     UI/              # WinForms + WebView2 host
   D2BotNG.UI/        # React 18 frontend
     src/

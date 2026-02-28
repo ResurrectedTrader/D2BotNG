@@ -51,7 +51,7 @@ public class EventServiceImpl : EventService.EventServiceBase
             // Then stream events
             await foreach (var evt in _eventBroadcaster.Subscribe(clientId, context.CancellationToken))
             {
-                await responseStream.WriteAsync(evt);
+                await responseStream.WriteAsync(evt, context.CancellationToken);
             }
         }
         catch (OperationCanceledException)

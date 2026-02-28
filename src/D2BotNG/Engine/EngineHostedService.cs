@@ -25,9 +25,7 @@ public class EngineHostedService : IHostedService
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         // Stop scheduler first so it doesn't restart profiles during shutdown
-        await _scheduleEngine.StopAsync();
-
-        // Gracefully stop all game processes and dispose resources
-        await _profileEngine.StopAsync();
+        await _scheduleEngine.StopAsync(cancellationToken);
+        await _profileEngine.StopAsync(cancellationToken);
     }
 }

@@ -136,7 +136,7 @@ public class ProfileEngine
         return true;
     }
 
-    public async Task<bool> StopProfileAsync(string profileName, bool force = false)
+    public async Task<bool> StopProfileAsync(string profileName, bool force = false, CancellationToken cancellationToken = default)
     {
         if (!_instances.TryGetValue(profileName, out var instance))
         {
@@ -164,7 +164,8 @@ public class ProfileEngine
         {
             await _processManager.TerminateAsync(
                 instance.Process,
-                TimeSpan.FromSeconds(5));
+                TimeSpan.FromSeconds(5),
+                cancellationToken);
         }
 
         await instance.TransitionToAsync(RunState.Stopped);
@@ -196,11 +197,11 @@ public class ProfileEngine
         }
     }
 
-    public async Task StopAllAsync()
+    public async Task StopAllAsync(CancellationToken cancellationToken = default)
     {
         var tasks = _instances.Values
             .Where(i => i.State != RunState.Stopped)
-            .Select(i => StopProfileAsync(i.ProfileName))
+            .Select(i => StopProfileAsync(i.ProfileName, cancellationToken: cancellationToken))
             .ToList();
 
         await Task.WhenAll(tasks);
@@ -698,8 +699,8 @@ public class ProfileEngine
         _instances[newName] = instance;
     }
 
-    public async Task StopAsync()
+    public async Task StopAsync(CancellationToken cancellationToken = default)
     {
-        await StopAllAsync();
+        await StopAllAsync(cancellationToken);
     }
 }

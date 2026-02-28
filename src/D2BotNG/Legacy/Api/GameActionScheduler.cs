@@ -8,7 +8,7 @@ using D2BotNG.Services;
 
 namespace D2BotNG.Legacy.Api;
 
-public class GameActionScheduler : IHostedService, IDisposable
+public class GameActionScheduler : BackgroundService
 {
     private readonly EventBroadcaster _eventBroadcaster;
     private readonly ProfileEngine _profileEngine;
@@ -18,9 +18,6 @@ public class GameActionScheduler : IHostedService, IDisposable
     private readonly ILogger<GameActionScheduler> _logger;
 
     private readonly ConcurrentQueue<string> _actionQueue = new();
-    private string? _clientId;
-    private Task? _processTask;
-    private CancellationTokenSource? _cts;
 
     public GameActionScheduler(
         EventBroadcaster eventBroadcaster,
@@ -43,28 +40,13 @@ public class GameActionScheduler : IHostedService, IDisposable
         _actionQueue.Enqueue(actionJson);
     }
 
-    public Task StartAsync(CancellationToken cancellationToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _clientId = _eventBroadcaster.AddClient();
-        _cts = new CancellationTokenSource();
-        _processTask = ProcessEventsAsync(_cts.Token);
-        return Task.CompletedTask;
-    }
+        var clientId = _eventBroadcaster.AddClient();
 
-    public async Task StopAsync(CancellationToken cancellationToken)
-    {
-        _cts?.Cancel();
-        if (_processTask != null)
-            await _processTask;
-        if (_clientId != null)
-            _eventBroadcaster.RemoveClient(_clientId);
-    }
-
-    private async Task ProcessEventsAsync(CancellationToken ct)
-    {
         try
         {
-            await foreach (var evt in _eventBroadcaster.Subscribe(_clientId!, ct))
+            await foreach (var evt in _eventBroadcaster.Subscribe(clientId, stoppingToken))
             {
                 if (evt.EventCase == Event.EventOneofCase.ProfileState)
                     await HandleProfileStateAsync(evt.ProfileState);
@@ -134,10 +116,5 @@ public class GameActionScheduler : IHostedService, IDisposable
         {
             await _profileEngine.StartProfileAsync(profileName);
         }
-    }
-
-    public void Dispose()
-    {
-        _cts?.Dispose();
     }
 }
