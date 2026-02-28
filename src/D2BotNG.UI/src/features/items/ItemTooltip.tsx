@@ -242,7 +242,7 @@ export const ItemTooltip = memo(function ItemTooltip({
       <div
         ref={tooltipRef}
         className={clsx(
-          "absolute left-1/2 z-50 transition-opacity",
+          "absolute left-1/2 z-[60] transition-opacity",
           isVisible
             ? "pointer-events-auto opacity-100"
             : "pointer-events-none opacity-0 group-hover:opacity-100",

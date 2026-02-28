@@ -35,31 +35,30 @@ export function ItemsPage() {
   );
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-100">Items</h1>
-          <p className="mt-1 text-sm text-zinc-400">
-            Items received during this session.
+    <div className="space-y-4">
+      {/* Sticky header */}
+      <div className="sticky top-0 z-20 bg-zinc-950 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 pt-4 pb-3 border-b border-zinc-800/50">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+          <h1 className="text-lg font-bold text-zinc-100 shrink-0">
+            Items
             {items.length > 0 && (
-              <span className="ml-1">({items.length} total)</span>
+              <span className="ml-2 text-sm font-normal text-zinc-400">
+                ({items.length} total)
+              </span>
             )}
-          </p>
-        </div>
-      </div>
-
-      {/* Search */}
-      <div className="flex-1">
-        <div className="relative">
-          <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-          <input
-            type="text"
-            value={search}
-            onChange={handleSearchChange}
-            placeholder="Search items..."
-            className="block w-full rounded-lg border-0 bg-zinc-800 py-2 pl-10 pr-3 text-zinc-100 ring-1 ring-inset ring-zinc-700 placeholder:text-zinc-500 focus:ring-2 focus:ring-inset focus:ring-d2-gold sm:text-sm sm:leading-6"
-          />
+          </h1>
+          <div className="flex-1">
+            <div className="relative">
+              <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+              <input
+                type="text"
+                value={search}
+                onChange={handleSearchChange}
+                placeholder="Search items..."
+                className="block w-full rounded-lg border-0 bg-zinc-800 py-2 pl-10 pr-3 text-zinc-100 ring-1 ring-inset ring-zinc-700 placeholder:text-zinc-500 focus:ring-2 focus:ring-inset focus:ring-d2-gold sm:text-sm sm:leading-6"
+              />
+            </div>
+          </div>
         </div>
       </div>
 

@@ -220,25 +220,23 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-4">
-      {/* Header with save button */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-100">Settings</h1>
-          <p className="mt-1 text-sm text-zinc-400">
-            Configure your D2Bot server and application settings.
-          </p>
+      {/* Sticky header with save button and tabs */}
+      <div className="sticky top-0 z-20 bg-zinc-950 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 pt-4 pb-0 border-b border-zinc-800/50">
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <h1 className="text-lg font-bold text-zinc-100">Settings</h1>
+          <Button
+            onClick={handleSave}
+            size="sm"
+            disabled={!isDirty || updateSettings.isPending}
+          >
+            {updateSettings.isPending ? (
+              <ArrowPathIcon className="h-4 w-4 animate-spin" />
+            ) : (
+              <CheckIcon className="h-4 w-4" />
+            )}
+            Save Changes
+          </Button>
         </div>
-        <Button
-          onClick={handleSave}
-          disabled={!isDirty || updateSettings.isPending}
-        >
-          {updateSettings.isPending ? (
-            <ArrowPathIcon className="h-4 w-4 animate-spin" />
-          ) : (
-            <CheckIcon className="h-4 w-4" />
-          )}
-          Save Changes
-        </Button>
       </div>
 
       <DevSettings />

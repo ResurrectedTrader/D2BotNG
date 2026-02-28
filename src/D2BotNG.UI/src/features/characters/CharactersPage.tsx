@@ -375,62 +375,62 @@ export function CharactersPage() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-zinc-100">{pageTitle}</h1>
-        <p className="mt-1 text-sm text-zinc-400">
-          {totalCount} item{totalCount !== 1 && "s"}
-          {debouncedSearch && " matching search"}
-        </p>
-      </div>
-
-      {/* Controls */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        {/* Entity selector */}
-        <div className="w-full sm:w-72">
-          <EntitySelector
-            nodes={treeNodes}
-            selectedPath={selectedPath}
-            onSelect={setSelectedPath}
-          />
+    <div className="space-y-4">
+      {/* Sticky header */}
+      <div className="sticky top-0 z-20 bg-zinc-950 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 pt-4 pb-3 border-b border-zinc-800/50">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <h1 className="text-lg font-bold text-zinc-100">{pageTitle}</h1>
+          <span className="text-sm text-zinc-400">
+            {totalCount} item{totalCount !== 1 && "s"}
+            {debouncedSearch && " matching search"}
+          </span>
         </div>
-
-        {/* Search */}
-        <div className="flex-1">
-          <div className="relative">
-            <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search items (regex)..."
-              className="block w-full rounded-lg border-0 bg-zinc-800 py-2 pl-10 pr-3 text-zinc-100 ring-1 ring-inset ring-zinc-700 placeholder:text-zinc-500 focus:ring-2 focus:ring-inset focus:ring-d2-gold sm:text-sm sm:leading-6"
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          {/* Entity selector */}
+          <div className="w-full sm:w-72">
+            <EntitySelector
+              nodes={treeNodes}
+              selectedPath={selectedPath}
+              onSelect={setSelectedPath}
             />
           </div>
-        </div>
 
-        {/* Mode filters */}
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-zinc-500">Filter:</span>
-          <ModeToggle
-            label="Hardcore"
-            value={hardcoreFilter}
-            onChange={setHardcoreFilter}
-            activeColor="bg-red-900/50 text-red-300"
-          />
-          <ModeToggle
-            label="Ladder"
-            value={ladderFilter}
-            onChange={setLadderFilter}
-            activeColor="bg-green-900/50 text-green-300"
-          />
-          <ModeToggle
-            label="Expansion"
-            value={expansionFilter}
-            onChange={setExpansionFilter}
-            activeColor="bg-amber-900/50 text-amber-300"
-          />
+          {/* Search */}
+          <div className="flex-1">
+            <div className="relative">
+              <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search items (regex)..."
+                className="block w-full rounded-lg border-0 bg-zinc-800 py-2 pl-10 pr-3 text-zinc-100 ring-1 ring-inset ring-zinc-700 placeholder:text-zinc-500 focus:ring-2 focus:ring-inset focus:ring-d2-gold sm:text-sm sm:leading-6"
+              />
+            </div>
+          </div>
+
+          {/* Mode filters */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-zinc-500">Filter:</span>
+            <ModeToggle
+              label="Hardcore"
+              value={hardcoreFilter}
+              onChange={setHardcoreFilter}
+              activeColor="bg-red-900/50 text-red-300"
+            />
+            <ModeToggle
+              label="Ladder"
+              value={ladderFilter}
+              onChange={setLadderFilter}
+              activeColor="bg-green-900/50 text-green-300"
+            />
+            <ModeToggle
+              label="Expansion"
+              value={expansionFilter}
+              onChange={setExpansionFilter}
+              activeColor="bg-amber-900/50 text-amber-300"
+            />
+          </div>
         </div>
       </div>
 

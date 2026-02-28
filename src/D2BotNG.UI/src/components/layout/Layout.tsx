@@ -21,12 +21,12 @@ export function Layout() {
       <Sidebar />
 
       {/* Main content area */}
-      <div className="lg:pl-64">
+      <div className="lg:pl-64 flex flex-col h-screen pt-8">
         {/* Mobile header */}
         <Header onMenuClick={() => setSidebarOpen(true)} />
 
-        {/* Page content - add bottom padding for console when visible */}
-        <main className={showConsolePanel ? "py-10 pb-64" : "py-10"}>
+        {/* Page content - scrollable container for sticky headers */}
+        <main className={`flex-1 overflow-y-auto ${showConsolePanel ? "pb-64" : "pb-6"}`}>
           <div className="px-4 sm:px-6 lg:px-8">
             <Outlet />
           </div>

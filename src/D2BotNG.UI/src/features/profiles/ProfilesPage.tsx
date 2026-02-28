@@ -150,103 +150,96 @@ export function ProfilesPage() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-100">Profiles</h1>
-          <p className="mt-1 text-sm text-zinc-400">
-            Manage your bot profiles and monitor their status.
-          </p>
-        </div>
-
-        {/* Bulk actions - operate on selected profiles, or all if none selected */}
-        {hasProfiles && (
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => actions.start.mutate(startableNames)}
-              disabled={startableNames.length === 0 || actions.start.isPending}
-            >
-              {actions.start.isPending ? (
-                <ArrowPathIcon className="h-4 w-4 animate-spin" />
-              ) : (
-                <PlayIcon className="h-4 w-4" />
-              )}
-              {selectedProfiles.size > 0
-                ? `Start (${startableNames.length})`
-                : "Start All"}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => actions.stop.mutate(stoppableNames)}
-              disabled={stoppableNames.length === 0 || actions.stop.isPending}
-            >
-              {actions.stop.isPending ? (
-                <ArrowPathIcon className="h-4 w-4 animate-spin" />
-              ) : (
-                <StopIcon className="h-4 w-4" />
-              )}
-              {selectedProfiles.size > 0
-                ? `Stop (${stoppableNames.length})`
-                : "Stop All"}
-            </Button>
-            {isLocalhost && (
+    <div className="space-y-4">
+      {/* Sticky header */}
+      <div className="sticky top-0 z-20 bg-zinc-950 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 pt-4 pb-3 border-b border-zinc-800/50">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-lg font-bold text-zinc-100">Profiles</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            {hasProfiles && (
               <>
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={() => actions.showWindow.mutate(hiddenNames)}
-                  disabled={
-                    hiddenNames.length === 0 || actions.showWindow.isPending
-                  }
+                  onClick={() => actions.start.mutate(startableNames)}
+                  disabled={startableNames.length === 0 || actions.start.isPending}
                 >
-                  {actions.showWindow.isPending ? (
+                  {actions.start.isPending ? (
                     <ArrowPathIcon className="h-4 w-4 animate-spin" />
                   ) : (
-                    <EyeIcon className="h-4 w-4" />
+                    <PlayIcon className="h-4 w-4" />
                   )}
                   {selectedProfiles.size > 0
-                    ? `Show (${hiddenNames.length})`
-                    : "Show All"}
+                    ? `Start (${startableNames.length})`
+                    : "Start All"}
                 </Button>
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={() => actions.hideWindow.mutate(visibleNames)}
-                  disabled={
-                    visibleNames.length === 0 || actions.hideWindow.isPending
-                  }
+                  onClick={() => actions.stop.mutate(stoppableNames)}
+                  disabled={stoppableNames.length === 0 || actions.stop.isPending}
                 >
-                  {actions.hideWindow.isPending ? (
+                  {actions.stop.isPending ? (
                     <ArrowPathIcon className="h-4 w-4 animate-spin" />
                   ) : (
-                    <EyeSlashIcon className="h-4 w-4" />
+                    <StopIcon className="h-4 w-4" />
                   )}
                   {selectedProfiles.size > 0
-                    ? `Hide (${visibleNames.length})`
-                    : "Hide All"}
+                    ? `Stop (${stoppableNames.length})`
+                    : "Stop All"}
                 </Button>
+                {isLocalhost && (
+                  <>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => actions.showWindow.mutate(hiddenNames)}
+                      disabled={
+                        hiddenNames.length === 0 || actions.showWindow.isPending
+                      }
+                    >
+                      {actions.showWindow.isPending ? (
+                        <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <EyeIcon className="h-4 w-4" />
+                      )}
+                      {selectedProfiles.size > 0
+                        ? `Show (${hiddenNames.length})`
+                        : "Show All"}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => actions.hideWindow.mutate(visibleNames)}
+                      disabled={
+                        visibleNames.length === 0 || actions.hideWindow.isPending
+                      }
+                    >
+                      {actions.hideWindow.isPending ? (
+                        <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <EyeSlashIcon className="h-4 w-4" />
+                      )}
+                      {selectedProfiles.size > 0
+                        ? `Hide (${visibleNames.length})`
+                        : "Hide All"}
+                    </Button>
+                  </>
+                )}
               </>
             )}
+            <Button onClick={handleNewProfile} size="sm">
+              <PlusIcon className="h-4 w-4" />
+              New Profile
+            </Button>
+            {hasProfiles && (
+              <Dropdown
+                items={columnSelectorItems}
+                trigger={<ViewColumnsIcon className="h-5 w-5" aria-hidden="true" />}
+              />
+            )}
           </div>
-        )}
-      </div>
-
-      {/* Action bar */}
-      <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={handleNewProfile}>
-          <PlusIcon className="h-4 w-4" />
-          New Profile
-        </Button>
-        {hasProfiles && (
-          <Dropdown
-            items={columnSelectorItems}
-            trigger={<ViewColumnsIcon className="h-5 w-5" aria-hidden="true" />}
-          />
-        )}
+        </div>
       </div>
 
       {/* Content */}

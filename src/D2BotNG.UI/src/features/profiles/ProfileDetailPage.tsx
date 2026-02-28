@@ -89,31 +89,22 @@ export function ProfileDetailPage() {
   const isSubmitting = createProfile.isPending || updateProfile.isPending;
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-4">
+    <div className="space-y-4">
+      {/* Sticky header */}
+      <div className="sticky top-0 z-20 bg-zinc-950 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 pt-4 pb-3 border-b border-zinc-800/50">
+        <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={handleBack}>
             <ArrowLeftIcon className="h-4 w-4" />
           </Button>
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold text-zinc-100">
-                {isNewProfile ? "New Profile" : profile?.name}
-              </h1>
-              {!isNewProfile && status && (
-                <ProfileStatusBadge
-                  state={status.state}
-                  status={status.status}
-                />
-              )}
-            </div>
-            {!isNewProfile && (
-              <p className="mt-1 text-sm text-zinc-400">
-                Configure your bot profile settings
-              </p>
-            )}
-          </div>
+          <h1 className="text-lg font-bold text-zinc-100">
+            {isNewProfile ? "New Profile" : profile?.name}
+          </h1>
+          {!isNewProfile && status && (
+            <ProfileStatusBadge
+              state={status.state}
+              status={status.status}
+            />
+          )}
         </div>
       </div>
 
