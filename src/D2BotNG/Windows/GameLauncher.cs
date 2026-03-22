@@ -81,25 +81,22 @@ public class GameLauncher
             // Step 8: Resume process
             _processManager.ResumeProcess(process);
 
-            // Step 9: Wait for process to initialize (ready for input)
-            await WaitForInputIdleAsync(process, TimeSpan.FromSeconds(30), cancellationToken);
-
-            // Step 10: Wait for main window
+            // Step 9: Wait for main window
             await WaitForMainWindowAsync(process, TimeSpan.FromSeconds(30), cancellationToken);
 
-            // Step 11: Set window title
+            // Step 10: Set window title
             if (!string.IsNullOrEmpty(config.ProfileName) && process.MainWindowHandle != 0)
             {
                 _processManager.SetWindowTitle(process.MainWindowHandle, config.ProfileName);
             }
 
-            // Step 12: Set window position if configured
+            // Step 11: Set window position if configured
             if (config.WindowLocation != null && process.MainWindowHandle != 0)
             {
                 _processManager.MoveWindow(process.MainWindowHandle, config.WindowLocation.X, config.WindowLocation.Y);
             }
 
-            // Step 13: Handle visibility
+            // Step 12: Handle visibility
             if (!config.Visible && process.MainWindowHandle != 0)
             {
                 _processManager.HideWindow(process.MainWindowHandle);
@@ -223,27 +220,6 @@ public class GameLauncher
         }
 
         return sb.ToString().TrimEnd();
-    }
-
-    private static async Task WaitForInputIdleAsync(Process process, TimeSpan timeout, CancellationToken cancellationToken)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-
-        while (DateTime.UtcNow < deadline)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (process.HasExited)
-                throw new InvalidOperationException($"Game process exited with code {process.ExitCode}");
-
-            // Non-blocking check (timeout=0 returns immediately)
-            if (process.WaitForInputIdle(0))
-                return;
-
-            await Task.Delay(100, cancellationToken);
-        }
-
-        throw new TimeoutException("Timed out waiting for window to be ready for input");
     }
 
     private static async Task WaitForMainWindowAsync(Process process, TimeSpan timeout, CancellationToken cancellationToken)
