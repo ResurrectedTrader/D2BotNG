@@ -115,7 +115,7 @@ public class ProfileEngine
         });
     }
 
-    public async Task<bool> StartProfileAsync(string profileName)
+    public async Task<bool> StartProfileAsync(string profileName, [System.Runtime.CompilerServices.CallerMemberName] string? caller = null)
     {
         if (!_instances.TryGetValue(profileName, out var instance))
         {
@@ -129,6 +129,8 @@ public class ProfileEngine
             return false;
         }
 
+        _logger.LogDebug("Starting profile {Name} (caller: {Caller})", profileName, caller);
+
         instance.CrashCount = 0;
         await NotifyProfileStateChangedAsync(profileName);
 
@@ -136,7 +138,7 @@ public class ProfileEngine
         return true;
     }
 
-    public async Task<bool> StopProfileAsync(string profileName, bool force = false, CancellationToken cancellationToken = default)
+    public async Task<bool> StopProfileAsync(string profileName, bool force = false, CancellationToken cancellationToken = default, [System.Runtime.CompilerServices.CallerMemberName] string? caller = null)
     {
         if (!_instances.TryGetValue(profileName, out var instance))
         {
@@ -152,6 +154,8 @@ public class ProfileEngine
         {
             if (!force) return false;
         }
+
+        _logger.LogDebug("Stopping profile {Name} (caller: {Caller})", profileName, caller);
 
         await NotifyProfileStateChangedAsync(profileName);
 
@@ -177,8 +181,9 @@ public class ProfileEngine
         return true;
     }
 
-    public async Task RestartProfileAsync(string profileName, bool rotateKey = false)
+    public async Task RestartProfileAsync(string profileName, bool rotateKey = false, [System.Runtime.CompilerServices.CallerMemberName] string? caller = null)
     {
+        _logger.LogDebug("Restarting profile {Name} (caller: {Caller})", profileName, caller);
         await StopProfileAsync(profileName);
         if (rotateKey)
             await RotateKeyAsync(profileName);
@@ -444,6 +449,13 @@ public class ProfileEngine
         var profileName = instance.ProfileName;
         var cancellationToken = instance.GetCancellationToken();
 
+        // Bail out if Stop was called before this task got scheduled
+        if (instance.State != RunState.Starting)
+        {
+            _logger.LogDebug("Profile {Name} no longer in Starting state, aborting run", profileName);
+            return;
+        }
+
         // Clear stale status from previous run
         instance.Status = "";
         instance.MissedHeartbeats = 0;
@@ -538,7 +550,7 @@ public class ProfileEngine
             await NotifyProfileStateChangedAsync(profileName);
 
             // Handle crash recovery
-            await HandleCrashAsync(instance);
+            await HandleCrashAsync(instance, cancellationToken);
         }
     }
 
@@ -567,7 +579,7 @@ public class ProfileEngine
                         instance.ProfileName);
                     await instance.SetErrorAsync("Process exited unexpectedly");
                     await NotifyProfileStateChangedAsync(instance.ProfileName);
-                    await HandleCrashAsync(instance);
+                    await HandleCrashAsync(instance, cancellationToken);
                 }
                 // If state is Stopping, StopProfileAsync handles the cleanup
                 return;
@@ -604,7 +616,7 @@ public class ProfileEngine
                         instance.MissedHeartbeats = 0;
                         await instance.SetErrorAsync("Process not responding");
                         await NotifyProfileStateChangedAsync(instance.ProfileName);
-                        await HandleCrashAsync(instance);
+                        await HandleCrashAsync(instance, cancellationToken);
                         return;
                     }
                 }
@@ -614,7 +626,7 @@ public class ProfileEngine
         }
     }
 
-    private async Task HandleCrashAsync(ProfileInstance instance)
+    private async Task HandleCrashAsync(ProfileInstance instance, CancellationToken cancellationToken)
     {
         var profileName = instance.ProfileName;
         instance.CrashCount++;
@@ -635,7 +647,15 @@ public class ProfileEngine
             _logger.LogWarning("Profile {Name} crashed, restarting ({Count}/{Max})",
                 profileName, instance.CrashCount, MaxCrashRetries);
 
-            await Task.Delay(TimeSpan.FromSeconds(5));
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogDebug("Profile {Name} crash delay interrupted by stop request", profileName);
+                return;
+            }
 
             // If state changed during delay (e.g. user stopped), don't restart
             if (instance.State != RunState.Error)
@@ -654,7 +674,6 @@ public class ProfileEngine
         else
         {
             _logger.LogError("Profile {Name} exceeded max crash retries", profileName);
-            await instance.TransitionToAsync(RunState.Stopped);
 
             // Disable schedule to prevent ScheduleEngine from restarting
             if (profile is { ScheduleEnabled: true })
@@ -664,7 +683,10 @@ public class ProfileEngine
                 _logger.LogWarning("Disabled schedule for profile {Name} due to repeated crashes", profileName);
             }
 
-            await instance.SetErrorAsync($"Exceeded max crash retries ({MaxCrashRetries})");
+            // Set error status before transitioning to Stopped so the message is preserved.
+            // Do NOT use SetErrorAsync here — it would set state to Error, allowing restarts.
+            instance.Status = $"Exceeded max crash retries ({MaxCrashRetries})";
+            await instance.TransitionToAsync(RunState.Stopped);
             await NotifyProfileStateChangedAsync(profileName, includeProfile: true);
         }
     }

@@ -67,9 +67,11 @@ public class GameActionScheduler : BackgroundService
         if (state.State != RunState.Stopped)
             return;
 
-        var profileName = state.ProfileName;
-
         var settings = await _settingsRepository.GetAsync();
+        if (!settings.LegacyApi.Enabled)
+            return;
+
+        var profileName = state.ProfileName;
         if (!settings.LegacyApi.Profiles.Contains(profileName))
             return;
 
@@ -111,10 +113,21 @@ public class GameActionScheduler : BackgroundService
             await _profileEngine.NotifyProfileStateChangedAsync(profileName, includeProfile: true);
             await _profileEngine.StartProfileAsync(profileName);
         }
-        // Restart profile if InfoTag is non-empty from another source
+        // Restart profile if InfoTag contains a pending game action (not an arbitrary script tag)
         else if (!string.IsNullOrEmpty(profile.InfoTag))
         {
-            await _profileEngine.StartProfileAsync(profileName);
+            try
+            {
+                var pendingAction = JsonSerializer.Deserialize<LegacyGameAction>(profile.InfoTag);
+                if (pendingAction is { Action.Length: > 0, Action: not "done" })
+                {
+                    await _profileEngine.StartProfileAsync(profileName);
+                }
+            }
+            catch (JsonException)
+            {
+                // InfoTag is not a game action, don't restart
+            }
         }
     }
 }
