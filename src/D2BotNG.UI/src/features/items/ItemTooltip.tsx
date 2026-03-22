@@ -15,6 +15,7 @@ import {
   useCallback,
   useEffect,
 } from "react";
+import { createPortal } from "react-dom";
 import clsx from "clsx";
 import type { Item } from "@/generated/items_pb";
 import { ItemFont } from "@/generated/settings_pb";
@@ -157,10 +158,13 @@ export const ItemTooltip = memo(function ItemTooltip({
   const containerRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const [showBelow, setShowBelow] = useState(false);
-  const [offsetX, setOffsetX] = useState(0);
+  const [isHovered, setIsHovered] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+  const [position, setPosition] = useState({ top: 0, left: 0, arrowLeft: 0 });
 
-  /** Calculate optimal tooltip position */
+  const visible = isHovered || isVisible;
+
+  /** Calculate optimal tooltip position using fixed coordinates */
   const updatePosition = useCallback(() => {
     if (!containerRef.current || !tooltipRef.current) return;
 
@@ -173,35 +177,33 @@ export const ItemTooltip = memo(function ItemTooltip({
     const availableWidth = viewportWidth - margin * 2;
 
     // Vertical: flip below if not enough space above
-    setShowBelow(triggerRect.top < tooltipHeight + TOOLTIP_MARGIN);
+    const below = triggerRect.top < tooltipHeight + TOOLTIP_MARGIN;
+    setShowBelow(below);
+    const top = below ? triggerRect.bottom + 8 : triggerRect.top - tooltipHeight - 8;
 
-    // Horizontal: calculate offset to keep tooltip within viewport
+    // Horizontal: center on trigger, constrain to viewport
     const triggerCenterX = triggerRect.left + triggerRect.width / 2;
-
-    // If tooltip is wider than available space, center it in viewport
+    let left: number;
     if (tooltipWidth >= availableWidth) {
-      setOffsetX(viewportWidth / 2 - triggerCenterX);
-      return;
+      left = (viewportWidth - tooltipWidth) / 2;
+    } else {
+      left = triggerCenterX - tooltipWidth / 2;
+      if (left < margin) left = margin;
+      if (left + tooltipWidth > viewportWidth - margin)
+        left = viewportWidth - margin - tooltipWidth;
     }
 
-    // Tooltip fits - calculate offset to keep it centered when possible
-    const tooltipLeft = triggerCenterX - tooltipWidth / 2;
-    const tooltipRight = triggerCenterX + tooltipWidth / 2;
-
-    let offset = 0;
-    if (tooltipLeft < margin) {
-      // Would overflow left - shift right
-      offset = margin - tooltipLeft;
-    } else if (tooltipRight > viewportWidth - margin) {
-      // Would overflow right - shift left
-      offset = viewportWidth - margin - tooltipRight;
-    }
-    setOffsetX(offset);
+    setPosition({ top, left, arrowLeft: triggerCenterX - left });
   }, []);
 
   const handleMouseEnter = useCallback(() => {
+    setIsHovered(true);
     updatePosition();
   }, [updatePosition]);
+
+  const handleMouseLeave = useCallback(() => {
+    setIsHovered(false);
+  }, []);
 
   const handleTouchStart = useCallback(() => {
     setIsVisible((prev) => {
@@ -232,38 +234,39 @@ export const ItemTooltip = memo(function ItemTooltip({
   return (
     <div
       ref={containerRef}
-      className="group relative inline-block"
+      className="inline-block"
       onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       onTouchStart={handleTouchStart}
     >
       {children}
 
-      {/* Tooltip content */}
-      <div
-        ref={tooltipRef}
-        className={clsx(
-          "absolute left-1/2 z-[60] transition-opacity",
-          isVisible
-            ? "pointer-events-auto opacity-100"
-            : "pointer-events-none opacity-0 group-hover:opacity-100",
-          showBelow ? "top-full mt-2" : "bottom-full mb-2",
-        )}
-        style={{ transform: `translateX(calc(-50% + ${offsetX}px))` }}
-        role="tooltip"
-      >
-        <ItemTooltipContent item={item} showSprite={showSprite} />
-
-        {/* Tooltip arrow - stays centered on trigger */}
+      {/* Tooltip rendered via portal to escape scroll container clipping */}
+      {createPortal(
         <div
+          ref={tooltipRef}
           className={clsx(
-            "absolute left-1/2 border-4 border-transparent",
-            showBelow
-              ? "bottom-full border-b-zinc-700"
-              : "top-full border-t-zinc-700",
+            "fixed z-[60] pointer-events-none transition-opacity",
+            visible ? "opacity-100" : "opacity-0",
           )}
-          style={{ transform: `translateX(calc(-50% - ${offsetX}px))` }}
-        />
-      </div>
+          style={{ top: position.top, left: position.left }}
+          role="tooltip"
+        >
+          <ItemTooltipContent item={item} showSprite={showSprite} />
+
+          {/* Tooltip arrow - points to trigger center */}
+          <div
+            className={clsx(
+              "absolute border-4 border-transparent",
+              showBelow
+                ? "bottom-full border-b-zinc-700"
+                : "top-full border-t-zinc-700",
+            )}
+            style={{ left: position.arrowLeft, transform: "translateX(-50%)" }}
+          />
+        </div>,
+        document.body,
+      )}
     </div>
   );
 });
