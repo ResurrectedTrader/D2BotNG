@@ -179,7 +179,9 @@ export const ItemTooltip = memo(function ItemTooltip({
     // Vertical: flip below if not enough space above
     const below = triggerRect.top < tooltipHeight + TOOLTIP_MARGIN;
     setShowBelow(below);
-    const top = below ? triggerRect.bottom + 8 : triggerRect.top - tooltipHeight - 8;
+    const top = below
+      ? triggerRect.bottom + 8
+      : triggerRect.top - tooltipHeight - 8;
 
     // Horizontal: center on trigger, constrain to viewport
     const triggerCenterX = triggerRect.left + triggerRect.width / 2;

@@ -47,27 +47,6 @@ public class ProfileInstance : IDisposable
         }
     }
 
-    /// <summary>
-    /// Atomically transitions from <paramref name="expectedFrom"/> to <paramref name="newState"/>.
-    /// Fails if the current state is not <paramref name="expectedFrom"/>.
-    /// </summary>
-    public async Task<bool> TransitionFromAsync(RunState expectedFrom, RunState newState)
-    {
-        await _stateLock.WaitAsync();
-        try
-        {
-            if (State != expectedFrom || !IsValidTransition(State, newState))
-                return false;
-
-            State = newState;
-            return true;
-        }
-        finally
-        {
-            _stateLock.Release();
-        }
-    }
-
     public void SetGameProcess(Process process)
     {
         Process?.Dispose();
