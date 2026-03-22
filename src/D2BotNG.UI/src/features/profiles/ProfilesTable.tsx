@@ -505,26 +505,13 @@ export function ProfilesTable({
     return { allProfileIds: ids, sectionStarts: starts, sectionEnds: ends };
   }, [ungroupedProfiles, groupedProfiles]);
 
-  // Track expanded state for each group (all expanded by default)
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
-    return new Set(groupedProfiles.map((g) => g.name));
-  });
-
-  // Update expanded groups when new groups appear
-  useMemo(() => {
-    setExpandedGroups((prev) => {
-      const newSet = new Set(prev);
-      for (const group of groupedProfiles) {
-        if (!prev.has(group.name)) {
-          newSet.add(group.name);
-        }
-      }
-      return newSet;
-    });
-  }, [groupedProfiles]);
+  // Track which groups the user has explicitly collapsed (all expanded by default)
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    new Set(),
+  );
 
   const toggleGroup = (groupName: string) => {
-    setExpandedGroups((prev) => {
+    setCollapsedGroups((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(groupName)) {
         newSet.delete(groupName);
@@ -760,7 +747,7 @@ export function ProfilesTable({
     : null;
 
   const renderGroupHeader = (group: ProfileGroup) => {
-    const isExpanded = expandedGroups.has(group.name);
+    const isExpanded = !collapsedGroups.has(group.name);
     const groupDropId = `${GROUP_DROP_PREFIX}${group.name}`;
     const groupProfileNames = group.profiles.map((p) => p.name);
     const allSelected = groupProfileNames.every((name) =>
@@ -890,7 +877,7 @@ export function ProfilesTable({
               {groupedProfiles.map((group) => (
                 <Fragment key={group.name}>
                   {renderGroupHeader(group)}
-                  {expandedGroups.has(group.name) &&
+                  {!collapsedGroups.has(group.name) &&
                     group.profiles.map((profile) => (
                       <Fragment key={profile.name}>
                         {insertIndicator?.id === profile.name &&
