@@ -5,8 +5,9 @@
  * game mode filters, and item search.
  */
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { create } from "@bufbuild/protobuf";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { EmptyState, LoadingSpinner } from "@/components/ui";
 import { itemClient } from "@/lib/grpc-client";
 import { useEntitiesVersion } from "@/stores/event-store";
@@ -27,6 +28,8 @@ import {
   CheckIcon,
 } from "@heroicons/react/24/outline";
 import clsx from "clsx";
+
+const PAGE_SIZE = 200;
 
 interface TreeNode {
   path: string;
@@ -241,6 +244,138 @@ interface ModeToggleProps {
   activeColor: string;
 }
 
+function computeColumns(): number {
+  if (typeof window === "undefined") return 1;
+  if (window.matchMedia("(min-width: 1280px)").matches) return 4;
+  if (window.matchMedia("(min-width: 1024px)").matches) return 3;
+  if (window.matchMedia("(min-width: 640px)").matches) return 2;
+  return 1;
+}
+
+function useResponsiveColumns(): number {
+  const [columns, setColumns] = useState(computeColumns);
+
+  useEffect(() => {
+    const queries = [
+      window.matchMedia("(min-width: 640px)"),
+      window.matchMedia("(min-width: 1024px)"),
+      window.matchMedia("(min-width: 1280px)"),
+    ];
+    const update = () => setColumns(computeColumns());
+    queries.forEach((q) => q.addEventListener("change", update));
+    return () =>
+      queries.forEach((q) => q.removeEventListener("change", update));
+  }, []);
+
+  return columns;
+}
+
+interface VirtualItemsGridProps {
+  items: Item[];
+  hasMore: boolean;
+  onLoadMore: () => void;
+}
+
+function VirtualItemsGrid({
+  items,
+  hasMore,
+  onLoadMore,
+}: VirtualItemsGridProps) {
+  const columns = useResponsiveColumns();
+  const parentRef = useRef<HTMLDivElement>(null);
+  const [scrollElement, setScrollElement] = useState<HTMLElement | null>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
+
+  useEffect(() => {
+    setScrollElement(document.querySelector("main"));
+  }, []);
+
+  useEffect(() => {
+    if (!parentRef.current || !scrollElement) return;
+    const measure = () => {
+      if (!parentRef.current || !scrollElement) return;
+      const parentRect = parentRef.current.getBoundingClientRect();
+      const scrollRect = scrollElement.getBoundingClientRect();
+      setScrollMargin(
+        parentRect.top - scrollRect.top + scrollElement.scrollTop,
+      );
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(scrollElement);
+    ro.observe(parentRef.current);
+    // Also observe the sticky header sibling: when filters wrap onto another
+    // line at narrow viewports, the header height changes but this component's
+    // own size doesn't, so we'd otherwise miss the layout shift.
+    const sibling = parentRef.current.previousElementSibling;
+    if (sibling instanceof HTMLElement) {
+      ro.observe(sibling);
+    }
+    return () => ro.disconnect();
+  }, [scrollElement]);
+
+  const rowCount = Math.ceil(items.length / columns);
+
+  const rowVirtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => scrollElement,
+    estimateSize: () => 96,
+    overscan: 4,
+    scrollMargin,
+  });
+
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const lastVisibleIndex = virtualRows.length
+    ? virtualRows[virtualRows.length - 1].index
+    : -1;
+
+  useEffect(() => {
+    if (hasMore && lastVisibleIndex >= rowCount - 3) {
+      onLoadMore();
+    }
+  }, [hasMore, lastVisibleIndex, rowCount, onLoadMore]);
+
+  return (
+    <div ref={parentRef}>
+      <div
+        style={{
+          height: rowVirtualizer.getTotalSize(),
+          position: "relative",
+          width: "100%",
+        }}
+      >
+        {virtualRows.map((virtualRow) => {
+          const startIndex = virtualRow.index * columns;
+          const rowItems = items.slice(startIndex, startIndex + columns);
+          return (
+            <div
+              key={virtualRow.key}
+              data-index={virtualRow.index}
+              ref={rowVirtualizer.measureElement}
+              className="grid gap-3 pb-3"
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                transform: `translateY(${virtualRow.start - scrollMargin}px)`,
+                gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+              }}
+            >
+              {rowItems.map((item, i) => (
+                <ItemCard
+                  key={`${item.code}-${item.name}-${startIndex + i}`}
+                  item={item}
+                />
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ModeToggle({ label, value, onChange, activeColor }: ModeToggleProps) {
   const handleClick = () => {
     // Cycle: undefined -> true -> false -> undefined
@@ -277,10 +412,13 @@ export function CharactersPage() {
   const [expansionFilter, setExpansionFilter] = useState<boolean | undefined>();
   const [ladderFilter, setLadderFilter] = useState<boolean | undefined>();
 
-  // Items state
+  // Items state - paginated, appends as user scrolls
   const [items, setItems] = useState<Item[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [loadingItems, setLoadingItems] = useState(false);
+  const fetchTokenRef = useRef(0);
+  // Synchronous flag dedupes rapid load-more triggers from the virtualizer.
+  const loadingMoreRef = useRef(false);
 
   // Listen for entity changes from server
   const entitiesVersion = useEntitiesVersion();
@@ -310,48 +448,86 @@ export function CharactersPage() {
     fetchEntities();
   }, [entitiesVersion]);
 
-  // Fetch items when selection, filters, or entities change
+  // Build search request body shared by initial fetch and load-more
+  const buildSearchRequest = useCallback(
+    (offset: number) => {
+      const hasModeFilter =
+        hardcoreFilter !== undefined ||
+        expansionFilter !== undefined ||
+        ladderFilter !== undefined;
+
+      return create(SearchItemsRequestSchema, {
+        entityPath: selectedPath ?? "",
+        query: debouncedSearch,
+        modeFilter: hasModeFilter
+          ? create(ModeFilterSchema, {
+              hardcore: hardcoreFilter,
+              expansion: expansionFilter,
+              ladder: ladderFilter,
+            })
+          : undefined,
+        offset,
+        limit: PAGE_SIZE,
+      });
+    },
+    [
+      selectedPath,
+      debouncedSearch,
+      hardcoreFilter,
+      expansionFilter,
+      ladderFilter,
+    ],
+  );
+
+  // Reset and fetch first page when filters or entities change
   useEffect(() => {
-    async function fetchItems() {
+    const token = ++fetchTokenRef.current;
+    // Clear any in-flight load-more flag so a stuck guard from an earlier
+    // filter doesn't block fresh load-mores on the new dataset.
+    loadingMoreRef.current = false;
+    async function fetchFirstPage() {
       setLoadingItems(true);
       try {
-        const hasModeFilter =
-          hardcoreFilter !== undefined ||
-          expansionFilter !== undefined ||
-          ladderFilter !== undefined;
-
-        const request = create(SearchItemsRequestSchema, {
-          entityPath: selectedPath ?? "",
-          query: debouncedSearch,
-          modeFilter: hasModeFilter
-            ? create(ModeFilterSchema, {
-                hardcore: hardcoreFilter,
-                expansion: expansionFilter,
-                ladder: ladderFilter,
-              })
-            : undefined,
-        });
-
-        const response = await itemClient.search(request);
+        const response = await itemClient.search(buildSearchRequest(0));
+        if (fetchTokenRef.current !== token) return;
         setItems(response.items);
-        setTotalCount(response.items.length);
+        setTotalCount(response.total);
       } catch (error) {
+        if (fetchTokenRef.current !== token) return;
         console.error("Failed to fetch items:", error);
         setItems([]);
         setTotalCount(0);
       } finally {
-        setLoadingItems(false);
+        if (fetchTokenRef.current === token) {
+          setLoadingItems(false);
+        }
       }
     }
-    fetchItems();
-  }, [
-    selectedPath,
-    debouncedSearch,
-    hardcoreFilter,
-    expansionFilter,
-    ladderFilter,
-    entitiesVersion,
-  ]);
+    fetchFirstPage();
+  }, [buildSearchRequest, entitiesVersion]);
+
+  // Append next page when virtualizer requests more
+  const handleLoadMore = useCallback(async () => {
+    // Sync ref guards against rapid re-triggers before React commits state.
+    if (loadingMoreRef.current || loadingItems) return;
+    loadingMoreRef.current = true;
+    const currentToken = fetchTokenRef.current;
+    try {
+      const response = await itemClient.search(
+        buildSearchRequest(items.length),
+      );
+      if (fetchTokenRef.current !== currentToken) return;
+      setItems((prev) => [...prev, ...response.items]);
+    } catch (error) {
+      console.error("Failed to load more items:", error);
+    } finally {
+      if (fetchTokenRef.current === currentToken) {
+        loadingMoreRef.current = false;
+      }
+    }
+  }, [buildSearchRequest, items.length, loadingItems]);
+
+  const hasMore = items.length < totalCount;
 
   // Get title based on selection
   const pageTitle = useMemo(() => {
@@ -438,11 +614,11 @@ export function CharactersPage() {
       {loadingItems ? (
         <LoadingSpinner />
       ) : items.length > 0 ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {items.map((item, index) => (
-            <ItemCard key={`${item.code}-${item.name}-${index}`} item={item} />
-          ))}
-        </div>
+        <VirtualItemsGrid
+          items={items}
+          hasMore={hasMore}
+          onLoadMore={handleLoadMore}
+        />
       ) : (
         <EmptyState
           icon={CubeIcon}

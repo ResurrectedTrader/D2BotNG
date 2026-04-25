@@ -37,10 +37,10 @@ public class ItemServiceImpl : ItemService.ItemServiceBase
             modeFilter = request.ModeFilter;
         }
 
-        var items = _itemRepository.Search(entityPath, query, modeFilter);
+        var result = _itemRepository.SearchPaged(entityPath, query, modeFilter, request.Offset, request.Limit);
 
-        var response = new SearchItemsResponse();
-        response.Items.AddRange(items);
+        var response = new SearchItemsResponse { Total = result.Total };
+        response.Items.AddRange(result.Items);
 
         return Task.FromResult(response);
     }

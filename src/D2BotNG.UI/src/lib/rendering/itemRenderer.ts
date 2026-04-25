@@ -132,16 +132,15 @@ export async function renderItemToCanvas(
 }
 
 /**
- * Renders an item sprite to a data URL
- * Uses grid-based sizing for consistent dimensions with socketed rendering
+ * Renders an item sprite to an ImageBitmap (GPU-resident, no PNG string overhead).
+ * Uses grid-based sizing for consistent dimensions with socketed rendering.
  */
-export async function renderItemToDataUrl(
+export async function renderItemToBitmap(
   code: string,
   options: RenderOptions = {},
-): Promise<string> {
+): Promise<ImageBitmap> {
   const imageData = await renderItemSprite(code, options);
 
-  // Use grid-based sizing for consistent dimensions
   const gridSize = calculateGridSize(imageData.width, imageData.height);
   const width = gridSize.x * 30 - 1;
   const height = gridSize.y * 30 - 1;
@@ -155,11 +154,10 @@ export async function renderItemToDataUrl(
     throw new Error("Could not get canvas context");
   }
 
-  // Center the sprite in the grid-based canvas
   const itemX = Math.floor((width - imageData.width) / 2);
   const itemY = Math.floor((height - imageData.height) / 2);
   ctx.putImageData(imageData, itemX, itemY);
-  return canvas.toDataURL("image/png");
+  return await createImageBitmap(canvas);
 }
 
 /**
@@ -341,42 +339,35 @@ function getSocketPositions(
 }
 
 /**
- * Renders an item with sockets to a data URL
+ * Renders an item with sockets to an ImageBitmap.
  */
-export async function renderItemWithSocketsToDataUrl(
+export async function renderItemWithSocketsToBitmap(
   code: string,
   options: RenderOptions = {},
-): Promise<string> {
+): Promise<ImageBitmap> {
   const { colorShift = -1, ethereal = false, sockets = [] } = options;
 
-  // Ensure palette is loaded
   await loadPaletteData();
 
-  // Get base item frame info
   const dc6Data = await getDc6Data(code);
   const frame = decodeFirstFrame(dc6Data);
   const gridSize = calculateGridSize(frame.width, frame.height);
 
-  // Calculate canvas size based on grid
   const width = gridSize.x * 30 - 1;
   const height = gridSize.y * 30 - 1;
 
-  // Create canvas
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext("2d")!;
 
-  // Clear to transparent
   ctx.clearRect(0, 0, width, height);
 
-  // Render base item centered
   const baseImageData = await renderItemSprite(code, { colorShift, ethereal });
   const itemX = Math.floor((width - baseImageData.width) / 2);
   const itemY = Math.floor((height - baseImageData.height) / 2);
   ctx.putImageData(baseImageData, itemX, itemY);
 
-  // Render sockets if present
   if (sockets.length > 0) {
     const positions = getSocketPositions(sockets.length, gridSize, itemX);
 
@@ -384,21 +375,18 @@ export async function renderItemWithSocketsToDataUrl(
       const socket = sockets[i];
       const pos = positions[i];
 
-      // Render socket item (empty sockets use 'gemsocket' code)
       const isEmptySocket = socket.code === "gemsocket";
       const socketImageData = await renderItemSprite(socket.code, {
         colorShift: socket.itemColor,
-        ethereal: isEmptySocket, // Empty sockets are semi-transparent
+        ethereal: isEmptySocket,
       });
 
-      // Create temp canvas for the socket to preserve alpha compositing
       const socketCanvas = document.createElement("canvas");
       socketCanvas.width = socketImageData.width;
       socketCanvas.height = socketImageData.height;
       const socketCtx = socketCanvas.getContext("2d")!;
       socketCtx.putImageData(socketImageData, 0, 0);
 
-      // Adjust position for empty sockets
       const drawX = isEmptySocket ? pos.x - 1 : pos.x;
       const drawY = isEmptySocket ? pos.y + 1 : pos.y;
 
@@ -406,5 +394,5 @@ export async function renderItemWithSocketsToDataUrl(
     }
   }
 
-  return canvas.toDataURL("image/png");
+  return await createImageBitmap(canvas);
 }

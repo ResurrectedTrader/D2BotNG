@@ -46,10 +46,13 @@ message SearchItemsRequest {
   string entity_path = 1;      // Path to search in (empty = root/all)
   string query = 2;            // Search query (regex on name/description)
   ModeFilter mode_filter = 3;  // Optional game mode filter
+  int32 offset = 4;            // Pagination offset (default 0)
+  int32 limit = 5;             // Pagination limit (0 = no limit)
 }
 
 message SearchItemsResponse {
   repeated Item items = 1;
+  int32 total = 2;             // Total matching items (for pagination UI)
 }
 
 message Item {

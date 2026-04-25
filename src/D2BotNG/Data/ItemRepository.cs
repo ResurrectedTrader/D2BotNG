@@ -93,17 +93,27 @@ public class ItemRepository : IDisposable
         return result.OrderBy(e => e.Path).ToList();
     }
 
+    public record PagedSearchResult(IReadOnlyList<Item> Items, int Total);
+
     /// <summary>
-    /// Search items within the specified entity path.
+    /// Search items with pagination. Total reflects the full match count
+    /// before applying offset/limit.
     /// </summary>
-    public IReadOnlyList<Item> Search(
+    public PagedSearchResult SearchPaged(
         string? entityPath,
         string? query,
-        ModeFilter? modeFilter)
+        ModeFilter? modeFilter,
+        int offset,
+        int limit)
     {
-        return SearchWithContext(entityPath, query, modeFilter)
-            .Select(r => r.Item)
-            .ToList();
+        var clampedOffset = Math.Max(0, offset);
+        var clampedLimit = Math.Max(0, limit);
+        var all = SearchWithContext(entityPath, query, modeFilter);
+        var total = all.Count;
+        var skipped = clampedOffset > 0 ? all.Skip(clampedOffset) : all;
+        var taken = clampedLimit > 0 ? skipped.Take(clampedLimit) : skipped;
+        var page = taken.Select(r => r.Item).ToList();
+        return new PagedSearchResult(page, total);
     }
 
     /// <summary>
@@ -130,7 +140,10 @@ public class ItemRepository : IDisposable
             }
         }
 
-        foreach (var (path, entity) in _entities)
+        // Iterate in path order: ConcurrentDictionary enumeration is not
+        // order-stable, and pagination requires reproducible ordering so that
+        // sort ties resolve to the same items across page fetches.
+        foreach (var (path, entity) in _entities.OrderBy(kvp => kvp.Key, StringComparer.Ordinal))
         {
             // Filter by entity path prefix
             if (!string.IsNullOrEmpty(entityPath) && !path.StartsWith(entityPath, StringComparison.OrdinalIgnoreCase))

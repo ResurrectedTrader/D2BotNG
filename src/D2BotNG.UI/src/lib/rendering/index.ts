@@ -8,13 +8,14 @@ export {
 export {
   renderItemSprite,
   renderItemToCanvas,
-  renderItemToDataUrl,
-  renderItemWithSocketsToDataUrl,
+  renderItemToBitmap,
+  renderItemWithSocketsToBitmap,
   getItemFrameInfo,
   preloadItems,
   clearCache,
   type RenderOptions,
 } from "./itemRenderer";
+export { clearSpriteCache } from "./spriteCache";
 export {
   D2Colors,
   TextColors,

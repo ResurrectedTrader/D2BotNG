@@ -4,10 +4,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  renderItemToDataUrl,
-  renderItemWithSocketsToDataUrl,
+  renderItemToBitmap,
+  renderItemWithSocketsToBitmap,
   type RenderOptions,
 } from "./itemRenderer";
+import { getCachedSprite, makeSpriteKey } from "./spriteCache";
 
 export interface UseItemSpriteOptions extends RenderOptions {
   /** Whether to skip loading (for conditional rendering) */
@@ -15,8 +16,8 @@ export interface UseItemSpriteOptions extends RenderOptions {
 }
 
 export interface UseItemSpriteResult {
-  /** Data URL of the rendered sprite, or null if loading/error */
-  dataUrl: string | null;
+  /** Cached bitmap for the rendered sprite, or null if loading/error */
+  bitmap: ImageBitmap | null;
   /** Whether the sprite is currently loading */
   loading: boolean;
   /** Error message if loading failed */
@@ -24,7 +25,8 @@ export interface UseItemSpriteResult {
 }
 
 /**
- * Hook to render an item sprite and return it as a data URL
+ * Hook to render an item sprite and return its cached ImageBitmap.
+ * Bitmaps are owned by the global LRU sprite cache; do not call .close() on them.
  */
 export function useItemSprite(
   code: string | null | undefined,
@@ -38,11 +40,10 @@ export function useItemSprite(
     sockets,
   } = options;
 
-  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [bitmap, setBitmap] = useState<ImageBitmap | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Memoize sockets to avoid unnecessary re-renders
   const socketsKey = useMemo(
     () => sockets?.map((s) => `${s.code}:${s.itemColor}`).join(",") ?? "",
     [sockets],
@@ -50,7 +51,7 @@ export function useItemSprite(
 
   useEffect(() => {
     if (!code || skip) {
-      setDataUrl(null);
+      setBitmap(null);
       setLoading(false);
       setError(null);
       return;
@@ -59,21 +60,32 @@ export function useItemSprite(
     let cancelled = false;
     setLoading(true);
     setError(null);
-    // Don't clear dataUrl - keep showing previous image while loading
+    // Don't clear bitmap - keep showing previous image while loading
 
-    const renderFn =
+    const hasBackground = backgroundColor !== null;
+    const key = makeSpriteKey(
+      code,
+      colorShift,
+      ethereal,
+      hasBackground,
+      socketsKey,
+    );
+
+    const factory =
       sockets && sockets.length > 0
-        ? renderItemWithSocketsToDataUrl(code, {
-            colorShift,
-            ethereal,
-            sockets,
-          })
-        : renderItemToDataUrl(code, { colorShift, ethereal, backgroundColor });
+        ? () =>
+            renderItemWithSocketsToBitmap(code, {
+              colorShift,
+              ethereal,
+              sockets,
+            })
+        : () =>
+            renderItemToBitmap(code, { colorShift, ethereal, backgroundColor });
 
-    renderFn
-      .then((url) => {
+    getCachedSprite(key, factory)
+      .then((bmp) => {
         if (!cancelled) {
-          setDataUrl(url);
+          setBitmap(bmp);
           setLoading(false);
         }
       })
@@ -89,7 +101,10 @@ export function useItemSprite(
     return () => {
       cancelled = true;
     };
-  }, [code, skip, colorShift, ethereal, backgroundColor, sockets, socketsKey]);
+    // socketsKey is the content hash for `sockets`; including the array itself
+    // would re-fire the effect on every parent render (fresh array reference).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, skip, colorShift, ethereal, backgroundColor, socketsKey]);
 
-  return { dataUrl, loading, error };
+  return { bitmap, loading, error };
 }
