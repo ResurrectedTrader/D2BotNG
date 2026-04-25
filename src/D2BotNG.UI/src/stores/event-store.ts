@@ -60,9 +60,6 @@ interface EventState {
   // Schedules (Map by ID)
   schedules: Map<string, Schedule>;
 
-  // Items (array)
-  items: Item[];
-
   // Entity version - increments when item entities change (for cache invalidation)
   entitiesVersion: number;
 
@@ -94,7 +91,6 @@ export const useEventStore = create<EventState>((set, get) => ({
   profiles: new Map(),
   keyLists: new Map(),
   schedules: new Map(),
-  items: [],
   entitiesVersion: 0,
   settings: null,
   updateStatus: null,
@@ -246,7 +242,6 @@ export const useEventStore = create<EventState>((set, get) => ({
       profiles: new Map(),
       keyLists: new Map(),
       schedules: new Map(),
-      items: [],
       entitiesVersion: 0,
       settings: null,
       updateStatus: null,
@@ -342,11 +337,6 @@ export function useIsConnected(): boolean {
 /** Check if initial data has been loaded */
 export function useIsLoading(): boolean {
   return useEventStore((state) => !state.hasReceivedInitialData);
-}
-
-/** Get all items (memoized with shallow equality) */
-export function useItems(): Item[] {
-  return useEventStore(useShallow((state) => state.items));
 }
 
 /** Get all log level entries (memoized with shallow equality) */

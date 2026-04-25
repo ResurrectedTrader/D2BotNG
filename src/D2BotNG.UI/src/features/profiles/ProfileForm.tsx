@@ -52,7 +52,7 @@ const realmOptions = [
 // Difficulty options for select
 const difficultyOptions = [
   { value: String(Difficulty.HIGHEST), label: "Highest" },
-  { value: String(Difficulty.HIGHEST), label: "Hell" },
+  { value: String(Difficulty.HELL), label: "Hell" },
   { value: String(Difficulty.NIGHTMARE), label: "Nightmare" },
   { value: String(Difficulty.NORMAL), label: "Normal" },
 ];

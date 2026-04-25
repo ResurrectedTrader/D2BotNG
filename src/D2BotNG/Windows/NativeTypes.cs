@@ -136,7 +136,6 @@ public static class NativeTypes
     // SendMessageTimeout flags (UINT)
     public const uint SMTO_NORMAL = 0x0000;
     public const uint SMTO_ABORTIFHUNG = 0x0002;
-    public const uint SMTO_NOTIMEOUTIFNOTHUNG = 0x0008;
 
     // Hit test values (int - LRESULT cast to int)
     public const int HTCAPTION = 2;
@@ -151,9 +150,6 @@ public static class NativeTypes
 
     // Special window handles
     public static readonly nint HWND_MESSAGE = -3;
-
-    // Wait constants
-    public const uint INFINITE = 0xFFFFFFFF;
 
     // Job Object constants
     public const int JobObjectExtendedLimitInformation = 9;

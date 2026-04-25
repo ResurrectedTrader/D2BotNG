@@ -161,10 +161,6 @@ public class MainForm : Form
                     ToggleMaximize();
                     break;
 
-                case "close":
-                    Close();
-                    break;
-
                 case "minimizeToTray":
                     MinimizeToTray();
                     break;

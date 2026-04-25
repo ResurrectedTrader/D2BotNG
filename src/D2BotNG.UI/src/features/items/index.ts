@@ -4,9 +4,6 @@
  * Re-exports all items feature components and utilities.
  */
 
-// Main page component
-export { ItemsPage } from "./ItemsPage";
-
 // Item display components
 export { ItemCard } from "./ItemCard";
 export type { ItemCardProps } from "./ItemCard";

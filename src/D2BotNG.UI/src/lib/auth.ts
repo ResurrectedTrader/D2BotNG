@@ -36,8 +36,6 @@ interface AuthState {
   setPassword: (password: string | null) => void;
   /** Mark that auth is required (triggers prompt) */
   requireAuth: () => void;
-  /** Clear the auth required flag */
-  clearAuthRequired: () => void;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -48,7 +46,6 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ password, authRequired: false });
   },
   requireAuth: () => set({ authRequired: true }),
-  clearAuthRequired: () => set({ authRequired: false }),
 }));
 
 /** Get current password (for use outside React components) */
