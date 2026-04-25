@@ -24,6 +24,7 @@ import {
   type MessageEntry,
 } from "@/stores/event-store";
 import { useClearConsole } from "@/hooks/useClearConsole";
+import { formatDateTimeParts } from "@/lib/format";
 
 const STORAGE_KEY = "d2bot-console-height";
 const STORAGE_COLLAPSED_KEY = "d2bot-console-collapsed";
@@ -102,17 +103,6 @@ export function ConsolePanel() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Format timestamp for filtering (same format as ConsoleOutput)
-  const formatTimestamp = (timestamp: Date): string => {
-    const year = timestamp.getFullYear();
-    const month = String(timestamp.getMonth() + 1).padStart(2, "0");
-    const day = String(timestamp.getDate()).padStart(2, "0");
-    const hours = String(timestamp.getHours()).padStart(2, "0");
-    const minutes = String(timestamp.getMinutes()).padStart(2, "0");
-    const seconds = String(timestamp.getSeconds()).padStart(2, "0");
-    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-  };
-
   // Build messages based on source selection and regex filter
   const { messages, filterError } = useMemo(() => {
     let filtered: MessageEntryWithLabel[];
@@ -139,11 +129,11 @@ export function ConsolePanel() {
       try {
         const regex = new RegExp(filter, "i");
         filtered = filtered.filter((msg) => {
-          const timestamp = formatTimestamp(msg.timestamp);
+          const { date, time } = formatDateTimeParts(msg.timestamp);
           return (
             regex.test(msg.content) ||
             regex.test(msg.source) ||
-            regex.test(timestamp)
+            regex.test(`${date} ${time}`)
           );
         });
       } catch {

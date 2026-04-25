@@ -39,7 +39,7 @@ src/
       lib/               # gRPC client, auth, DC6 rendering pipeline
         rendering/       # dc6Decoder, paletteManager, itemRenderer, colors
       generated/         # Auto-generated protobuf types (buf generate)
-Resources/               # DC6 sprites, palettes (pal.dat, Pal.PL2), fonts
+Resources/               # DC6 sprites, palettes (pal.dat)
 docs/plans/              # Design docs and implementation plans
 reference/               # Reference D2Bot implementation for parity
 ```

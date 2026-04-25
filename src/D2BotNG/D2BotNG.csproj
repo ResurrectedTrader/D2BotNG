@@ -34,7 +34,6 @@
     <EmbeddedResource Include="..\..\Resources\*.dc6" LinkBase="wwwroot\assets\rendering\dc6" />
     <EmbeddedResource Include="..\..\Resources\*.dat" LinkBase="wwwroot\assets\rendering" />
     <EmbeddedResource Include="..\..\Resources\*.png" LinkBase="wwwroot\assets\rendering" />
-    <EmbeddedResource Include="..\..\Resources\*.PL2" LinkBase="wwwroot\assets\rendering" />
   </ItemGroup>
 
   <ItemGroup>

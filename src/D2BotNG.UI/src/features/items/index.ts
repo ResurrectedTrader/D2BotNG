@@ -13,6 +13,3 @@ export type { ItemImageProps } from "./ItemImage";
 
 export { ItemTooltip, ItemTooltipContent } from "./ItemTooltip";
 export type { ItemTooltipProps } from "./ItemTooltip";
-
-// Utility functions
-export { formatTimestamp } from "./item-utils";

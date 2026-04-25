@@ -15,6 +15,7 @@ import { MessageColor } from "@/generated/events_pb";
 import type { Item } from "@/generated/items_pb";
 import type { MessageEntry } from "@/stores/event-store";
 import { ItemTooltipContent } from "@/features/items";
+import { formatDateTimeParts } from "@/lib/format";
 
 /** Message entry with optional source label for display */
 export type MessageEntryWithLabel = MessageEntry & {
@@ -43,22 +44,6 @@ const messageColorClasses: Record<MessageColor, string> = {
   [MessageColor.COLOR_RED]: "text-red-400",
   [MessageColor.COLOR_GRAY]: "text-zinc-500",
 };
-
-/**
- * Format a Date for display - returns date and time parts separately
- */
-function formatTimestamp(timestamp: Date): { date: string; time: string } {
-  const year = timestamp.getFullYear();
-  const month = String(timestamp.getMonth() + 1).padStart(2, "0");
-  const day = String(timestamp.getDate()).padStart(2, "0");
-  const hours = String(timestamp.getHours()).padStart(2, "0");
-  const minutes = String(timestamp.getMinutes()).padStart(2, "0");
-  const seconds = String(timestamp.getSeconds()).padStart(2, "0");
-  return {
-    date: `${year}-${month}-${day}`,
-    time: `${hours}:${minutes}:${seconds}`,
-  };
-}
 
 /**
  * URL regex pattern for detecting hyperlinks
@@ -172,7 +157,7 @@ const ConsoleRow = memo(function ConsoleRow({
   const colorClass =
     messageColorClasses[entry.color] ||
     messageColorClasses[MessageColor.COLOR_DEFAULT];
-  const { date, time } = formatTimestamp(entry.timestamp);
+  const { date, time } = formatDateTimeParts(entry.timestamp);
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(
     null,
   );

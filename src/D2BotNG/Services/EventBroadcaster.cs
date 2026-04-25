@@ -59,10 +59,7 @@ public class EventBroadcaster
         }
     }
 
-    /// <summary>
-    /// Get the channel reader for a specific client.
-    /// </summary>
-    public ChannelReader<Event>? GetReader(string clientId)
+    private ChannelReader<Event>? GetReader(string clientId)
     {
         return _clients.TryGetValue(clientId, out var channel) ? channel.Reader : null;
     }
