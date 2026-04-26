@@ -115,7 +115,16 @@ public class MainForm : Form
 
         try
         {
-            await _webView.EnsureCoreWebView2Async();
+            // Place WebView2's user data (cache, cookies, IndexedDB, crash dumps) under
+            // %LOCALAPPDATA%\D2BotNG\WebView2 instead of next to the exe (which is the
+            // default and litters the install directory with a *.exe.WebView2 folder).
+            var userDataFolder = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "D2BotNG",
+                "WebView2");
+            Directory.CreateDirectory(userDataFolder);
+            var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder, null);
+            await _webView.EnsureCoreWebView2Async(env);
 
             // Configure WebView2
             _webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
