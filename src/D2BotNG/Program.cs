@@ -1,3 +1,4 @@
+using System.Net.Sockets;
 using D2BotNG.Data;
 using D2BotNG.Engine;
 using D2BotNG.Legacy.Api;
@@ -129,12 +130,23 @@ internal static class Program
             if (startTask.IsFaulted)
             {
                 var innerEx = startTask.Exception!.GetBaseException();
-                if (innerEx.Message.Contains("address already in use", StringComparison.OrdinalIgnoreCase))
+                // AddressAlreadyInUse (10048) = another non-exclusive binder.
+                // AccessDenied        (10013) = port held with SO_EXCLUSIVEADDRUSE,
+                //                               or excluded by Windows reserved ranges.
+                // Both surface to the user as "this port isn't available".
+                var isPortConflict = innerEx is SocketException se &&
+                    (se.SocketErrorCode == SocketError.AddressAlreadyInUse ||
+                     se.SocketErrorCode == SocketError.AccessDenied);
+                if (isPortConflict)
                 {
+                    var settingsPath = Path.Combine(AppContext.BaseDirectory, "d2botng.json");
                     throw new Exception(
                         $"Could not start server on {serverUrl} because the port is already in use.\n\n" +
                         "Another instance of D2BotNG may already be running, or another application is using this port.\n\n" +
-                        "Close the other application or change the port in d2botng.json.",
+                        "To fix this, either close the other application, or change the port D2BotNG uses " +
+                        $"by opening this file in a text editor:\n{settingsPath}\n" +
+                        "and changing the \"server.port\" value to a different number (e.g., 5001).\n\n" +
+                        "Then launch D2BotNG again.",
                         innerEx);
                 }
                 throw startTask.Exception.GetBaseException();
@@ -172,18 +184,33 @@ internal static class Program
 
     private static bool WaitForServerReady(string url, Task serverTask, TimeSpan timeout)
     {
-        using var client = new HttpClient();
-        client.Timeout = TimeSpan.FromSeconds(2);
         var deadline = DateTime.UtcNow + timeout;
 
+        // Phase 1: wait for our own host to finish starting. Without this, an HTTP
+        // probe could succeed against ANOTHER process bound to the same port —
+        // which would make a second instance silently believe its bind succeeded.
         while (DateTime.UtcNow < deadline)
         {
-            // If the server task has faulted, stop waiting immediately
             if (serverTask.IsFaulted)
             {
                 return false;
             }
+            if (serverTask.IsCompletedSuccessfully)
+            {
+                break;
+            }
+            Thread.Sleep(50);
+        }
+        if (!serverTask.IsCompletedSuccessfully)
+        {
+            return false;
+        }
 
+        // Phase 2: confirm the HTTP endpoint is actually responding.
+        using var client = new HttpClient();
+        client.Timeout = TimeSpan.FromSeconds(2);
+        while (DateTime.UtcNow < deadline)
+        {
             try
             {
                 var response = client.GetAsync(url).GetAwaiter().GetResult();
@@ -194,12 +221,10 @@ internal static class Program
             }
             catch (Exception)
             {
-                // Server not ready yet, keep trying
+                // Server not accepting yet, keep trying
             }
-
             Thread.Sleep(100);
         }
-
         return false;
     }
 
