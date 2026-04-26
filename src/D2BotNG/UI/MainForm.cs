@@ -123,7 +123,7 @@ public class MainForm : Form
                 "D2BotNG",
                 "WebView2");
             Directory.CreateDirectory(userDataFolder);
-            var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder, null);
+            var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
             await _webView.EnsureCoreWebView2Async(env);
 
             // Configure WebView2
