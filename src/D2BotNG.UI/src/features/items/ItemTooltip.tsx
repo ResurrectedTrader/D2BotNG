@@ -21,7 +21,11 @@ import type { Item } from "@/generated/items_pb";
 import { ItemFont } from "@/generated/settings_pb";
 import { useSettings } from "@/stores/event-store";
 import { ItemSprite } from "@/lib/rendering";
-import { parseD2ColoredText, stripD2ColorCodes } from "./item-utils";
+import {
+  isEthereal,
+  parseD2ColoredText,
+  stripD2ColorCodes,
+} from "./item-utils";
 
 /** Maps ItemFont enum to CSS font family strings */
 const fontFamilyMap: Record<ItemFont, string> = {
@@ -120,30 +124,39 @@ export const ItemTooltipContent = memo(function ItemTooltipContent({
         </div>
       )}
 
-      {/* Item name */}
-      <div className="text-center text-lg font-semibold text-zinc-100">
-        {item.name}
-      </div>
+      {/* Item name — only when there's no description. The description is the
+          full game tooltip and already leads with the name, so showing the title
+          too would duplicate it. */}
+      {descriptionLines.length === 0 && (
+        <div className="text-center text-lg font-semibold text-zinc-100">
+          {item.name}
+        </div>
+      )}
 
-      {/* Item sprite */}
+      {/* Item sprite (with sockets overlaid) */}
       {showSprite && (
         <div className="mt-2 flex justify-center">
           <ItemSprite
             code={item.code}
             colorShift={item.itemColor}
-            ethereal={
-              item.description?.includes("Ethereal") ||
-              item.description?.includes(":eth")
-            }
+            invTrans={item.invTrans}
+            ethereal={isEthereal(item)}
             sockets={item.sockets}
             alt={item.name}
           />
         </div>
       )}
 
-      {/* Item description with D2 color codes */}
+      {/* Item description with D2 color codes. The horizontal separator only
+          divides the description from the sprite above, so drop it (and the
+          divider padding) when the sprite is hidden. */}
       {descriptionLines.length > 0 && (
-        <div className="mt-2 border-t border-zinc-700 pt-2">
+        <div
+          className={clsx(
+            "mt-2",
+            showSprite && "border-t border-zinc-700 pt-2",
+          )}
+        >
           {descriptionLines.map((line, i) => (
             <ColoredDescriptionLine key={i} text={line} />
           ))}

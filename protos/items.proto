@@ -74,6 +74,17 @@ message Item {
   int32 item_color = 5;
   int32 text_color = 6;
   repeated Item sockets = 7;
+
+  // Character-viewer fields (zero/unset for mule-file items)
+  int32 location = 8;    // game storage/location code
+  int32 x = 9;           // grid column; equip-location id for slot containers (equipped/merc)
+  int32 y = 10;          // grid row (0 for slot containers)
+  int32 width = 11;      // size in cells
+  int32 height = 12;     // size in cells
+  bool ethereal = 13;    // explicit (mule items still infer from description)
+  int32 quality = 14;    // optional quality enum
+  uint32 gid = 15;       // game-session unit id
+  int32 inv_trans = 16;  // base item's InvTrans palette group; 0/3/4/>=9 = no inventory tint
 }
 
 message RemoveItemRequest {

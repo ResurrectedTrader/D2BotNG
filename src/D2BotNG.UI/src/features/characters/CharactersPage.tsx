@@ -10,7 +10,7 @@ import { create } from "@bufbuild/protobuf";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { EmptyState, LoadingSpinner } from "@/components/ui";
 import { itemClient } from "@/lib/grpc-client";
-import { useEntitiesVersion } from "@/stores/event-store";
+import { useCharacters, useEntitiesVersion } from "@/stores/event-store";
 import {
   ListEntitiesRequestSchema,
   SearchItemsRequestSchema,
@@ -28,6 +28,8 @@ import {
   CheckIcon,
 } from "@heroicons/react/24/outline";
 import clsx from "clsx";
+import { TabGroup, TabList, Tab, TabPanels, TabPanel } from "@headlessui/react";
+import { CharacterViewer } from "./viewer/CharacterViewer";
 
 const PAGE_SIZE = 200;
 
@@ -403,6 +405,40 @@ function ModeToggle({ label, value, onChange, activeColor }: ModeToggleProps) {
 }
 
 export function CharactersPage() {
+  const characters = useCharacters();
+
+  // With no live character state, the Character tab is just an empty state — so
+  // drop the tab chrome and show the mule-logged items browser as the whole page.
+  if (characters.length === 0) {
+    return <MuleItemsBrowser />;
+  }
+
+  return (
+    <div className="space-y-4">
+      <h1 className="text-lg font-bold text-zinc-100">Characters</h1>
+      <TabGroup>
+        <TabList className="flex gap-1 border-b border-zinc-700">
+          <Tab className="px-4 py-2 text-sm font-medium text-zinc-400 outline-none transition-colors hover:text-zinc-200 data-[selected]:border-b-2 data-[selected]:border-d2-gold data-[selected]:text-zinc-100">
+            Character
+          </Tab>
+          <Tab className="px-4 py-2 text-sm font-medium text-zinc-400 outline-none transition-colors hover:text-zinc-200 data-[selected]:border-b-2 data-[selected]:border-d2-gold data-[selected]:text-zinc-100">
+            Mule logged items
+          </Tab>
+        </TabList>
+        <TabPanels className="mt-4">
+          <TabPanel>
+            <CharacterViewer />
+          </TabPanel>
+          <TabPanel>
+            <MuleItemsBrowser />
+          </TabPanel>
+        </TabPanels>
+      </TabGroup>
+    </div>
+  );
+}
+
+function MuleItemsBrowser() {
   // Entity state
   const [entities, setEntities] = useState<Entity[]>([]);
   const [loadingEntities, setLoadingEntities] = useState(true);

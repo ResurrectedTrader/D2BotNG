@@ -35,6 +35,7 @@ export function useItemSprite(
   const {
     skip = false,
     colorShift = -1,
+    invTrans = 0,
     ethereal = false,
     backgroundColor = null,
     sockets,
@@ -45,7 +46,10 @@ export function useItemSprite(
   const [error, setError] = useState<string | null>(null);
 
   const socketsKey = useMemo(
-    () => sockets?.map((s) => `${s.code}:${s.itemColor}`).join(",") ?? "",
+    () =>
+      sockets
+        ?.map((s) => `${s.code}:${s.itemColor}:${s.invTrans ?? 0}`)
+        .join(",") ?? "",
     [sockets],
   );
 
@@ -66,6 +70,7 @@ export function useItemSprite(
     const key = makeSpriteKey(
       code,
       colorShift,
+      invTrans,
       ethereal,
       hasBackground,
       socketsKey,
@@ -76,11 +81,17 @@ export function useItemSprite(
         ? () =>
             renderItemWithSocketsToBitmap(code, {
               colorShift,
+              invTrans,
               ethereal,
               sockets,
             })
         : () =>
-            renderItemToBitmap(code, { colorShift, ethereal, backgroundColor });
+            renderItemToBitmap(code, {
+              colorShift,
+              invTrans,
+              ethereal,
+              backgroundColor,
+            });
 
     getCachedSprite(key, factory)
       .then((bmp) => {
@@ -104,7 +115,7 @@ export function useItemSprite(
     // socketsKey is the content hash for `sockets`; including the array itself
     // would re-fire the effect on every parent render (fresh array reference).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [code, skip, colorShift, ethereal, backgroundColor, socketsKey]);
+  }, [code, skip, colorShift, invTrans, ethereal, backgroundColor, socketsKey]);
 
   return { bitmap, loading, error };
 }

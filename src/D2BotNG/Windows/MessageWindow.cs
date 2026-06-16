@@ -134,8 +134,7 @@ public class MessageWindow : IDisposable
                 data = JsonSerializer.Serialize(new ProfileMessage
                 {
                     Function = "heartBeat"
-                }
-                );
+                });
             }
 
             try

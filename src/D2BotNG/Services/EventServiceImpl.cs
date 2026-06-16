@@ -17,6 +17,7 @@ public class EventServiceImpl : EventService.EventServiceBase
     private readonly UpdateManager _updateManager;
     private readonly MessageService _messageService;
     private readonly LoggerRegistry _loggerRegistry;
+    private readonly CharacterStateService _characterStateService;
 
     public EventServiceImpl(
         ILogger<EventServiceImpl> logger,
@@ -26,7 +27,8 @@ public class EventServiceImpl : EventService.EventServiceBase
         ProfileEngine profileEngine,
         UpdateManager updateManager,
         MessageService messageService,
-        LoggerRegistry loggerRegistry)
+        LoggerRegistry loggerRegistry,
+        CharacterStateService characterStateService)
     {
         _logger = logger;
         _eventBroadcaster = eventBroadcaster;
@@ -36,6 +38,7 @@ public class EventServiceImpl : EventService.EventServiceBase
         _updateManager = updateManager;
         _messageService = messageService;
         _loggerRegistry = loggerRegistry;
+        _characterStateService = characterStateService;
     }
 
     public override async Task StreamEvents(Empty request, IServerStreamWriter<Event> responseStream, ServerCallContext context)
@@ -78,6 +81,13 @@ public class EventServiceImpl : EventService.EventServiceBase
         {
             Timestamp = now,
             ProfilesSnapshot = await _profileEngine.BuildProfilesSnapshotAsync()
+        }, ct);
+
+        // 1b. Characters snapshot (latest live state per profile)
+        await responseStream.WriteAsync(new Event
+        {
+            Timestamp = now,
+            CharactersSnapshot = _characterStateService.GetSnapshot()
         }, ct);
 
         // 2. KeyLists snapshot with usage

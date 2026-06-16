@@ -226,6 +226,27 @@ public abstract class FileRepository<TItem, TList> : IDisposable
         }
     }
 
+    /// <summary>
+    /// Replaces the entire contents with the given items and saves. Used for bulk writes
+    /// (e.g. persisting an in-memory live-state set on a debounce).
+    /// </summary>
+    public async Task ReplaceAllAsync(IEnumerable<TItem> items)
+    {
+        await EnsureLoadedAsync();
+
+        await Lock.WaitAsync();
+        try
+        {
+            _data.Clear();
+            _data.AddRange(items);
+            await SaveAsync();
+        }
+        finally
+        {
+            Lock.Release();
+        }
+    }
+
     public virtual void Dispose()
     {
         Lock.Dispose();

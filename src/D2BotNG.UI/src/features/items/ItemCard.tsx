@@ -15,6 +15,7 @@ import { DeleteConfirmationDialog } from "@/components/ui/DeleteConfirmationDial
 import { ItemImage } from "./ItemImage";
 import { ItemTooltip } from "./ItemTooltip";
 import { useItemContextMenu } from "./useItemContextMenu";
+import { isEthereal } from "./item-utils";
 
 export interface ItemCardProps {
   /** The item to display */
@@ -101,7 +102,7 @@ export const ItemCard = memo(function ItemCard({
       </div>
 
       {/* Item badges */}
-      {(item.sockets.length > 0 || item.description?.includes("Ethereal")) && (
+      {(item.sockets.length > 0 || isEthereal(item)) && (
         <div className="flex flex-shrink-0 flex-col items-center gap-1">
           {/* Socket count indicator */}
           {item.sockets.length > 0 && (
@@ -118,7 +119,7 @@ export const ItemCard = memo(function ItemCard({
           )}
 
           {/* Ethereal indicator */}
-          {item.description?.includes("Ethereal") && (
+          {isEthereal(item) && (
             <div
               className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-900/60 text-xs font-bold text-cyan-300"
               title="Ethereal"

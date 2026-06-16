@@ -246,7 +246,7 @@ public class ItemRenderer
         bool transparent = bgColor == Color.Transparent;
 
         var bitmap = new Bitmap(frame.Width, frame.Height, PixelFormat.Format32bppArgb);
-        var palette = _paletteManager.CreateShiftedPalette(shiftColor);
+        var palette = _paletteManager.CreateShiftedPalette(shiftColor, item.InvTrans);
 
         var bitmapData = bitmap.LockBits(
             new Rectangle(0, 0, bitmap.Width, bitmap.Height),
@@ -381,6 +381,7 @@ public class ItemRenderer
             {
                 Code = socketItem.Code,
                 ItemColor = socketItem.ItemColor,
+                InvTrans = socketItem.InvTrans,
                 Description = ""
             }, Color.Transparent);
 

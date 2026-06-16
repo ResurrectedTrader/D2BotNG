@@ -29,6 +29,7 @@ public class D2BSMessageHandler : BackgroundService
     private readonly ItemRenderer _itemRenderer;
     private readonly Paths _paths;
     private readonly SettingsRepository _settingsRepository;
+    private readonly CharacterStateService _characterStateService;
 
     public D2BSMessageHandler(
         ILogger<D2BSMessageHandler> logger,
@@ -43,7 +44,8 @@ public class D2BSMessageHandler : BackgroundService
         DiscordWebhookService discordWebhookService,
         ItemRenderer itemRenderer,
         Paths paths,
-        SettingsRepository settingsRepository)
+        SettingsRepository settingsRepository,
+        CharacterStateService characterStateService)
     {
         _logger = logger;
         _messageWindow = messageWindow;
@@ -58,6 +60,7 @@ public class D2BSMessageHandler : BackgroundService
         _itemRenderer = itemRenderer;
         _paths = paths;
         _settingsRepository = settingsRepository;
+        _characterStateService = characterStateService;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -126,6 +129,11 @@ public class D2BSMessageHandler : BackgroundService
             case "saveItem":
                 if (args.Length > 0 && !string.IsNullOrEmpty(args[0]))
                     HandleSaveItem(args[0]);
+                break;
+
+            case "characterState":
+                if (args.Length > 0 && !string.IsNullOrEmpty(args[0]))
+                    HandleCharacterState(profile, args[0]);
                 break;
 
             case "postToIRC":
@@ -347,6 +355,20 @@ public class D2BSMessageHandler : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to save item screenshot");
+        }
+    }
+
+    private void HandleCharacterState(Profile profile, string json)
+    {
+        try
+        {
+            var dto = JsonSerializer.Deserialize<CharacterStateDto>(json);
+            if (dto == null) return;
+            _characterStateService.Ingest(profile.Name, dto);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to handle characterState for {Profile}", profile.Name);
         }
     }
 

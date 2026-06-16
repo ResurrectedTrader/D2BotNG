@@ -4,6 +4,8 @@
  * Helper functions for working with D2 items.
  */
 
+import type { Item } from "@/generated/items_pb";
+
 /**
  * D2 text color codes used in item descriptions.
  * These match the reference implementation's TextColors array.
@@ -44,8 +46,13 @@ export function parseD2ColoredText(text: string): ColoredTextSegment[] {
   const segments: ColoredTextSegment[] = [];
   let currentColor = DEFAULT_COLOR;
 
+  // d2bs sends the raw game tooltip, where the color marker is the native byte
+  // U+00FF ("ÿc<code>"); mule files use the escaped "\xffc<code>" form. Normalize
+  // the native form to the escaped one so the single split below handles both.
+  const normalized = text.replace(/ÿc/g, COLOR_PREFIX);
+
   // Split on the color code prefix
-  const parts = text.split(COLOR_PREFIX);
+  const parts = normalized.split(COLOR_PREFIX);
 
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
@@ -87,4 +94,14 @@ export function stripD2ColorCodes(text: string): string {
   return parseD2ColoredText(text)
     .map((s) => s.text)
     .join("");
+}
+
+/**
+ * Whether an item should render as ethereal (semi-transparent). Detected from the
+ * description text — both the raw game tooltip ("Ethereal …") and the mule-file
+ * marker (":eth") — so live character items and logged mule items behave the same.
+ */
+export function isEthereal(item: Item): boolean {
+  const desc = item.description ?? "";
+  return desc.includes("Ethereal") || desc.includes(":eth");
 }

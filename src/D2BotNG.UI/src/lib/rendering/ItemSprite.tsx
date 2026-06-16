@@ -23,6 +23,7 @@ export const ItemSprite = memo(function ItemSprite({
   className,
   alt,
   colorShift,
+  invTrans,
   ethereal,
   backgroundColor,
   sockets,
@@ -30,6 +31,7 @@ export const ItemSprite = memo(function ItemSprite({
 }: ItemSpriteProps) {
   const { bitmap, loading, error } = useItemSprite(code, {
     colorShift,
+    invTrans,
     ethereal,
     backgroundColor,
     sockets,

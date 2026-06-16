@@ -21,11 +21,13 @@ async function getDc6Data(code: string): Promise<ArrayBuffer> {
 
   const response = await fetch(`/assets/rendering/dc6/${key}.dc6`);
   if (!response.ok) {
-    // Return fallback
     if (!fallbackDc6) {
       const response = await fetch("/assets/rendering/dc6/box.dc6");
       fallbackDc6 = await response.arrayBuffer();
     }
+    // Cache the fallback under this code so an unknown sprite doesn't re-fetch
+    // (and re-404) on every cache miss — e.g. hover, eviction, off-screen capture.
+    dc6Cache.set(key, fallbackDc6);
     return fallbackDc6;
   }
   const buffer = await response.arrayBuffer();
@@ -48,12 +50,14 @@ function calculateGridSize(
 export interface RenderOptions {
   /** Item color shift index (-1 for no shift) */
   colorShift?: number;
+  /** Base item's InvTrans palette group (selects the shift table; 0 = no tint) */
+  invTrans?: number;
   /** Whether the item is ethereal (semi-transparent) */
   ethereal?: boolean;
   /** Background color (null for transparent) */
   backgroundColor?: { r: number; g: number; b: number } | null;
-  /** Socketed items to render on top (each needs code and itemColor) */
-  sockets?: Array<{ code: string; itemColor: number }>;
+  /** Socketed items to render on top (each needs code, itemColor, invTrans) */
+  sockets?: Array<{ code: string; itemColor: number; invTrans?: number }>;
 }
 
 /**
@@ -63,7 +67,12 @@ export async function renderItemSprite(
   code: string,
   options: RenderOptions = {},
 ): Promise<ImageData> {
-  const { colorShift = -1, ethereal = false, backgroundColor = null } = options;
+  const {
+    colorShift = -1,
+    invTrans = 0,
+    ethereal = false,
+    backgroundColor = null,
+  } = options;
 
   // Ensure palette is loaded
   await loadPaletteData();
@@ -74,7 +83,7 @@ export async function renderItemSprite(
   const frame = decodeFirstFrame(dc6Data);
 
   // Create shifted palette
-  const palette = paletteManager.createShiftedPalette(colorShift);
+  const palette = paletteManager.createShiftedPalette(colorShift, invTrans);
 
   // Create ImageData
   const imageData = new ImageData(frame.width, frame.height);
@@ -347,7 +356,12 @@ export async function renderItemWithSocketsToBitmap(
   code: string,
   options: RenderOptions = {},
 ): Promise<ImageBitmap> {
-  const { colorShift = -1, ethereal = false, sockets = [] } = options;
+  const {
+    colorShift = -1,
+    invTrans = 0,
+    ethereal = false,
+    sockets = [],
+  } = options;
 
   await loadPaletteData();
 
@@ -365,7 +379,11 @@ export async function renderItemWithSocketsToBitmap(
 
   ctx.clearRect(0, 0, width, height);
 
-  const baseImageData = await renderItemSprite(code, { colorShift, ethereal });
+  const baseImageData = await renderItemSprite(code, {
+    colorShift,
+    invTrans,
+    ethereal,
+  });
   const itemX = Math.floor((width - baseImageData.width) / 2);
   const itemY = Math.floor((height - baseImageData.height) / 2);
   ctx.putImageData(baseImageData, itemX, itemY);
@@ -380,6 +398,7 @@ export async function renderItemWithSocketsToBitmap(
       const isEmptySocket = socket.code === "gemsocket";
       const socketImageData = await renderItemSprite(socket.code, {
         colorShift: socket.itemColor,
+        invTrans: socket.invTrans ?? 0,
       });
 
       const socketCanvas = document.createElement("canvas");

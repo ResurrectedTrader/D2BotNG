@@ -25,3 +25,5 @@ export {
 } from "./itemActions";
 
 export { captureItemTooltipBlob } from "./captureItemImage";
+
+export { isEthereal } from "./item-utils";

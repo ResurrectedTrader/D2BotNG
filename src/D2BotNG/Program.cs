@@ -365,6 +365,7 @@ internal static class Program
         services.AddSingleton<ScheduleRepository>();
         services.AddSingleton<ItemRepository>();
         services.AddSingleton<PatchRepository>();
+        services.AddSingleton<CharacterRepository>();
 
         // Add Windows integration services
         services.AddSingleton<DaclOverwriter>();
@@ -414,12 +415,16 @@ internal static class Program
         // same instance can be resolved by the HandoffManager
         services.AddSingletonWithHandoff<DiscordService>();
 
+        // Character state service (live character snapshots from the bot engine)
+        services.AddSingleton<CharacterStateService>();
+
         // Add hosted services
         services.AddHostedService<EngineHostedService>();
         services.AddHostedService<ErrorDialogWatcher>();
         services.AddHostedService<UpdateCheckBackgroundService>();
         services.AddHostedService<GameDirectoryCleanupService>();
         services.AddHostedService<D2BSMessageHandler>();
+        services.AddHostedService(sp => sp.GetRequiredService<CharacterStateService>());
         services.AddHostedService(sp => sp.GetRequiredService<DiscordService>());
         services.AddHostedService(sp => sp.GetRequiredService<GameActionScheduler>());
 
@@ -462,6 +467,7 @@ internal static class Program
         app.MapGrpcService<UpdateServiceImpl>().EnableGrpcWeb();
         app.MapGrpcService<ItemServiceImpl>().EnableGrpcWeb();
         app.MapGrpcService<LoggingServiceImpl>().EnableGrpcWeb();
+        app.MapGrpcService<CharacterServiceImpl>().EnableGrpcWeb();
 
         // Serve static files - embedded resources by default, file system with --dev-ui flag
         var embeddedProvider = new EmbeddedResourceFileProvider(typeof(Program).Assembly);

@@ -37,6 +37,9 @@ Thumbs.db
 # Generated files
 src/D2BotNG.UI/src/app/generated/
 
+# Local dev/maintenance scripts (machine-specific paths, not for CI)
+/scripts/
+
 # Local runtime data (at root level only)
 /data/
 src/D2BotNG.UI/src/generated/

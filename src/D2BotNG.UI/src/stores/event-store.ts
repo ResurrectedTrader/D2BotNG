@@ -16,6 +16,7 @@ import type { UpdateStatus } from "@/generated/updates_pb";
 import type { Event, KeyUsage, MessageColor } from "@/generated/events_pb";
 import type { LogLevelEntry } from "@/generated/logging_pb";
 import type { Proxy } from "@/generated/proxies_pb";
+import type { Character } from "@/generated/characters_pb";
 
 const MAX_MESSAGES = 10_000;
 
@@ -87,6 +88,9 @@ interface EventState {
   // Log levels (session-only)
   logLevels: LogLevelEntry[];
 
+  // Characters (Map by profile name) - live state from the bot engine
+  characters: Map<string, Character>;
+
   // Actions
   handleEvents: (events: Event[]) => void;
   clearMessages: (source: string) => void;
@@ -109,6 +113,7 @@ export const useEventStore = create<EventState>((set, get) => ({
   messages: [],
   messagesBySource: new Map(),
   logLevels: [],
+  characters: new Map(),
 
   setConnected: (connected) => set({ isConnected: connected }),
 
@@ -127,6 +132,7 @@ export const useEventStore = create<EventState>((set, get) => ({
     let messages = state.messages;
     let messagesBySource = state.messagesBySource;
     let logLevels = state.logLevels;
+    let characters = state.characters;
     let entitiesVersion = state.entitiesVersion;
     let hasReceivedInitialData = state.hasReceivedInitialData;
 
@@ -138,6 +144,7 @@ export const useEventStore = create<EventState>((set, get) => ({
     let updateStatusDirty = false;
     let messagesDirty = false;
     let logLevelsDirty = false;
+    let charactersDirty = false;
     let entitiesVersionDirty = false;
     let hasReceivedInitialDataDirty = false;
 
@@ -275,6 +282,25 @@ export const useEventStore = create<EventState>((set, get) => ({
           logLevelsDirty = true;
           break;
         }
+
+        case "charactersSnapshot": {
+          const m = new Map<string, Character>();
+          for (const c of event.event.value.characters) {
+            m.set(c.profile, c);
+          }
+          characters = m;
+          charactersDirty = true;
+          break;
+        }
+
+        case "characterState": {
+          if (!charactersDirty) {
+            characters = new Map(characters);
+            charactersDirty = true;
+          }
+          characters.set(event.event.value.profile, event.event.value);
+          break;
+        }
       }
     }
 
@@ -307,6 +333,7 @@ export const useEventStore = create<EventState>((set, get) => ({
       update.messagesBySource = messagesBySource;
     }
     if (logLevelsDirty) update.logLevels = logLevels;
+    if (charactersDirty) update.characters = characters;
     if (entitiesVersionDirty) update.entitiesVersion = entitiesVersion;
 
     if (Object.keys(update).length > 0) {
@@ -337,6 +364,7 @@ export const useEventStore = create<EventState>((set, get) => ({
       messages: [],
       messagesBySource: new Map(),
       logLevels: [],
+      characters: new Map(),
     }),
 }));
 
@@ -438,4 +466,16 @@ export function useIsLoading(): boolean {
 /** Get all log level entries (memoized with shallow equality) */
 export function useLogLevels(): LogLevelEntry[] {
   return useEventStore(useShallow((state) => state.logLevels));
+}
+
+/** Get all characters as an array (memoized with shallow equality) */
+export function useCharacters(): Character[] {
+  return useEventStore(
+    useShallow((state) => Array.from(state.characters.values())),
+  );
+}
+
+/** Get a single character by owning profile name */
+export function useCharacter(profile: string): Character | undefined {
+  return useEventStore((state) => state.characters.get(profile));
 }

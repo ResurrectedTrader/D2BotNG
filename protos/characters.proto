@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package d2bot;
+
+option csharp_namespace = "D2BotNG.Core.Protos";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+import "items.proto";
+
+// Character analytics mutations. Character state itself is read-only (delivered via the
+// event stream); this service is for resets/clears.
+service CharacterService {
+  rpc ResetKills(ResetCharacterRequest) returns (google.protobuf.Empty);
+  rpc ResetAreaTime(ResetCharacterRequest) returns (google.protobuf.Empty);
+}
+
+message ResetCharacterRequest {
+  string profile = 1;  // owning profile name
+}
+
+// A container of items: a grid (inventory/stash page/cube/belt) or slot set (equipped).
+message Container {
+  string id = 1;        // "equipped" | "inventory" | "stash" | "cube" | "belt"
+  string name = 2;      // display name (e.g. stash page name)
+  int32 width = 3;      // grid width in cells (0 for slot-based equipped)
+  int32 height = 4;     // grid height in cells
+  int32 page = 5;       // page index for multi-page stash; 0 otherwise
+  repeated Item items = 6;
+}
+
+message CharacterStat {
+  int32 id = 1;         // D2 stat id (e.g. 14 = gold, 13 = experience)
+  int64 value = 2;      // int64: clvl99 experience exceeds int32
+}
+
+// Latest known live state for one profile's character.
+message Character {
+  string profile = 1;   // KEY: owning profile name
+  string account = 2;
+  string realm = 3;
+  string char_name = 4;
+  int32 char_class = 5;  // D2 class id (0 Amazon, 1 Sorceress, ... 6 Assassin)
+  int32 level = 6;
+  EntityMode mode = 7;  // reuse items.proto EntityMode (hardcore/expansion/ladder)
+
+  repeated CharacterStat stats = 8;
+  repeated Container containers = 9;
+
+  string game_id = 10;                            // current game session id
+  google.protobuf.Timestamp updated_at = 11;      // last snapshot received
+  bool online = 12;                               // owning profile currently running
+  int32 area = 13;                                // current area id
+  int32 difficulty = 14;                          // current difficulty: 0 Normal, 1 Nightmare, 2 Hell
+  google.protobuf.Timestamp area_entered_at = 15; // manager-stamped time the current area was entered
+  int32 hand = 16;                                // active weapon set: 0 primary (I), 1 secondary (II)
+  uint32 char_flags = 17;                         // raw D2 character flags (hardcore 0x04, expansion 0x20)
+  repeated SkillLevel skills = 18;                // invested skills (hard + gear-bonus points)
+  DifficultyProgression progression = 19;         // quest/waypoint progression per difficulty
+  MonsterKills kills = 20;                        // lifetime kills (by class+rarity and by super-unique), per difficulty
+  AreaTime area_time = 21;                         // lifetime time spent per area (ms), per difficulty
+}
+
+// Quest/waypoint progression broken out by difficulty. The engine reports only the
+// current difficulty per update; the manager merges to retain the other difficulties.
+message DifficultyProgression {
+  Progression normal = 1;     // difficulty 0
+  Progression nightmare = 2;  // difficulty 1
+  Progression hell = 3;       // difficulty 2
+}
+
+// Quest/waypoint progression for a single difficulty.
+message Progression {
+  repeated int32 quests = 1;    // completed quest ids for this difficulty
+  repeated int32 waypoints = 2; // active waypoint ids for this difficulty
+}
+
+// Lifetime kill counts per difficulty. The engine reports per-game counts (reset each
+// game); the manager accumulates deltas into these lifetime totals.
+message MonsterKills {
+  DifficultyKills normal = 1;     // difficulty 0
+  DifficultyKills nightmare = 2;  // difficulty 1
+  DifficultyKills hell = 3;       // difficulty 2
+}
+
+// Kills for one difficulty: regular monsters (by class id, then by SpecType rarity) and
+// super-uniques (by SuperUniques.txt index). The two buckets are disjoint.
+message DifficultyKills {
+  map<int32, ClassKills> by_class = 1;    // monster class id -> per-rarity counts
+  map<int32, int64> by_super_unique = 2;  // SuperUniques.txt index -> count
+}
+
+// Per-rarity kill counts for one monster class.
+message ClassKills {
+  // SpecType bitfield -> count. Champions (2) also carry the boss/unique bit (4), so a
+  // value of 6 is a champion, 4 alone a unique, 8 a minion, 0 normal. The UI classifies
+  // by priority (champion over the bare unique bit) into one mutually-exclusive rarity.
+  map<int32, int64> by_spec = 1;
+}
+
+// Lifetime time spent per area (ms), per difficulty (area id -> milliseconds). The manager
+// accumulates the gap between in-game updates into the area the character was in.
+message AreaTime {
+  map<int32, int64> normal = 1;     // difficulty 0
+  map<int32, int64> nightmare = 2;  // difficulty 1
+  map<int32, int64> hell = 3;       // difficulty 2
+}
+
+message SkillLevel {
+  int32 skill_id = 1;
+  int32 hard_points = 2;   // points the player invested
+  int32 soft_points = 3;   // bonus points from gear/charms (+skills)
+}

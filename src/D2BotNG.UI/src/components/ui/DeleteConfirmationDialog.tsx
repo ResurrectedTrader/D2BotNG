@@ -1,12 +1,11 @@
 /**
- * Delete Confirmation Dialog Component
+ * Delete Confirmation Dialog
  *
- * Reusable confirmation dialog for delete operations.
- * Provides consistent UX for all delete actions across the application.
+ * Thin wrapper over ConfirmationDialog for the common delete case: a standard
+ * "Delete {entityType}" title + prompt and a danger "Delete" button.
  */
 
-import { Dialog, DialogHeader, DialogContent, DialogFooter } from "./Dialog";
-import { Button } from "./Button";
+import { ConfirmationDialog } from "./ConfirmationDialog";
 
 export interface DeleteConfirmationDialogProps {
   /** Whether the dialog is open */
@@ -35,23 +34,16 @@ export function DeleteConfirmationDialog({
   onCancel,
 }: DeleteConfirmationDialogProps) {
   return (
-    <Dialog open={open} onClose={onCancel}>
-      <DialogHeader
-        title={`Delete ${entityType}`}
-        description={`Are you sure you want to delete "${entityName}"? This action cannot be undone.`}
-        onClose={onCancel}
-      />
-      <DialogContent>
-        <p className="text-sm text-zinc-400">{warningMessage}</p>
-      </DialogContent>
-      <DialogFooter>
-        <Button variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button variant="danger" onClick={onConfirm} disabled={isPending}>
-          Delete
-        </Button>
-      </DialogFooter>
-    </Dialog>
+    <ConfirmationDialog
+      open={open}
+      title={`Delete ${entityType}`}
+      description={`Are you sure you want to delete "${entityName}"? This action cannot be undone.`}
+      message={warningMessage}
+      confirmLabel="Delete"
+      confirmVariant="danger"
+      isPending={isPending}
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    />
   );
 }

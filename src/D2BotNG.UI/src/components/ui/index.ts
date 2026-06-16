@@ -79,7 +79,9 @@ export { ErrorBoundary } from "./ErrorBoundary";
 export { LoadingSpinner } from "./LoadingSpinner";
 export type { LoadingSpinnerProps } from "./LoadingSpinner";
 
-// DeleteConfirmationDialog
+// ConfirmationDialog (+ DeleteConfirmationDialog convenience wrapper)
+export { ConfirmationDialog } from "./ConfirmationDialog";
+export type { ConfirmationDialogProps } from "./ConfirmationDialog";
 export { DeleteConfirmationDialog } from "./DeleteConfirmationDialog";
 export type { DeleteConfirmationDialogProps } from "./DeleteConfirmationDialog";
 

@@ -8,6 +8,7 @@ import "profiles.proto";
 import "keys.proto";
 import "schedules.proto";
 import "proxies.proto";
+import "characters.proto";
 
 // Simple list wrappers for file storage (no runtime state like ProfileStatus/KeyUsage)
 message ProfileList {
@@ -24,4 +25,8 @@ message ScheduleList {
 
 message ProxyCollection {
   repeated Proxy proxies = 1;
+}
+
+message CharacterList {
+  repeated Character characters = 1;
 }

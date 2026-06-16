@@ -9,6 +9,7 @@ import { memo } from "react";
 import clsx from "clsx";
 import type { Item } from "@/generated/items_pb";
 import { ItemSprite } from "@/lib/rendering";
+import { isEthereal } from "./item-utils";
 
 export interface ItemImageProps {
   /** The item to display */
@@ -44,10 +45,8 @@ export const ItemImage = memo(function ItemImage({
       <ItemSprite
         code={item.code}
         colorShift={item.itemColor}
-        ethereal={
-          item.description?.includes("Ethereal") ||
-          item.description?.includes(":eth")
-        }
+        invTrans={item.invTrans}
+        ethereal={isEthereal(item)}
         sockets={showSockets ? item.sockets : []}
         alt={item.name}
       />

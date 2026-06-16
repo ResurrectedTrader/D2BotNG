@@ -18,14 +18,10 @@ import {
 } from "@/lib/rendering";
 import type { Item } from "@/generated/items_pb";
 import { ItemTooltipContent } from "./ItemTooltip";
+import { isEthereal } from "./item-utils";
 
 const nextFrame = () =>
   new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-
-const isEthereal = (item: Item) =>
-  item.description?.includes("Ethereal") ||
-  item.description?.includes(":eth") ||
-  false;
 
 /**
  * Warm the global sprite cache for this item using the same key
@@ -35,11 +31,13 @@ const isEthereal = (item: Item) =>
 async function preloadSprite(item: Item): Promise<void> {
   try {
     const ethereal = isEthereal(item);
-    const socketsKey =
-      item.sockets.map((s) => `${s.code}:${s.itemColor}`).join(",") ?? "";
+    const socketsKey = item.sockets
+      .map((s) => `${s.code}:${s.itemColor}:${s.invTrans ?? 0}`)
+      .join(",");
     const key = makeSpriteKey(
       item.code,
       item.itemColor,
+      item.invTrans,
       ethereal,
       false,
       socketsKey,
@@ -49,12 +47,14 @@ async function preloadSprite(item: Item): Promise<void> {
         ? () =>
             renderItemWithSocketsToBitmap(item.code, {
               colorShift: item.itemColor,
+              invTrans: item.invTrans,
               ethereal,
               sockets: item.sockets,
             })
         : () =>
             renderItemToBitmap(item.code, {
               colorShift: item.itemColor,
+              invTrans: item.invTrans,
               ethereal,
               backgroundColor: null,
             });

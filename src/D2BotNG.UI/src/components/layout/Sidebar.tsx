@@ -14,9 +14,9 @@ import { AboutDialog } from "../AboutDialog";
 
 const navigation = [
   { name: "Profiles", href: "/profiles", icon: UserGroupIcon },
+  { name: "Characters", href: "/characters", icon: UserIcon },
   { name: "Keys", href: "/keys", icon: KeyIcon },
   { name: "Schedules", href: "/schedules", icon: ClockIcon },
-  { name: "Characters", href: "/characters", icon: UserIcon },
   { name: "Proxies", href: "/proxies", icon: GlobeAltIcon },
   { name: "Settings", href: "/settings", icon: Cog6ToothIcon },
 ];

@@ -13,11 +13,12 @@ const cache = new Map<string, Promise<ImageBitmap>>();
 export function makeSpriteKey(
   code: string,
   colorShift: number,
+  invTrans: number,
   ethereal: boolean,
   hasBackground: boolean,
   socketsKey: string,
 ): string {
-  return `${code}|${colorShift}|${ethereal ? 1 : 0}|${hasBackground ? 1 : 0}|${socketsKey}`;
+  return `${code}|${colorShift}|${invTrans}|${ethereal ? 1 : 0}|${hasBackground ? 1 : 0}|${socketsKey}`;
 }
 
 export function getCachedSprite(
