@@ -212,7 +212,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: exe-standalone
-          path: src/D2BotNG/bin/Release/net10.0-windows/win-x86/publish/D2BotNG.exe
+          path: src/D2BotNG/bin/Release/net10.0-windows/win-x64/publish/D2BotNG.exe
           retention-days: 1
 
   publish-framework:
@@ -235,7 +235,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: exe-framework
-          path: src/D2BotNG/bin/Release/net10.0-windows/win-x86/publish/D2BotNG.exe
+          path: src/D2BotNG/bin/Release/net10.0-windows/win-x64/publish/D2BotNG.exe
           retention-days: 1
 
   release:

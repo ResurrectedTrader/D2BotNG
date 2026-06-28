@@ -32,8 +32,8 @@ Download the latest release from the [Releases](../../releases) page. Two versio
 
 | Version | Size | Requirements |
 |---------|------|-------------|
-| **Self-contained** | Larger | Windows 10/11 (x86) — just run, no prerequisites |
-| **Framework-dependent** | Smaller | Windows 10/11 (x86) + [.NET 10 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) |
+| **Self-contained** | Larger | Windows 10/11 (x64) — just run, no prerequisites |
+| **Framework-dependent** | Smaller | Windows 10/11 (x64) + [.NET 10 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) |
 
 To get started:
 
@@ -154,16 +154,18 @@ Full compatibility with D2BS:
 
 - Same command-line arguments (`-d2c`, `-d2x`, `-handle`, `-profile`)
 - WM_COPYDATA IPC messaging
-- DLL injection (LoadLibraryA remote thread)
+- DLL injection (LoadLibraryW remote thread)
 - Memory patches for various D2 versions
 - d2bs.ini generation with game paths and CD keys
 - All D2BS message types supported (heartbeat, status, console, items, key rotation, etc.)
+
+> **Note:** Built for x64, but still injects the 32-bit D2BS into the 32-bit game (it resolves the game's `LoadLibrary` address across the bitness boundary).
 
 ## Development
 
 ### Requirements
 
-- Windows 10/11 (x86 build for D2BS compatibility)
+- Windows 10/11 (x64)
 - .NET 10 SDK
 - Node.js 20+
 
@@ -210,7 +212,7 @@ dotnet publish -c Release --self-contained
 dotnet publish -c Release --no-self-contained
 ```
 
-Output: `bin/Release/net10.0-windows/win-x86/publish/D2BotNG.exe`
+Output: `bin/Release/net10.0-windows/win-x64/publish/D2BotNG.exe`
 
 ### Architecture
 

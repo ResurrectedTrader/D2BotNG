@@ -88,7 +88,8 @@ public class ProcessManager : IDisposable
         }
 
         var fullPath = Path.GetFullPath(dllPath);
-        var pathBytes = Encoding.ASCII.GetBytes(fullPath + '\0');
+        // UTF-16 + LoadLibraryW so non-ASCII paths (e.g. an accented user name) aren't mangled to '?'.
+        var pathBytes = Encoding.Unicode.GetBytes(fullPath + '\0');
 
         try
         {
@@ -115,7 +116,7 @@ public class ProcessManager : IDisposable
             using var processHandle = new SafeProcessHandle(rawProcessHandle, ownsHandle: true);
 
             // Allocate memory in target process
-            var remoteMemory = VirtualAllocEx(processHandle.DangerousGetHandle(), 0, (uint)pathBytes.Length, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+            var remoteMemory = VirtualAllocEx(processHandle.DangerousGetHandle(), 0, (nuint)pathBytes.Length, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
             if (remoteMemory == 0)
             {
                 _logger.LogError("Failed to allocate memory in target process");
@@ -125,18 +126,18 @@ public class ProcessManager : IDisposable
             try
             {
                 // Write DLL path
-                if (!WriteProcessMemory(processHandle.DangerousGetHandle(), remoteMemory, pathBytes, (uint)pathBytes.Length, out _))
+                if (!WriteProcessMemory(processHandle.DangerousGetHandle(), remoteMemory, pathBytes, (nuint)pathBytes.Length, out _))
                 {
                     _logger.LogError("Failed to write DLL path to target process");
                     return false;
                 }
 
-                // Get LoadLibraryA address
-                var kernel32 = GetModuleHandle("kernel32.dll");
-                var loadLibraryAddr = GetProcAddress(kernel32, "LoadLibraryA");
+                // Resolve LoadLibraryW for the target. Same-bitness targets use our own kernel32
+                // (shared base); a 32-bit target gets the 32-bit kernel32 address from a peer WOW64 process.
+                var loadLibraryAddr = RemoteModule.ResolveExportForTarget(processHandle.DangerousGetHandle(), "kernel32.dll", "LoadLibraryW");
                 if (loadLibraryAddr == 0)
                 {
-                    _logger.LogError("Failed to get LoadLibraryA address");
+                    _logger.LogError("Failed to resolve LoadLibraryW for target process {Pid}", process.Id);
                     return false;
                 }
 
@@ -212,12 +213,12 @@ public class ProcessManager : IDisposable
         // Async variants post the request to the window's thread and return
         // immediately, so a hung game window can never block the caller (the
         // synchronous ShowWindow/SetWindowPos would block until USER32 gives up).
-        NativeMethods.ShowWindowAsync(hwnd, SW_SHOW);
+        ShowWindowAsync(hwnd, SW_SHOW);
     }
 
     public void HideWindow(nint hwnd)
     {
-        NativeMethods.ShowWindowAsync(hwnd, SW_HIDE);
+        ShowWindowAsync(hwnd, SW_HIDE);
     }
 
     public void SetWindowTitle(nint hwnd, string title)

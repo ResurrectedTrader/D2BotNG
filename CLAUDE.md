@@ -17,7 +17,7 @@ Modern Diablo II bot manager. Manages D2 game instances, handles CD key rotation
 ```
 protos/                  # Protobuf definitions (source of truth for all services)
 src/
-  D2BotNG/               # .NET backend (x86 Windows)
+  D2BotNG/               # .NET backend (x64 Windows)
     Services/            # gRPC implementations (*ServiceImpl.cs)
     Engine/              # Profile lifecycle (ProfileEngine), scheduling (ScheduleEngine)
     Windows/             # Win32 interop: GameLauncher, ProcessManager, Patcher, MessageWindow
@@ -70,7 +70,7 @@ npm run generate-grpc              # Regenerate protobuf types from protos/
 cd src/D2BotNG
 dotnet publish -c Release --self-contained       # Bundles .NET runtime (~60-80MB)
 dotnet publish -c Release --no-self-contained    # Requires .NET 10 runtime (~15-25MB)
-# Output: bin/Release/net10.0-windows/win-x86/publish/D2BotNG.exe
+# Output: bin/Release/net10.0-windows/win-x64/publish/D2BotNG.exe
 ```
 
 ## gRPC Services
@@ -112,8 +112,9 @@ Frontend uses a single gRPC server-stream for all real-time state:
 
 ### Windows Layer
 - **GameLauncher** (`Windows/GameLauncher.cs`) - 12-step launch pipeline: clear cache, build CLI args, create suspended process, patch memory, resume, inject D2BS.dll, set title
-- **ProcessManager** (`Windows/ProcessManager.cs`) - DLL injection via LoadLibraryA remote thread, process creation, graceful shutdown (WM_CLOSE + force kill), job object for auto-killing child processes on crash
+- **ProcessManager** (`Windows/ProcessManager.cs`) - DLL injection via LoadLibraryW remote thread, process creation, graceful shutdown (WM_CLOSE + force kill), job object for auto-killing child processes on crash
 - **Patcher** (`Windows/Patcher.cs`) - Binary memory patches via VirtualProtectEx + WriteProcessMemory
+- **RemoteModule** (`Windows/RemoteModule.cs`) - Resolves a target's kernel32 `LoadLibrary` address for cross-bitness injection (x64 manager → 32-bit game) and reads target module bases, via a PE export walk over ReadProcessMemory
 - **MessageWindow** (`Windows/MessageWindow.cs`) - WM_COPYDATA receiver, parses JSON from D2BS, queues to Channel<D2BSMessage>
 - **DaclOverwriter** - Changes DACL for elevated process access
 
@@ -252,7 +253,7 @@ Item/mule data lives in `d2bs/kolbot/mules/` (*.txt files, watched by FileSystem
 
 ## Notes
 
-- **x86 required** - D2BS compatibility (32-bit DLL injection into game process)
+- **x64 build (forced)** - `Platforms`/`PlatformTarget`/`RuntimeIdentifier` in `D2BotNG.csproj` pin x64. Still injects the 32-bit D2BS into a 32-bit game cross-bitness via `RemoteModule` (see Windows Layer)
 - **Windows-only** - WinForms, WebView2, Win32 APIs, P/Invoke throughout
 - **Dual-mode** - GUI (WebView2 desktop) or headless (server-only with message-only window)
 - **Frontend embedded** - Production UI builds to `wwwroot/`, served by Kestrel

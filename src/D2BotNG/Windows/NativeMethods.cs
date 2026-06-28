@@ -32,33 +32,50 @@ public static class NativeMethods
     public static extern nint GetCurrentProcess();
 
 
+    // dwSize is SIZE_T (pointer-sized: 64-bit on x64), so it must be nuint, not uint.
     [DllImport("kernel32.dll", SetLastError = true)]
-    public static extern nint VirtualAllocEx(nint hProcess, nint lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
+    public static extern nint VirtualAllocEx(nint hProcess, nint lpAddress, nuint dwSize, uint flAllocationType, uint flProtect);
 
     [DllImport("kernel32.dll", SetLastError = true)]
-    public static extern bool VirtualFreeEx(nint hProcess, nint lpAddress, uint dwSize, uint dwFreeType);
+    public static extern bool VirtualFreeEx(nint hProcess, nint lpAddress, nuint dwSize, uint dwFreeType);
 
+    // lpflOldProtect is PDWORD (always 32-bit), so out uint is correct; only dwSize (SIZE_T) is pointer-sized.
     [DllImport("kernel32.dll", SetLastError = true)]
-    public static extern bool VirtualProtectEx(nint hProcess, nint lpAddress, uint dwSize, uint flNewProtect, out uint lpflOldProtect);
+    public static extern bool VirtualProtectEx(nint hProcess, nint lpAddress, nuint dwSize, uint flNewProtect, out uint lpflOldProtect);
 
+    // nSize and *lpNumberOfBytesWritten are both SIZE_T. The out param is critical: on x64 the
+    // kernel writes 8 bytes here, so a 4-byte (int) target would be a stack/heap overrun.
     [DllImport("kernel32.dll", SetLastError = true)]
-    public static extern bool WriteProcessMemory(nint hProcess, nint lpBaseAddress, byte[] lpBuffer, uint nSize, out int lpNumberOfBytesWritten);
+    public static extern bool WriteProcessMemory(nint hProcess, nint lpBaseAddress, byte[] lpBuffer, nuint nSize, out nuint lpNumberOfBytesWritten);
+
+    // nSize and *lpNumberOfBytesRead are both SIZE_T — pointer-sized on x64. Used to read a target
+    // process's PE headers/export table when resolving function addresses inside that process.
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool ReadProcessMemory(nint hProcess, nint lpBaseAddress, byte[] lpBuffer, nuint nSize, out nuint lpNumberOfBytesRead);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern nint GetModuleHandle(string? lpModuleName);
 
+    // Resolves an export in *our own* loaded module — used as the same-bitness fast path, where the
+    // address is also valid in a same-flavour target (shared system-DLL base per boot).
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern nint GetProcAddress(nint hModule, string lpProcName);
 
     [DllImport("kernel32.dll")]
     public static extern nint LocalFree(nint hMem);
 
+    // Detects a target's bitness: on an x64 OS a WOW64 process is 32-bit. The manager is built x64,
+    // so a WOW64 target means cross-bitness injection.
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool IsWow64Process(nint hProcess, out bool wow64Process);
+
     #endregion
 
     #region kernel32.dll - Thread
 
+    // dwStackSize is SIZE_T (pointer-sized); lpThreadId is LPDWORD (always 32-bit).
     [DllImport("kernel32.dll", SetLastError = true)]
-    public static extern nint CreateRemoteThread(nint hProcess, nint lpThreadAttributes, uint dwStackSize, nint lpStartAddress, nint lpParameter, uint dwCreationFlags, out uint lpThreadId);
+    public static extern nint CreateRemoteThread(nint hProcess, nint lpThreadAttributes, nuint dwStackSize, nint lpStartAddress, nint lpParameter, uint dwCreationFlags, out uint lpThreadId);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern nint OpenThread(uint dwDesiredAccess, bool bInheritHandle, uint dwThreadId);
@@ -68,9 +85,6 @@ public static class NativeMethods
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern uint WaitForSingleObject(nint hHandle, uint dwMilliseconds);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    public static extern bool GetExitCodeThread(nint hThread, out uint lpExitCode);
 
     #endregion
 
@@ -214,6 +228,19 @@ public static class NativeMethods
         nint psidGroup,
         nint pDacl,
         nint pSacl);
+
+    #endregion
+
+    #region psapi.dll - Module Enumeration
+
+    // Reads a remote module's base address from the loader's module list. The base is the HMODULE
+    // value (pointer-width), so it must be captured as nint — on x64 a 32-bit thread exit code
+    // (the old approach) would truncate it.
+    [DllImport("psapi.dll", SetLastError = true)]
+    public static extern bool EnumProcessModulesEx(nint hProcess, [Out] nint[] lphModule, uint cb, out uint lpcbNeeded, uint dwFilterFlag);
+
+    [DllImport("psapi.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern uint GetModuleFileNameExW(nint hProcess, nint hModule, System.Text.StringBuilder lpFilename, uint nSize);
 
     #endregion
 

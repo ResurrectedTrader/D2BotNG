@@ -45,7 +45,7 @@ public class Patcher
             var targetAddress = moduleBase + patch.Offset;
 
             // Change memory protection
-            if (!VirtualProtectEx(hProcess, targetAddress, (uint)patch.Data.Length, PAGE_EXECUTE_READWRITE, out uint oldProtection))
+            if (!VirtualProtectEx(hProcess, targetAddress, (nuint)patch.Data.Length, PAGE_EXECUTE_READWRITE, out uint oldProtection))
             {
                 _logger.LogError("Failed to change memory protection at {Address:X}", targetAddress);
                 return false;
@@ -54,7 +54,7 @@ public class Patcher
             try
             {
                 // Write the patch bytes
-                if (!WriteProcessMemory(hProcess, targetAddress, patch.Data.ToByteArray(), (uint)patch.Data.Length, out _))
+                if (!WriteProcessMemory(hProcess, targetAddress, patch.Data.ToByteArray(), (nuint)patch.Data.Length, out _))
                 {
                     _logger.LogError("Failed to write patch at {Address:X}", targetAddress);
                     return false;
@@ -65,7 +65,7 @@ public class Patcher
             }
             finally
             {
-                VirtualProtectEx(hProcess, targetAddress, (uint)patch.Data.Length, oldProtection, out _);
+                VirtualProtectEx(hProcess, targetAddress, (nuint)patch.Data.Length, oldProtection, out _);
             }
         }
         catch (Exception ex)
@@ -85,7 +85,7 @@ public class Patcher
         var pathBytes = Encoding.Unicode.GetBytes(modulePath + '\0');
 
         // Allocate memory in target process for the DLL path string
-        var remoteMemory = VirtualAllocEx(processHandle, 0, (uint)pathBytes.Length, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        var remoteMemory = VirtualAllocEx(processHandle, 0, (nuint)pathBytes.Length, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
         if (remoteMemory == 0)
         {
             _logger.LogError("Failed to allocate memory for module path in target process");
@@ -95,18 +95,18 @@ public class Patcher
         try
         {
             // Write the DLL path into the allocated memory
-            if (!WriteProcessMemory(processHandle, remoteMemory, pathBytes, (uint)pathBytes.Length, out _))
+            if (!WriteProcessMemory(processHandle, remoteMemory, pathBytes, (nuint)pathBytes.Length, out _))
             {
                 _logger.LogError("Failed to write module path to target process");
                 return 0;
             }
 
-            // Get LoadLibraryW address from our own kernel32 (same address in target due to ASLR shared base)
-            var kernel32 = GetModuleHandle("kernel32.dll");
-            var loadLibraryAddr = GetProcAddress(kernel32, "LoadLibraryW");
+            // Resolve LoadLibraryW for the target. Same-bitness targets use our own kernel32 (shared
+            // base); a 32-bit target gets the 32-bit kernel32 address from a peer WOW64 process.
+            var loadLibraryAddr = RemoteModule.ResolveExportForTarget(processHandle, "kernel32.dll", "LoadLibraryW");
             if (loadLibraryAddr == 0)
             {
-                _logger.LogError("Failed to get LoadLibraryW address");
+                _logger.LogError("Failed to resolve LoadLibraryW for target process");
                 return 0;
             }
 
@@ -127,26 +127,23 @@ public class Patcher
                 return 0;
             }
 
-            // LoadLibrary's return value is the module base address (or 0 on failure)
-            // Retrieved via the thread's exit code
-            if (!GetExitCodeThread(threadHandle.DangerousGetHandle(), out var moduleBase))
-            {
-                _logger.LogError("Failed to get exit code from LoadLibraryW thread");
-                return 0;
-            }
-
+            // The remote thread's exit code can't carry the module base on x64: it's a 32-bit
+            // DWORD, while a 64-bit HMODULE needs the full pointer width. Read the base from the
+            // loader's module list instead — the LoadLibraryW above both forces the load and (as
+            // the first thread to run in the suspended process) initializes the loader data, so
+            // the module is now enumerable.
+            var moduleBase = RemoteModule.GetModuleBase(processHandle, Path.GetFileName(modulePath));
             if (moduleBase == 0)
             {
-                _logger.LogError("LoadLibraryW failed in target process for {ModulePath}", modulePath);
+                _logger.LogError("Module {ModulePath} not loaded in target process after LoadLibraryW", modulePath);
                 return 0;
             }
 
-            return (nint)moduleBase;
+            return moduleBase;
         }
         finally
         {
             VirtualFreeEx(processHandle, remoteMemory, 0, MEM_RELEASE);
         }
     }
-
 }

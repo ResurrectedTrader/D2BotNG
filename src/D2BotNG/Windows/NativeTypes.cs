@@ -161,6 +161,10 @@ public static class NativeTypes
     // Special window handles
     public static readonly nint HWND_MESSAGE = -3;
 
+    // EnumProcessModulesEx filter: return 32-bit, 64-bit, and all other modules. LIST_MODULES_ALL
+    // is required so a 64-bit manager can see a 32-bit (WOW64) game's modules.
+    public const uint LIST_MODULES_ALL = 0x03;
+
     // Job Object constants
     public const int JobObjectExtendedLimitInformation = 9;
     public const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
