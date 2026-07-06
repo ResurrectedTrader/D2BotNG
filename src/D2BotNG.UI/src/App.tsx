@@ -11,11 +11,25 @@ import { UpdateNotification } from "./components/UpdateNotification";
 import { ProfilesPage, ProfileDetailPage } from "@/features/profiles";
 import { KeysPage } from "@/features/keys";
 import { ProxiesPage } from "@/features/proxies";
+import { FrameworksPage, FrameworkDetailPage } from "@/features/frameworks";
 import { SchedulesPage } from "@/features/schedules";
 import { CharactersPage } from "@/features/characters";
 import { SettingsPage } from "@/features/settings";
 import { useEventStream } from "@/hooks/useEventStream";
 import { useAuthStore } from "@/lib/auth";
+import { useSettings } from "@/stores/event-store";
+
+/**
+ * Gates a route on Settings.advanced_mode (matching the sidebar). Renders the
+ * page while settings are still loading rather than bouncing users on refresh.
+ */
+function AdvancedOnly({ children }: { children: React.ReactElement }) {
+  const settings = useSettings();
+  if (settings && !settings.advancedMode) {
+    return <Navigate to="/profiles" replace />;
+  }
+  return children;
+}
 
 export default function App() {
   // Start the event stream at app root
@@ -57,6 +71,32 @@ export default function App() {
           {/* Other main routes */}
           <Route path="keys" element={<KeysPage />} />
           <Route path="proxies" element={<ProxiesPage />} />
+          <Route path="frameworks">
+            <Route
+              index
+              element={
+                <AdvancedOnly>
+                  <FrameworksPage />
+                </AdvancedOnly>
+              }
+            />
+            <Route
+              path="new"
+              element={
+                <AdvancedOnly>
+                  <FrameworkDetailPage />
+                </AdvancedOnly>
+              }
+            />
+            <Route
+              path=":id"
+              element={
+                <AdvancedOnly>
+                  <FrameworkDetailPage />
+                </AdvancedOnly>
+              }
+            />
+          </Route>
           <Route path="schedules" element={<SchedulesPage />} />
           <Route path="characters" element={<CharactersPage />} />
           <Route path="settings" element={<SettingsPage />} />

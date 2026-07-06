@@ -48,7 +48,7 @@ For headless/server use (no GUI window), run with `--headless`. See [Command Lin
 
 ## Configuration
 
-App settings are stored in `d2botng.json` next to the exe (server, Discord, display, game config, base path).
+App settings are stored in `d2botng.json` next to the exe (server, Discord, display, base path, UI mode). Game and botting-framework configuration (game directory, D2BS path, inject DLLs, game version, health thresholds, cleanup) lives per **framework**: by default everything uses the built-in `Default` framework, edited from Settings → General; enable **Advanced Mode** to manage multiple frameworks (e.g. different kolbot installs or D2 versions) and assign them per profile.
 
 Bot data files are stored under the **base path** in `data/ng/` (protobuf JSON format). The base path defaults to the exe directory but can be changed in Settings:
 
@@ -56,6 +56,9 @@ Bot data files are stored under the **base path** in `data/ng/` (protobuf JSON f
 |------|---------|
 | `<base path>/data/ng/profiles.json` | Bot profiles |
 | `<base path>/data/ng/keylists.json` | CD key lists |
+| `<base path>/data/ng/frameworks.json` | Frameworks (game/d2bs/dll/version bundles) |
+| `<base path>/data/ng/proxies.json` | Proxies |
+| `<base path>/data/ng/characters.json` | Character snapshots from running bots |
 | `<base path>/data/ng/schedules.json` | Schedule configs |
 | `<base path>/data/ng/patches.json` | Memory patches (version-specific) |
 | `<base path>/images/` | Item PNGs from the D2BS `saveItem` message |
@@ -69,6 +72,7 @@ Legacy D2Bot data files (JSONL format in `data/`) are automatically migrated to 
 - **IRC profiles dropped** - Legacy IRC-type profiles are not migrated
 - **Legacy API migrated** - `server.json` users and profiles are imported into Legacy API settings when no existing configuration is found
 - **Settings not migrated** - Other settings did not exist in the legacy format; `d2botng.json` is created fresh
+- **Frameworks migrated** - On first run of a frameworks-aware build, a `Default` framework is created from the previous game/engine settings (install path, game version, retention, health thresholds) and assigned to all existing profiles
 - **Format change** - Legacy JSONL (one JSON object per line) is converted to protobuf JSON (single document with typed wrapper messages)
 
 No manual steps are required. To force re-migration of a specific file, delete it from `data/ng/` and restart.

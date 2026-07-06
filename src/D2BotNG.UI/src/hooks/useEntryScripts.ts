@@ -7,16 +7,22 @@ export interface EntryScriptOption {
 }
 
 export function useEntryScripts(
-  basePath: string | undefined,
+  d2bsPath: string | undefined,
 ): EntryScriptOption[] {
   const [options, setOptions] = useState<EntryScriptOption[]>([]);
 
   useEffect(() => {
+    // Clear any previously-loaded scripts when there's no d2bs path (e.g. switching to
+    // a framework that hasn't set one) so stale options from the prior path don't linger.
+    if (!d2bsPath) {
+      setOptions([]);
+      return;
+    }
+
+    const path = d2bsPath;
     async function load() {
-      if (!basePath) return;
       try {
-        const d2bsPath = `${basePath}/d2bs`;
-        const d2bsListing = await fileClient.listDirectory({ path: d2bsPath });
+        const d2bsListing = await fileClient.listDirectory({ path });
 
         const botDirs = d2bsListing.entries
           .filter((e) => e.isDirectory && e.name.toLowerCase().endsWith("bot"))
@@ -28,7 +34,7 @@ export function useEntryScripts(
           return;
         }
 
-        const botPath = `${d2bsPath}/${botDirs[0]}`;
+        const botPath = `${path}/${botDirs[0]}`;
         const botListing = await fileClient.listDirectory({ path: botPath });
         const dbjFiles = botListing.entries
           .filter(
@@ -44,7 +50,7 @@ export function useEntryScripts(
       }
     }
     load();
-  }, [basePath]);
+  }, [d2bsPath]);
 
   return options;
 }

@@ -86,6 +86,12 @@ internal static class Program
                 : settings.BasePath;
             Migration.MigrateIfNeeded(basePath);
 
+            // Ensure a default framework exists and every profile references one. This is
+            // the migration from the pre-frameworks model (game/d2bs/dll/version were global
+            // settings). Runs before the item repository so its mules directory is watched.
+            var frameworkBootstrap = app.Services.GetRequiredService<FrameworkBootstrap>();
+            frameworkBootstrap.EnsureDefaultAsync().GetAwaiter().GetResult();
+
             Logger.Information("D2BotNG starting in {Mode} mode on port {Port}...", headless ? "headless" : "GUI", settings.Server.Port);
 
             ConfigureApp(app, devUi);
@@ -368,6 +374,8 @@ internal static class Program
         services.AddSingleton<ProfileRepository>();
         services.AddSingletonWithHandoff<KeyListRepository>();
         services.AddSingleton<ProxyRepository>();
+        services.AddSingleton<FrameworkRepository>();
+        services.AddSingleton<FrameworkBootstrap>();
         services.AddSingleton<ScheduleRepository>();
         services.AddSingleton<ItemRepository>();
         services.AddSingleton<PatchRepository>();
@@ -466,6 +474,7 @@ internal static class Program
         app.MapGrpcService<ProfileServiceImpl>().EnableGrpcWeb();
         app.MapGrpcService<KeyServiceImpl>().EnableGrpcWeb();
         app.MapGrpcService<ProxyServiceImpl>().EnableGrpcWeb();
+        app.MapGrpcService<FrameworkServiceImpl>().EnableGrpcWeb();
         app.MapGrpcService<ScheduleServiceImpl>().EnableGrpcWeb();
         app.MapGrpcService<SettingsServiceImpl>().EnableGrpcWeb();
         app.MapGrpcService<EventServiceImpl>().EnableGrpcWeb();

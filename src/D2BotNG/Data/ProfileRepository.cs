@@ -6,10 +6,13 @@ namespace D2BotNG.Data;
 public class ProfileRepository : FileRepository<Profile, ProfileList>
 {
     private readonly IniWriter _iniWriter;
+    private readonly FrameworkRepository _frameworkRepository;
 
-    public ProfileRepository(Paths paths, IniWriter iniWriter) : base(paths, "profiles.json")
+    public ProfileRepository(Paths paths, IniWriter iniWriter, FrameworkRepository frameworkRepository)
+        : base(paths, "profiles.json")
     {
         _iniWriter = iniWriter;
+        _frameworkRepository = frameworkRepository;
     }
 
     protected override string GetKey(Profile p) => p.Name;
@@ -26,6 +29,29 @@ public class ProfileRepository : FileRepository<Profile, ProfileList>
     protected override async Task SaveAsync()
     {
         await base.SaveAsync();
-        await _iniWriter.WriteAsync(await GetAllAsync());
+        // Rewrite each framework's d2bs.ini so it reflects only its assigned profiles.
+        // Runs under the repository lock (so use Items, not GetAllAsync, which would
+        // deadlock), which also orders ini writes with profile saves.
+        await _iniWriter.WriteAsync(Items.ToList(), await _frameworkRepository.GetAllAsync());
+    }
+
+    /// <summary>
+    /// Rewrites every framework's d2bs.ini from the current profile list, under the
+    /// repository lock so the write stays ordered against concurrent profile saves.
+    /// For callers that changed frameworks without touching profiles.
+    /// </summary>
+    public async Task RewriteInisAsync()
+    {
+        await EnsureLoadedAsync();
+
+        await Lock.WaitAsync();
+        try
+        {
+            await _iniWriter.WriteAsync(Items.ToList(), await _frameworkRepository.GetAllAsync());
+        }
+        finally
+        {
+            Lock.Release();
+        }
     }
 }

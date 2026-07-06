@@ -136,6 +136,8 @@ function getColumnValue(
       const parts = profile.d2Path.replace(/\\/g, "/").split("/");
       return parts[parts.length - 1] || "-";
     }
+    case "framework":
+      return profile.framework || "-";
     default:
       return "-";
   }

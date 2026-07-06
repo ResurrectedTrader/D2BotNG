@@ -18,19 +18,14 @@ public class ProfileEngine
     private readonly ProfileRepository _profileRepository;
     private readonly KeyListRepository _keyListRepository;
     private readonly ProxyRepository _proxyRepository;
+    private readonly FrameworkRepository _frameworkRepository;
     private readonly EventBroadcaster _eventBroadcaster;
     private readonly GameLauncher _gameLauncher;
     private readonly ProcessManager _processManager;
     private readonly MessageWindow _messageWindow;
-    private readonly Paths _paths;
 
     private readonly ConcurrentDictionary<string, ProfileInstance> _instances = new();
     private readonly ConcurrentDictionary<nint, string> _handleToProfile = new();
-
-    private volatile int _maxCrashRetries;
-    private volatile int _heartbeatTimeoutSeconds;
-    private volatile int _maxMissedHeartbeats;
-    private volatile int _unresponsiveTimeoutSeconds;
 
     // Startup pacing. Profiles entering RunProfileAsync wait their turn on
     // _startupSemaphore (if set), wait _startupDelayMs (with a 1Hz countdown),
@@ -50,22 +45,22 @@ public class ProfileEngine
         ProfileRepository profileRepository,
         KeyListRepository keyListRepository,
         ProxyRepository proxyRepository,
+        FrameworkRepository frameworkRepository,
         EventBroadcaster eventBroadcaster,
         GameLauncher gameLauncher,
         ProcessManager processManager,
         MessageWindow messageWindow,
-        Paths paths,
         SettingsRepository settingsRepository)
     {
         _logger = logger;
         _profileRepository = profileRepository;
         _keyListRepository = keyListRepository;
         _proxyRepository = proxyRepository;
+        _frameworkRepository = frameworkRepository;
         _eventBroadcaster = eventBroadcaster;
         _gameLauncher = gameLauncher;
         _processManager = processManager;
         _messageWindow = messageWindow;
-        _paths = paths;
 
         ApplySettings(settingsRepository.GetAsync().GetAwaiter().GetResult());
         settingsRepository.SettingsChanged += (_, s) => ApplySettings(s);
@@ -79,13 +74,6 @@ public class ProfileEngine
         // Replace the semaphore; in-flight starts already hold a reference to the previous
         // instance and will release it correctly. New starts use the fresh one.
         _startupSemaphore = concurrency > 0 ? new SemaphoreSlim(concurrency, concurrency) : null;
-
-        // Health thresholds — SettingsRepository guarantees Engine is populated.
-        var engine = settings.Engine!;
-        _heartbeatTimeoutSeconds = engine.HeartbeatTimeoutSeconds;
-        _maxMissedHeartbeats = engine.MaxMissedHeartbeats;
-        _maxCrashRetries = engine.MaxCrashRetries;
-        _unresponsiveTimeoutSeconds = engine.UnresponsiveTimeoutSeconds;
     }
 
     private Task RunProfileBackgroundAsync(ProfileInstance instance)
@@ -220,6 +208,7 @@ public class ProfileEngine
         await NotifyProfileStateChangedAsync(profileName);
         await BroadcastKeyListsSnapshotAsync();
         await BroadcastProxiesSnapshotAsync();
+        await BroadcastFrameworksSnapshotAsync();
 
         return true;
     }
@@ -510,6 +499,52 @@ public class ProfileEngine
         });
     }
 
+    public async Task<FrameworksSnapshot> BuildFrameworksSnapshotAsync()
+    {
+        var snapshot = new FrameworksSnapshot();
+        var frameworks = (await _frameworkRepository.GetAllAsync())
+            .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase);
+        var profiles = await _profileRepository.GetAllAsync();
+
+        foreach (var framework in frameworks)
+        {
+            var usage = new FrameworkWithUsage { Framework = framework };
+            foreach (var profile in profiles)
+            {
+                if (profile.Framework != framework.Name)
+                {
+                    continue;
+                }
+
+                usage.ConfiguredProfiles.Add(profile.Name);
+
+                if (GetInstance(profile.Name) is { State: RunState.Running or RunState.Starting })
+                {
+                    usage.ActiveProfiles.Add(profile.Name);
+                }
+            }
+
+            snapshot.Frameworks.Add(usage);
+        }
+
+        return snapshot;
+    }
+
+    public async Task BroadcastFrameworksSnapshotAsync()
+    {
+        _eventBroadcaster.Broadcast(new Event
+        {
+            Timestamp = Timestamp.FromDateTime(DateTime.UtcNow),
+            FrameworksSnapshot = await BuildFrameworksSnapshotAsync()
+        });
+    }
+
+    /// <summary>Resolves the framework a profile launches with, or null if unset or missing.</summary>
+    public async Task<Framework?> ResolveFrameworkAsync(Profile profile) =>
+        string.IsNullOrEmpty(profile.Framework)
+            ? null
+            : await _frameworkRepository.GetByKeyAsync(profile.Framework);
+
     #endregion
 
     public async Task<bool> ResetStatsAsync(string profileName)
@@ -559,17 +594,37 @@ public class ProfileEngine
                 return;
             }
 
-            if (!File.Exists(profile.D2Path))
+            var framework = await ResolveFrameworkAsync(profile);
+            if (framework == null)
             {
-                await instance.SetErrorAsync($"Executable: '{profile.D2Path}' does not exist");
+                await instance.SetErrorAsync(string.IsNullOrEmpty(profile.Framework)
+                    ? "No framework assigned. Assign a framework to this profile."
+                    : $"Framework '{profile.Framework}' not found. Assign a framework to this profile.");
                 await NotifyProfileStateChangedAsync(profileName);
                 return;
             }
 
-            var d2BSPath = Path.Join(_paths.D2BSDirectory, "D2BS.dll");
-            if (!File.Exists(d2BSPath))
+            // The launched executable is the profile's own Diablo II Path.
+            var gamePath = profile.D2Path;
+            if (string.IsNullOrWhiteSpace(gamePath))
             {
-                await instance.SetErrorAsync($"D2BS.dll path: '{d2BSPath}' does not exist");
+                await instance.SetErrorAsync("No game executable set. Set the profile's Diablo II Path.");
+                await NotifyProfileStateChangedAsync(profileName);
+                return;
+            }
+
+            if (!File.Exists(gamePath))
+            {
+                await instance.SetErrorAsync($"Executable: '{gamePath}' does not exist");
+                await NotifyProfileStateChangedAsync(profileName);
+                return;
+            }
+
+            var dllPaths = framework.DllFullPaths();
+            var missingDll = dllPaths.FirstOrDefault(p => !File.Exists(p));
+            if (missingDll != null)
+            {
+                await instance.SetErrorAsync($"Inject DLL: '{missingDll}' does not exist");
                 await NotifyProfileStateChangedAsync(profileName);
                 return;
             }
@@ -602,6 +657,7 @@ public class ProfileEngine
             // Claim the configured proxy for usage tracking (runtime property, like KeyName).
             instance.ProxyName = string.IsNullOrEmpty(profile.Proxy) ? null : profile.Proxy;
             await BroadcastProxiesSnapshotAsync();
+            await BroadcastFrameworksSnapshotAsync();
 
             await ApplyStartupPacingAsync(instance, cancellationToken);
 
@@ -618,10 +674,23 @@ public class ProfileEngine
                 }
             }
 
+            // Environment: manager env < framework env < profile env (most specific wins).
+            // Case-insensitive keys, since Windows environment variable names are. Build via
+            // the indexer (not the IDictionary ctor, which throws on case-duplicate keys like
+            // "Path"/"PATH" that a case-sensitive protobuf map can legally hold).
+            var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (key, value) in framework.Environment)
+            {
+                environment[key] = value;
+            }
+            foreach (var (key, value) in profile.Environment)
+            {
+                environment[key] = value;
+            }
+
             var config = new GameLaunchConfig
             {
-                GamePath = profile.D2Path,
-                D2BSPath = d2BSPath,
+                GamePath = gamePath,
                 ProfileName = profileName,
                 Handle = _messageWindow.Handle.ToString(),
 
@@ -630,7 +699,10 @@ public class ProfileEngine
                 ExpansionKey = expansionKey,
                 WindowLocation = profile.WindowLocation,
                 Visible = profile.Visible,
-                ProxyAddress = profile.Proxy
+                ProxyAddress = profile.Proxy,
+                GameVersion = framework.GameVersionOrDefault(),
+                DllPaths = dllPaths,
+                Environment = environment
             };
 
             // Launch game
@@ -726,9 +798,22 @@ public class ProfileEngine
         var process = instance.Process;
         if (process == null) return;
 
+        // Health thresholds are per framework. A heartbeat/unresponsive timeout of 0
+        // disables that watchdog (e.g. a framework that doesn't send heartbeats).
+        var monitoredProfile = await _profileRepository.GetByKeyAsync(instance.ProfileName);
+        var monitoredFramework = monitoredProfile != null ? await ResolveFrameworkAsync(monitoredProfile) : null;
+        var heartbeatTimeout = monitoredFramework?.HeartbeatTimeoutOrDefault() ?? 30;
+        var maxMissedHeartbeats = monitoredFramework?.MaxMissedHeartbeatsOrDefault() ?? 3;
+        var unresponsiveTimeout = monitoredFramework?.UnresponsiveTimeoutOrDefault() ?? 30;
+        var heartbeatEnabled = heartbeatTimeout > 0;
+
         process.SendMessage((MessageType)_messageWindow.Handle, "Handle");
 
         var lastHeartbeatCheck = DateTime.UtcNow;
+        // Retry handle delivery for ~10s (loop cadence is 1s) even when heartbeats are
+        // disabled, then stop so a no-heartbeat framework doesn't ping forever.
+        const int maxHandleResends = 10;
+        var handleResends = 0;
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -752,8 +837,14 @@ public class ProfileEngine
                 return;
             }
 
-            if (!instance.LastHeartbeat.HasValue)
+            // Re-send the handle until the first heartbeat confirms delivery, capped so a
+            // heartbeat-disabled framework (no heartbeat ever arrives) doesn't ping forever
+            // while still retrying enough for a D2BS window that wasn't ready at launch.
+            if (!instance.LastHeartbeat.HasValue && handleResends < maxHandleResends)
+            {
                 process.SendMessage((MessageType)_messageWindow.Handle, "Handle");
+                handleResends++;
+            }
 
             // Check heartbeat every ~10 seconds
             var now = DateTime.UtcNow;
@@ -761,15 +852,37 @@ public class ProfileEngine
             {
                 lastHeartbeatCheck = now;
 
+                // Re-resolve the profile's framework each tick so edits to its health
+                // thresholds (or a framework reassignment) take effect on a running profile
+                // without requiring a restart. Repository reads are lock-protected, but
+                // keep the guard: an exception escaping the watchdog would be misread as
+                // a crash and relaunch a healthy game — keep the previous thresholds until
+                // the next tick instead.
+                try
+                {
+                    monitoredProfile = await _profileRepository.GetByKeyAsync(instance.ProfileName);
+                    monitoredFramework = monitoredProfile != null ? await ResolveFrameworkAsync(monitoredProfile) : null;
+                    heartbeatTimeout = monitoredFramework?.HeartbeatTimeoutOrDefault() ?? 30;
+                    maxMissedHeartbeats = monitoredFramework?.MaxMissedHeartbeatsOrDefault() ?? 3;
+                    unresponsiveTimeout = monitoredFramework?.UnresponsiveTimeoutOrDefault() ?? 30;
+                    heartbeatEnabled = heartbeatTimeout > 0;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex,
+                        "Threshold re-resolution failed for {Name}; keeping previous values",
+                        instance.ProfileName);
+                }
+
                 var elapsed = (now - (instance.LastHeartbeat ?? instance.StartedAt!.Value)).TotalSeconds;
-                if (elapsed > _heartbeatTimeoutSeconds)
+                if (heartbeatEnabled && elapsed > heartbeatTimeout)
                 {
                     process.SendMessage((MessageType)_messageWindow.Handle, "Handle");
                     instance.MissedHeartbeats++;
                     _logger.LogWarning("Profile {Name} missed heartbeat ({Count}/{Max})",
-                        instance.ProfileName, instance.MissedHeartbeats, _maxMissedHeartbeats);
+                        instance.ProfileName, instance.MissedHeartbeats, maxMissedHeartbeats);
 
-                    if (instance.MissedHeartbeats >= _maxMissedHeartbeats)
+                    if (instance.MissedHeartbeats >= maxMissedHeartbeats)
                     {
                         await KillUnresponsiveAndRecoverAsync(
                             instance, process, "Process not responding", cancellationToken);
@@ -783,10 +896,10 @@ public class ProfileEngine
             // even though kolbot's background heartbeat thread may still be ticking.
             // Mirrors the reference manager's Process.Responding watchdog.
             var hwnd = process.GameWindow;
-            if (hwnd != 0 && IsGameWindowHung(hwnd))
+            if (unresponsiveTimeout > 0 && hwnd != 0 && IsGameWindowHung(hwnd))
             {
                 instance.UnresponsiveSince ??= now;
-                if ((now - instance.UnresponsiveSince.Value).TotalSeconds >= _unresponsiveTimeoutSeconds)
+                if ((now - instance.UnresponsiveSince.Value).TotalSeconds >= unresponsiveTimeout)
                 {
                     await KillUnresponsiveAndRecoverAsync(
                         instance, process, "Game window not responding", cancellationToken);
@@ -853,10 +966,14 @@ public class ProfileEngine
             await NotifyProfileStateChangedAsync(profileName, includeProfile: true);
         }
 
-        if (instance.CrashCount < _maxCrashRetries)
+        var maxCrashRetries = profile != null
+            ? (await ResolveFrameworkAsync(profile))?.MaxCrashRetriesOrDefault() ?? 5
+            : 5;
+
+        if (instance.CrashCount < maxCrashRetries)
         {
             _logger.LogWarning("Profile {Name} crashed, restarting ({Count}/{Max})",
-                profileName, instance.CrashCount, _maxCrashRetries);
+                profileName, instance.CrashCount, maxCrashRetries);
 
             try
             {
@@ -896,13 +1013,14 @@ public class ProfileEngine
 
             // Set error status before transitioning to Stopped so the message is preserved.
             // Do NOT use SetErrorAsync here — it would set state to Error, allowing restarts.
-            instance.Status = $"Exceeded max crash retries ({_maxCrashRetries})";
+            instance.Status = $"Exceeded max crash retries ({maxCrashRetries})";
             instance.KeyName = null;
             instance.ProxyName = null;
             await instance.TransitionToAsync(RunState.Stopped);
             await NotifyProfileStateChangedAsync(profileName, includeProfile: true);
             await BroadcastKeyListsSnapshotAsync();
             await BroadcastProxiesSnapshotAsync();
+            await BroadcastFrameworksSnapshotAsync();
         }
     }
 
@@ -1089,6 +1207,7 @@ public class ProfileEngine
 
         await BroadcastKeyListsSnapshotAsync();
         await BroadcastProxiesSnapshotAsync();
+        await BroadcastFrameworksSnapshotAsync();
     }
 
     private Task ResumeMonitoringBackgroundAsync(ProfileInstance instance)

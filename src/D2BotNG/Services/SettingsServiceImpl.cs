@@ -17,8 +17,11 @@ public class SettingsServiceImpl : SettingsService.SettingsServiceBase
     private readonly ProfileRepository _profileRepository;
     private readonly KeyListRepository _keyListRepository;
     private readonly ProxyRepository _proxyRepository;
+    private readonly FrameworkRepository _frameworkRepository;
+    private readonly FrameworkBootstrap _frameworkBootstrap;
     private readonly ScheduleRepository _scheduleRepository;
     private readonly PatchRepository _patchRepository;
+    private readonly ItemRepository _itemRepository;
     private readonly ProfileEngine _profileEngine;
     private readonly EventBroadcaster _eventBroadcaster;
 
@@ -27,8 +30,11 @@ public class SettingsServiceImpl : SettingsService.SettingsServiceBase
         ProfileRepository profileRepository,
         KeyListRepository keyListRepository,
         ProxyRepository proxyRepository,
+        FrameworkRepository frameworkRepository,
+        FrameworkBootstrap frameworkBootstrap,
         ScheduleRepository scheduleRepository,
         PatchRepository patchRepository,
+        ItemRepository itemRepository,
         ProfileEngine profileEngine,
         EventBroadcaster eventBroadcaster)
     {
@@ -36,8 +42,11 @@ public class SettingsServiceImpl : SettingsService.SettingsServiceBase
         _profileRepository = profileRepository;
         _keyListRepository = keyListRepository;
         _proxyRepository = proxyRepository;
+        _frameworkRepository = frameworkRepository;
+        _frameworkBootstrap = frameworkBootstrap;
         _scheduleRepository = scheduleRepository;
         _patchRepository = patchRepository;
+        _itemRepository = itemRepository;
         _profileEngine = profileEngine;
         _eventBroadcaster = eventBroadcaster;
     }
@@ -58,8 +67,14 @@ public class SettingsServiceImpl : SettingsService.SettingsServiceBase
             await _profileRepository.ReloadAsync();
             await _keyListRepository.ReloadAsync();
             await _proxyRepository.ReloadAsync();
+            await _frameworkRepository.ReloadAsync();
             await _scheduleRepository.ReloadAsync();
             await _patchRepository.ReloadAsync();
+
+            // Ensure a default framework exists at the new path and every profile
+            // references one, then rebuild the item (mules) watchers for it.
+            await _frameworkBootstrap.EnsureDefaultAsync();
+            await _itemRepository.RefreshAsync();
         }
 
         // Broadcast settings event
@@ -75,6 +90,7 @@ public class SettingsServiceImpl : SettingsService.SettingsServiceBase
             await _profileEngine.BroadcastProfilesSnapshotAsync();
             await _profileEngine.BroadcastKeyListsSnapshotAsync();
             await _profileEngine.BroadcastProxiesSnapshotAsync();
+            await _profileEngine.BroadcastFrameworksSnapshotAsync();
             await BroadcastSchedulesSnapshotAsync();
         }
 

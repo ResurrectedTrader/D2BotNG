@@ -104,3 +104,7 @@ export type { HelpTooltipProps } from "./HelpTooltip";
 // Tooltip
 export { Tooltip } from "./Tooltip";
 export type { TooltipProps } from "./Tooltip";
+
+// EnvVarsEditor
+export { EnvVarsEditor } from "./EnvVarsEditor";
+export type { EnvVar, EnvVarsEditorProps } from "./EnvVarsEditor";

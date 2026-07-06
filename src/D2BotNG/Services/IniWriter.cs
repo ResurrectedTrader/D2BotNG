@@ -6,7 +6,7 @@ using D2BotNG.Utilities;
 namespace D2BotNG.Services;
 
 /// <summary>
-/// Writes profile configurations to d2bs.ini file.
+/// Writes profile configurations to each framework's d2bs.ini file.
 /// </summary>
 public class IniWriter
 {
@@ -19,43 +19,38 @@ public class IniWriter
     private const int ReplaceRetryMs = 20;
 
     private readonly ILogger<IniWriter> _logger;
-    private readonly Paths _paths;
 
-    public IniWriter(
-        ILogger<IniWriter> logger,
-        Paths paths)
+    public IniWriter(ILogger<IniWriter> logger)
     {
         _logger = logger;
-        _paths = paths;
     }
 
     /// <summary>
-    /// Write all profiles to d2bs.ini.
+    /// Write profiles to each framework's d2bs.ini. Every framework's ini is rewritten
+    /// with only the profiles assigned to it, so moving a profile between frameworks
+    /// removes it from the old ini and adds it to the new one.
     /// </summary>
-    public Task WriteAsync(IReadOnlyList<Profile> profiles)
+    public Task WriteAsync(IReadOnlyList<Profile> profiles, IReadOnlyList<Framework> frameworks)
     {
         // A Win32 named mutex has thread affinity - it must be released by the
         // same thread that acquired it, and no await may sit between acquire and
         // release. So run the whole locked read-modify-write synchronously on one
         // pool thread rather than interleaving it with async file I/O.
-        return Task.Run(() => WriteLocked(profiles));
+        return Task.Run(() => WriteLocked(profiles, frameworks));
     }
 
-    private void WriteLocked(IReadOnlyList<Profile> profiles)
+    private void WriteLocked(IReadOnlyList<Profile> profiles, IReadOnlyList<Framework> frameworks)
     {
-        var iniPath = Path.Combine(_paths.D2BSDirectory, "d2bs.ini");
-        if (!File.Exists(iniPath))
+        if (frameworks.Count == 0)
         {
-            _logger.LogError("{iniPath} does not exist", iniPath);
             return;
         }
 
-        // Serialize against d2bsng (and any other cooperating writer) on the
-        // shared named mutex, then commit via temp file + atomic replace so no
-        // reader ever sees a half-written file.
+        // Serialize against d2bsng (and any other cooperating writer) on the shared
+        // named mutex once for the whole batch, then commit each ini via temp file +
+        // atomic replace so no reader ever sees a half-written file.
         using var mutex = new Mutex(false, IniLockName);
         var owned = false;
-        string? tempPath = null;
         try
         {
             try
@@ -64,13 +59,55 @@ public class IniWriter
             }
             catch (AbandonedMutexException)
             {
-                // A holder crashed mid-transaction; we now own the mutex. The file
-                // is still intact because every writer commits atomically.
+                // A holder crashed mid-transaction; we now own the mutex. Files are
+                // still intact because every writer commits atomically.
                 owned = true;
             }
-            // Proceed even on timeout (!owned): the atomic replace keeps the file
-            // safe, so the worst case is a lost update under pathological contention.
+            // Proceed even on timeout (!owned): the atomic replace keeps files safe,
+            // so the worst case is a lost update under pathological contention.
 
+            // Two frameworks can target the same d2bs.ini (e.g. a shared kolbot install
+            // with different DLLs/version/env). Group by the resolved ini path and write
+            // the union of every in-group framework's profiles, so one framework's write
+            // can't drop the profiles of another that shares the file. Frameworks that opt
+            // out of ini writing, or have no d2bs directory, are excluded.
+            var writable = frameworks
+                .Where(f => f.UsesIniOrDefault() && !string.IsNullOrWhiteSpace(f.D2BsPath))
+                .ToList();
+
+            foreach (var group in writable.GroupBy(
+                         f => Path.GetFullPath(f.IniPath()), StringComparer.OrdinalIgnoreCase))
+            {
+                var names = group.Select(f => f.Name).ToHashSet(StringComparer.Ordinal);
+                var groupProfiles = profiles.Where(p => names.Contains(p.Framework)).ToList();
+                // Every framework in the group resolves to the same ini path, so any of
+                // them works for locating and writing the file.
+                WriteFrameworkIni(group.First(), groupProfiles);
+            }
+        }
+        finally
+        {
+            if (owned)
+            {
+                mutex.ReleaseMutex();
+            }
+        }
+    }
+
+    private void WriteFrameworkIni(Framework framework, IReadOnlyList<Profile> profiles)
+    {
+        var iniPath = framework.IniPath();
+        if (!File.Exists(iniPath))
+        {
+            _logger.LogWarning(
+                "{iniPath} does not exist; skipping d2bs.ini write for framework '{Name}'",
+                iniPath, framework.Name);
+            return;
+        }
+
+        string? tempPath = null;
+        try
+        {
             const string marker = "; gateway=";
             var content = File.ReadAllText(iniPath);
             var markerIndex = content.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
@@ -92,27 +129,23 @@ public class IniWriter
 
             // Stage on a temp file in the same directory (same volume, so the swap
             // is atomic), then replace d2bs.ini.
-            tempPath = Path.Combine(_paths.D2BSDirectory, Path.GetRandomFileName());
-            File.WriteAllText(tempPath, sb.ToString(), Encoding.Unicode);
+            var directory = Path.GetDirectoryName(iniPath)!;
+            tempPath = Path.Combine(directory, Path.GetRandomFileName());
+            AtomicFile.WriteDurable(tempPath, sb.ToString(), Encoding.Unicode);
             ReplaceWithRetry(tempPath, iniPath);
             tempPath = null; // consumed by the successful replace
 
-            _logger.LogDebug("Wrote d2bs.ini with {Count} profiles", profiles.Count);
+            _logger.LogDebug("Wrote {iniPath} with {Count} profiles", iniPath, profiles.Count);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to write d2bs.ini");
+            _logger.LogError(ex, "Failed to write {iniPath}", iniPath);
         }
         finally
         {
             if (tempPath is not null)
             {
                 TryDelete(tempPath);
-            }
-
-            if (owned)
-            {
-                mutex.ReleaseMutex();
             }
         }
     }

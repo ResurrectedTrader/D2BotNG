@@ -14,6 +14,7 @@ import { EventService } from "../generated/events_pb";
 import { ItemService } from "../generated/items_pb";
 import { KeyService } from "../generated/keys_pb";
 import { ProxyService } from "../generated/proxies_pb";
+import { FrameworkService } from "../generated/frameworks_pb";
 import { ProfileService } from "../generated/profiles_pb";
 import { ScheduleService } from "../generated/schedules_pb";
 import { SettingsService, FileService } from "../generated/settings_pb";
@@ -131,6 +132,12 @@ export const keyClient = createClient(KeyService, commandTransport);
  * - SOCKS5 connection test
  */
 export const proxyClient = createClient(ProxyService, transport);
+
+/**
+ * Framework management client
+ * - Framework CRUD (launch bundles: game/d2bs/dll paths + version)
+ */
+export const frameworkClient = createClient(FrameworkService, transport);
 
 /**
  * Schedule management client

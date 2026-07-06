@@ -400,6 +400,9 @@ public class D2BSMessageHandler : BackgroundService
         var instance = _profileEngine.GetInstance(targetProfile.Name);
         if (instance == null) return;
 
+        // The launched executable is the profile's own Diablo II Path.
+        var gamePath = targetProfile.D2Path;
+
         var export = new
         {
             targetProfile.Name,
@@ -408,7 +411,7 @@ public class D2BSMessageHandler : BackgroundService
             targetProfile.Character,
             Difficulty = targetProfile.Difficulty.ToString(),
             Realm = targetProfile.Realm.ToString(),
-            Game = targetProfile.D2Path,
+            Game = gamePath,
             Entry = Path.GetFileName(targetProfile.EntryScript),
             Tag = targetProfile.InfoTag
         };

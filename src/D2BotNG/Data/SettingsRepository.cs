@@ -1,16 +1,26 @@
 using D2BotNG.Core.Protos;
 using D2BotNG.Legacy.Models;
+using D2BotNG.Logging;
 using D2BotNG.Utilities;
-using Microsoft.Win32;
+using Google.Protobuf;
+using ILogger = Serilog.ILogger;
 
 namespace D2BotNG.Data;
 
 public class SettingsRepository
 {
+    private static readonly ILogger Logger = TrackingLoggerFactory.ForContext(typeof(SettingsRepository));
+
     private readonly string _filePath = Path.Combine(AppContext.BaseDirectory, "d2botng.json");
     private readonly SemaphoreSlim _lock = new(1, 1);
     private Settings? _settings;
     private bool _loaded;
+
+    /// <summary>
+    /// Pre-frameworks game/engine values recovered from a v0 settings file during load,
+    /// consumed by FrameworkBootstrap to seed the Default framework. Null for v1+ files.
+    /// </summary>
+    public SettingsMigrator.LegacyGameEngine? LegacySettings { get; private set; }
 
     /// <summary>
     /// Raised when settings are updated via UpdateAsync.
@@ -29,7 +39,33 @@ public class SettingsRepository
             if (File.Exists(_filePath))
             {
                 var json = await File.ReadAllTextAsync(_filePath);
-                _settings = ProtobufJsonConfig.Parser.Parse<Settings>(json);
+                try
+                {
+                    _settings = ProtobufJsonConfig.Parser.Parse<Settings>(json);
+                }
+                catch (InvalidProtocolBufferException ex)
+                {
+                    // Corrupt/truncated settings (see AtomicFile). This is the first
+                    // file read at startup, so throwing would make every launch die —
+                    // quarantine and boot with defaults instead.
+                    QuarantineCorruptFile(ex);
+                    _settings = CreateDefault();
+                }
+
+                if (_settings.SchemaVersion < SettingsMigrator.CurrentVersion)
+                {
+                    // Recover the pre-frameworks game/engine values (parsed into the
+                    // archived old shape) for FrameworkBootstrap to seed the Default
+                    // framework. We deliberately do NOT rewrite the file here: leaving it
+                    // at its old schema version keeps these values recoverable if startup
+                    // fails before the framework migration completes. The file upgrades on
+                    // the next save (SaveInternalAsync always stamps the version), by which
+                    // point the bootstrap has already consumed these values.
+                    LegacySettings = SettingsMigrator.CaptureLegacy(json, _settings.SchemaVersion);
+                    Logger.Information(
+                        "Loaded {File} at schema v{Version}; recovered legacy game/engine settings for framework migration",
+                        Path.GetFileName(_filePath), _settings.SchemaVersion);
+                }
             }
             else
             {
@@ -48,6 +84,24 @@ public class SettingsRepository
         }
     }
 
+    private void QuarantineCorruptFile(Exception ex)
+    {
+        var quarantinePath = _filePath + ".corrupt";
+        try
+        {
+            File.Move(_filePath, quarantinePath, overwrite: true);
+            Logger.Warning(ex,
+                "Settings file {FilePath} is unreadable; quarantined to {QuarantinePath} and starting with defaults. It will be rewritten on the next save",
+                _filePath, quarantinePath);
+        }
+        catch (Exception moveEx)
+        {
+            Logger.Error(moveEx,
+                "Settings file {FilePath} is unreadable and could not be quarantined; starting with defaults",
+                _filePath);
+        }
+    }
+
     private static Settings CreateDefault()
     {
         return new Settings
@@ -63,56 +117,14 @@ public class SettingsRepository
                 ShowItemHeader = true,
             },
             LegacyApi = new LegacyApiSettings(),
-            Game = new GameSettings
-            {
-                D2InstallPath = DefaultD2InstallPath,
-            },
             BasePath = AppContext.BaseDirectory,
             MinimizeToTray = true,
+            SchemaVersion = SettingsMigrator.CurrentVersion,
         };
-    }
-
-    private static string DefaultD2InstallPath
-    {
-        get
-        {
-            if (field != null) return field;
-            try
-            {
-                using var key = Registry.CurrentUser.OpenSubKey(@"Software\Blizzard Entertainment\Diablo II");
-                var installPath = key?.GetValue("InstallPath")?.ToString();
-                if (!string.IsNullOrEmpty(installPath))
-                    field = installPath;
-            }
-            catch (Exception)
-            {
-                // Registry access failed, fall back to desktop
-            }
-
-            field ??= Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-            return field;
-        }
     }
 
     private static void EnsureDefaults(Settings settings)
     {
-        // Ensure Game config exists with default D2 install path
-        if (settings.Game == null)
-        {
-            settings.Game = new GameSettings { D2InstallPath = DefaultD2InstallPath, GameVersion = "1.14d" };
-        }
-        else
-        {
-            if (string.IsNullOrEmpty(settings.Game.D2InstallPath))
-            {
-                settings.Game.D2InstallPath = DefaultD2InstallPath;
-            }
-            if (string.IsNullOrEmpty(settings.Game.GameVersion))
-            {
-                settings.Game.GameVersion = "1.14d";
-            }
-        }
-
         if (string.IsNullOrWhiteSpace(settings.BasePath))
         {
             settings.BasePath = AppContext.BaseDirectory;
@@ -124,11 +136,6 @@ public class SettingsRepository
         }
 
         settings.Startup ??= new StartupSettings();
-        settings.Engine ??= new EngineSettings();
-        if (settings.Engine.HeartbeatTimeoutSeconds <= 0) settings.Engine.HeartbeatTimeoutSeconds = 30;
-        if (settings.Engine.MaxMissedHeartbeats <= 0) settings.Engine.MaxMissedHeartbeats = 3;
-        if (settings.Engine.MaxCrashRetries <= 0) settings.Engine.MaxCrashRetries = 5;
-        if (settings.Engine.UnresponsiveTimeoutSeconds <= 0) settings.Engine.UnresponsiveTimeoutSeconds = 30;
     }
 
     public async Task<Settings> GetAsync()
@@ -156,9 +163,9 @@ public class SettingsRepository
 
     private async Task SaveInternalAsync()
     {
+        // Every save writes the current schema version so the file stays stamped.
+        _settings!.SchemaVersion = SettingsMigrator.CurrentVersion;
         var json = ProtobufJsonConfig.Formatter.Format(_settings);
-        var tempPath = _filePath + ".tmp";
-        await File.WriteAllTextAsync(tempPath, json);
-        File.Move(tempPath, _filePath, overwrite: true);
+        await AtomicFile.WriteAllTextAsync(_filePath, json);
     }
 }

@@ -60,6 +60,11 @@
   <ItemGroup>
     <Protobuf Include="..\..\protos\*.proto" GrpcServices="Server" ProtoRoot="..\..\protos" />
   </ItemGroup>
+  <!-- Backend-only archived proto shapes for settings migration.
+       Kept out of protos/ so they are excluded from the frontend's buf generation. -->
+  <ItemGroup>
+    <Protobuf Include="Legacy\Protos\*.proto" GrpcServices="None" ProtoRoot="Legacy\Protos" />
+  </ItemGroup>
   <ItemGroup>
     <Folder Include="..\..\docs\">
       <Link>docs</Link>

@@ -106,6 +106,14 @@ public class EventServiceImpl : EventService.EventServiceBase
             ProxiesSnapshot = proxiesSnapshot
         }, ct);
 
+        // 2c. Frameworks snapshot with usage
+        var frameworksSnapshot = await _profileEngine.BuildFrameworksSnapshotAsync();
+        await responseStream.WriteAsync(new Event
+        {
+            Timestamp = now,
+            FrameworksSnapshot = frameworksSnapshot
+        }, ct);
+
         // 3. Schedules snapshot
         var schedulesSnapshot = await BuildSchedulesSnapshotAsync();
         await responseStream.WriteAsync(new Event

@@ -4,6 +4,7 @@ import {
   UserGroupIcon,
   KeyIcon,
   GlobeAltIcon,
+  CommandLineIcon,
   ClockIcon,
   UserIcon,
   Cog6ToothIcon,
@@ -11,6 +12,7 @@ import {
 } from "@heroicons/react/24/outline";
 import clsx from "clsx";
 import { AboutDialog } from "../AboutDialog";
+import { useSettings } from "@/stores/event-store";
 
 const navigation = [
   { name: "Profiles", href: "/profiles", icon: UserGroupIcon },
@@ -18,11 +20,18 @@ const navigation = [
   { name: "Keys", href: "/keys", icon: KeyIcon },
   { name: "Schedules", href: "/schedules", icon: ClockIcon },
   { name: "Proxies", href: "/proxies", icon: GlobeAltIcon },
+  { name: "Frameworks", href: "/frameworks", icon: CommandLineIcon },
   { name: "Settings", href: "/settings", icon: Cog6ToothIcon },
 ];
 
 export function Sidebar() {
   const [aboutOpen, setAboutOpen] = useState(false);
+  const advanced = useSettings()?.advancedMode ?? false;
+
+  // Frameworks are an advanced-mode concept; hide the nav entry in basic mode.
+  const navItems = navigation.filter(
+    (item) => advanced || item.name !== "Frameworks",
+  );
 
   return (
     <>
@@ -38,7 +47,7 @@ export function Sidebar() {
             <ul role="list" className="flex flex-1 flex-col gap-y-7">
               <li>
                 <ul role="list" className="-mx-2 space-y-1">
-                  {navigation.map((item) => (
+                  {navItems.map((item) => (
                     <li key={item.name}>
                       <NavLink
                         to={item.href}

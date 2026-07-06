@@ -121,6 +121,7 @@ public static class NativeTypes
 
     // Process creation flags (DWORD)
     public const uint CREATE_SUSPENDED = 0x00000004;
+    public const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
 
     // Window show commands (int - used with ShowWindow)
     public const int SW_HIDE = 0;

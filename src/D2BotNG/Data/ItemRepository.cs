@@ -4,48 +4,91 @@ using System.Text.RegularExpressions;
 using D2BotNG.Core.Protos;
 using D2BotNG.Legacy.Models;
 using D2BotNG.Services;
+using D2BotNG.Utilities;
 using Google.Protobuf.WellKnownTypes;
 using JetBrains.Annotations;
 
 namespace D2BotNG.Data;
 
 /// <summary>
-/// In-memory repository for character entities and their items.
-/// Loads all data on startup and watches for file changes.
+/// In-memory repository for character entities and their items. Aggregates item logs
+/// from every framework's kolbot/mules directory, loading all on startup and watching
+/// each for changes. Call <see cref="RefreshAsync"/> when the set of frameworks changes.
 /// </summary>
 public class ItemRepository : IDisposable
 {
-    private readonly string _mulesDir;
+    private readonly FrameworkRepository _frameworkRepository;
     private readonly ILogger<ItemRepository> _logger;
     private readonly EventBroadcaster _eventBroadcaster;
     private readonly ConcurrentDictionary<string, CharacterEntity> _entities = new();
     private readonly SemaphoreSlim _loadLock = new(1, 1);
-    private FileSystemWatcher? _watcher;
+    private readonly List<FileSystemWatcher> _watchers = [];
+    private volatile string[] _mulesDirs = [];
     private bool _disposed;
 
-    public ItemRepository(Paths paths, ILogger<ItemRepository> logger, EventBroadcaster eventBroadcaster)
+    public ItemRepository(FrameworkRepository frameworkRepository, ILogger<ItemRepository> logger, EventBroadcaster eventBroadcaster)
     {
-        _mulesDir = paths.MulesDirectory;
+        _frameworkRepository = frameworkRepository;
         _logger = logger;
         _eventBroadcaster = eventBroadcaster;
     }
 
     /// <summary>
-    /// Initialize the repository by loading all entities and starting file watcher.
+    /// Initialize the repository by loading all entities and starting file watchers.
     /// </summary>
-    public async Task InitializeAsync()
+    public Task InitializeAsync() => RefreshAsync();
+
+    /// <summary>
+    /// Recompute the set of mules directories from the current frameworks, reload all
+    /// entities, and (re)start the file watchers. Notifies clients to refresh.
+    /// </summary>
+    public async Task RefreshAsync()
     {
-        await LoadAllEntitiesAsync();
-        StartWatcher();
+        var dirs = await ComputeMulesDirsAsync();
+
+        await _loadLock.WaitAsync();
+        try
+        {
+            _mulesDirs = dirs;
+            await LoadAllEntitiesLockedAsync();
+            StartWatchers(dirs);
+        }
+        finally
+        {
+            _loadLock.Release();
+        }
+
+        NotifyEntitiesChanged();
+    }
+
+    private async Task<string[]> ComputeMulesDirsAsync()
+    {
+        var frameworks = await _frameworkRepository.GetAllAsync();
+        return frameworks
+            .Where(f => !string.IsNullOrWhiteSpace(f.D2BsPath))
+            .Select(f => f.MulesDirectory())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     /// <summary>
     /// Get all entities, optionally filtered by path prefix.
     /// </summary>
+    /// <summary>Whether <paramref name="path"/> is <paramref name="prefix"/> itself or lies under it.</summary>
+    private static bool MatchesPrefix(string path, string prefix) =>
+        path.Equals(prefix, StringComparison.OrdinalIgnoreCase)
+        || (path.Length > prefix.Length
+            && path[prefix.Length] == '/'
+            && path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+
     public IReadOnlyList<Entity> GetEntities(string? pathPrefix = null)
     {
         var result = new List<Entity>();
         var directories = new HashSet<string>();
+
+        // Anchor the prefix at a path-component boundary: "useast" must match
+        // "useast/acct" but not the sibling directory "useast2/acct".
+        var prefix = string.IsNullOrEmpty(pathPrefix) ? null : pathPrefix.TrimEnd('/');
 
         foreach (var kvp in _entities)
         {
@@ -53,7 +96,7 @@ public class ItemRepository : IDisposable
             var entity = kvp.Value;
 
             // Filter by prefix if specified
-            if (!string.IsNullOrEmpty(pathPrefix) && !path.StartsWith(pathPrefix, StringComparison.OrdinalIgnoreCase))
+            if (prefix != null && !MatchesPrefix(path, prefix))
             {
                 continue;
             }
@@ -65,7 +108,7 @@ public class ItemRepository : IDisposable
             {
                 currentPath = i == 0 ? parts[i] : $"{currentPath}/{parts[i]}";
 
-                if (!string.IsNullOrEmpty(pathPrefix) && !currentPath.StartsWith(pathPrefix, StringComparison.OrdinalIgnoreCase))
+                if (prefix != null && !MatchesPrefix(currentPath, prefix))
                 {
                     continue;
                 }
@@ -193,8 +236,9 @@ public class ItemRepository : IDisposable
 
     /// <summary>
     /// Remove a single item line from the mule .txt file backing the given entity.
-    /// Matches the first line whose parsed item's full post-$ identifier starts
-    /// with <paramref name="descriptionId"/>. The post-$ chunk encodes
+    /// Searches every framework's mules directory for the entity's file. Matches the
+    /// first line whose parsed item's full post-$ identifier starts with
+    /// <paramref name="descriptionId"/>. The post-$ chunk encodes
     /// gid:classid:loc:x:y:base64info and is per-game-session unique, so prefix
     /// equality is at least as strict as the legacy bot's substring match.
     /// </summary>
@@ -208,20 +252,38 @@ public class ItemRepository : IDisposable
         var segments = entityPath.Split('/', '\\');
         if (segments.Any(s => s == ".." || s.Contains(':')))
         {
-            throw new ArgumentException("entityPath must be a relative path under the mules directory", nameof(entityPath));
+            throw new ArgumentException("entityPath must be a relative path under a mules directory", nameof(entityPath));
         }
 
         var platformRelative = entityPath.Replace('/', Path.DirectorySeparatorChar);
-        var filePath = Path.Combine(_mulesDir, platformRelative + ".txt");
-
-        // Defense in depth: reject anything that resolves outside _mulesDir.
-        var fullMules = Path.GetFullPath(_mulesDir);
-        var fullTarget = Path.GetFullPath(filePath);
         var sep = Path.DirectorySeparatorChar;
-        var fullMulesPrefix = fullMules.TrimEnd(sep) + sep;
-        if (!fullTarget.StartsWith(fullMulesPrefix, StringComparison.OrdinalIgnoreCase))
+
+        // Locate the backing file across all framework mules directories. When the same
+        // relative path exists under several frameworks, the LAST match wins — mirroring
+        // load order (LoadAllEntitiesLockedAsync lets a later directory overwrite the
+        // entity), so we delete the file that's actually displayed. Defense in depth: skip
+        // any directory the resolved path escapes.
+        string? filePath = null;
+        foreach (var dir in _mulesDirs)
         {
-            throw new ArgumentException("entityPath escapes the mules directory", nameof(entityPath));
+            var candidate = Path.Combine(dir, platformRelative + ".txt");
+            var fullDir = Path.GetFullPath(dir);
+            var fullTarget = Path.GetFullPath(candidate);
+            var fullDirPrefix = fullDir.TrimEnd(sep) + sep;
+            if (!fullTarget.StartsWith(fullDirPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (File.Exists(candidate))
+            {
+                filePath = candidate;
+            }
+        }
+
+        if (filePath == null)
+        {
+            return false;
         }
 
         await _loadLock.WaitAsync();
@@ -272,23 +334,11 @@ public class ItemRepository : IDisposable
                 return false;
             }
 
-            // Atomic write: write to .tmp then rename over the original.
+            // Durable atomic write (flush to disk, then rename — see AtomicFile).
             // Use LF line endings to match what D2BS writes — mixing CRLF (Windows
             // default) with LF would make the file appear malformed if D2BS later
             // appends to it.
-            var tempPath = filePath + ".tmp";
-            try
-            {
-                await File.WriteAllTextAsync(tempPath, string.Join('\n', kept) + '\n');
-                File.Move(tempPath, filePath, overwrite: true);
-            }
-            catch
-            {
-                // Best-effort cleanup so a crashed/aborted write doesn't leave
-                // a stale .tmp behind. Rethrow the original exception.
-                try { File.Delete(tempPath); } catch { /* ignore */ }
-                throw;
-            }
+            await AtomicFile.WriteAllTextAsync(filePath, string.Join('\n', kept) + '\n');
 
             return true;
         }
@@ -298,27 +348,12 @@ public class ItemRepository : IDisposable
         }
     }
 
-    private async Task LoadAllEntitiesAsync()
+    private async Task ReloadAllAsync()
     {
         await _loadLock.WaitAsync();
         try
         {
-            _entities.Clear();
-
-            if (!Directory.Exists(_mulesDir))
-            {
-                _logger.LogInformation("Mules directory does not exist: {MulesDir}", _mulesDir);
-                return;
-            }
-
-            var files = Directory.GetFiles(_mulesDir, "*.txt", SearchOption.AllDirectories);
-
-            foreach (var file in files)
-            {
-                await LoadEntityFromFileAsync(file);
-            }
-
-            _logger.LogInformation("Loaded {Count} entities with items from {MulesDir}", _entities.Count, _mulesDir);
+            await LoadAllEntitiesLockedAsync();
         }
         finally
         {
@@ -326,11 +361,35 @@ public class ItemRepository : IDisposable
         }
     }
 
-    private async Task LoadEntityFromFileAsync(string filePath)
+    private async Task LoadAllEntitiesLockedAsync()
+    {
+        _entities.Clear();
+
+        foreach (var mulesDir in _mulesDirs)
+        {
+            if (!Directory.Exists(mulesDir))
+            {
+                _logger.LogInformation("Mules directory does not exist: {MulesDir}", mulesDir);
+                continue;
+            }
+
+            var files = Directory.GetFiles(mulesDir, "*.txt", SearchOption.AllDirectories);
+            foreach (var file in files)
+            {
+                await LoadEntityFromFileAsync(mulesDir, file);
+            }
+        }
+
+        _logger.LogInformation(
+            "Loaded {Count} entities with items from {DirCount} mules director(ies)",
+            _entities.Count, _mulesDirs.Length);
+    }
+
+    private async Task LoadEntityFromFileAsync(string mulesDir, string filePath)
     {
         try
         {
-            var relativePath = Path.GetRelativePath(_mulesDir, filePath);
+            var relativePath = Path.GetRelativePath(mulesDir, filePath);
             // Convert to forward slashes and remove .txt extension
             var entityPath = relativePath
                 .Replace(Path.DirectorySeparatorChar, '/')
@@ -467,41 +526,59 @@ public class ItemRepository : IDisposable
         return (displayName, mode);
     }
 
-    private void StartWatcher()
+    private void StartWatchers(string[] dirs)
     {
-        if (!Directory.Exists(_mulesDir))
+        foreach (var watcher in _watchers)
         {
-            _logger.LogWarning("Cannot start file watcher - mules directory does not exist: {MulesDir}", _mulesDir);
-            return;
+            watcher.EnableRaisingEvents = false;
+            watcher.Dispose();
         }
+        _watchers.Clear();
 
-        _watcher = new FileSystemWatcher(_mulesDir)
+        foreach (var dir in dirs)
         {
-            Filter = "*.txt",
-            IncludeSubdirectories = true,
-            NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.CreationTime
-        };
+            if (!Directory.Exists(dir))
+            {
+                _logger.LogWarning("Cannot watch - mules directory does not exist: {MulesDir}", dir);
+                continue;
+            }
 
-        _watcher.Created += OnFileSystemChange;
-        _watcher.Changed += OnFileSystemChange;
-        _watcher.Deleted += OnFileSystemChange;
-        _watcher.Renamed += OnFileSystemChange;
-        _watcher.EnableRaisingEvents = true;
+            var watcher = new FileSystemWatcher(dir)
+            {
+                Filter = "*.txt",
+                IncludeSubdirectories = true,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.CreationTime
+            };
 
-        _logger.LogInformation("Started file watcher on {MulesDir}", _mulesDir);
+            watcher.Created += OnFileSystemChange;
+            watcher.Changed += OnFileSystemChange;
+            watcher.Deleted += OnFileSystemChange;
+            watcher.Renamed += OnFileSystemChange;
+            watcher.EnableRaisingEvents = true;
+
+            _watchers.Add(watcher);
+            _logger.LogInformation("Started file watcher on {MulesDir}", dir);
+        }
     }
 
     private CancellationTokenSource? _reloadCts;
+    private readonly Lock _reloadCtsLock = new();
 
     private async void OnFileSystemChange(object sender, FileSystemEventArgs e)
     {
         _logger.LogDebug("File system change detected: {ChangeType} {FullPath}", e.ChangeType, e.FullPath);
 
-        // Cancel any pending reload and start a new debounce
-        _reloadCts?.Cancel();
-        _reloadCts?.Dispose();
-        _reloadCts = new CancellationTokenSource();
-        var token = _reloadCts.Token;
+        // Cancel any pending reload and start a new debounce. The swap must be
+        // locked: each watcher raises this handler on its own thread-pool thread,
+        // and a Cancel/Dispose race would throw unhandled out of this async void.
+        CancellationToken token;
+        lock (_reloadCtsLock)
+        {
+            _reloadCts?.Cancel();
+            _reloadCts?.Dispose();
+            _reloadCts = new CancellationTokenSource();
+            token = _reloadCts.Token;
+        }
 
         try
         {
@@ -509,14 +586,9 @@ public class ItemRepository : IDisposable
             await Task.Delay(200, token);
 
             _logger.LogInformation("Reloading all entities due to file system change");
-            await LoadAllEntitiesAsync();
+            await ReloadAllAsync();
 
-            // Notify UI to refresh
-            _eventBroadcaster.Broadcast(new Event
-            {
-                Timestamp = Timestamp.FromDateTime(DateTime.UtcNow),
-                EntitiesChanged = new EntitiesChanged()
-            });
+            NotifyEntitiesChanged();
         }
         catch (TaskCanceledException)
         {
@@ -528,13 +600,30 @@ public class ItemRepository : IDisposable
         }
     }
 
+    private void NotifyEntitiesChanged()
+    {
+        _eventBroadcaster.Broadcast(new Event
+        {
+            Timestamp = Timestamp.FromDateTime(DateTime.UtcNow),
+            EntitiesChanged = new EntitiesChanged()
+        });
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
 
-        _reloadCts?.Dispose();
-        _watcher?.Dispose();
+        lock (_reloadCtsLock)
+        {
+            _reloadCts?.Dispose();
+            _reloadCts = null;
+        }
+        foreach (var watcher in _watchers)
+        {
+            watcher.Dispose();
+        }
+        _watchers.Clear();
         _loadLock.Dispose();
     }
 

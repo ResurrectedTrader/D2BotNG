@@ -44,12 +44,12 @@ message Settings {
   CloseAction close_action = 4;
   DisplaySettings display = 5;
   LegacyApiSettings legacy_api = 6;
-  GameSettings game = 7;
-  string base_path = 8; // Application base directory. Settings/profiles etc., will be created in data/ subdirectory. Expects to have a d2bs directory and d2bs.ini file inside.
-  WindowSettings window = 9;
-  optional bool minimize_to_tray = 10; // When the minimize button or system minimize is invoked, hide to tray instead of the taskbar. Optional so absence can default to true.
-  StartupSettings startup = 11;
-  EngineSettings engine = 12;
+  string base_path = 7; // Application data directory. The manager's own data (data/ng: profiles, keys, frameworks, schedules) and item images live here. Shared across all frameworks.
+  WindowSettings window = 8;
+  optional bool minimize_to_tray = 9; // When the minimize button or system minimize is invoked, hide to tray instead of the taskbar. Optional so absence can default to true.
+  StartupSettings startup = 10;
+  int32 schema_version = 11; // Migration schema version of this settings file (see SettingsMigrator). 0/absent = pre-versioning.
+  bool advanced_mode = 12;   // UI: expose the Frameworks tab + per-profile framework dropdown. Off = basic mode (Settings edits the Default framework).
 }
 
 // Controls how profile starts are paced. Each profile waits its turn (limited by
@@ -60,29 +60,12 @@ message StartupSettings {
   int32 delay_ms = 2;     // Milliseconds to wait before launching each profile (after its turn). 0 = no wait.
 }
 
-// Profile health monitoring and crash recovery thresholds. Each value falls back
-// to a built-in default when <= 0 (heartbeat timeout 30s, 3 missed heartbeats,
-// 5 crash retries, 30s unresponsive timeout), so leaving them unset preserves the original behavior.
-message EngineSettings {
-  int32 heartbeat_timeout_seconds = 1; // Seconds without a heartbeat before a miss is counted. <= 0 uses the default (30).
-  int32 max_missed_heartbeats = 2;     // Consecutive missed heartbeats before the bot is killed and restarted. <= 0 uses the default (3).
-  int32 max_crash_retries = 3;         // Restart attempts after a crash before giving up (and disabling the schedule). <= 0 uses the default (5).
-  int32 unresponsive_timeout_seconds = 4; // Kill + restart a game whose window is continuously unresponsive (OS "not responding") this long, even if heartbeats still arrive. <= 0 uses the default (30).
-}
-
 message WindowSettings {
   int32 x = 1;
   int32 y = 2;
   int32 width = 3;
   int32 height = 4;
   bool is_maximized = 5;
-}
-
-message GameSettings {
-  string d2_install_path = 1;  // Diablo II installation path (defaults to registry or desktop)
-  string game_version = 2;     // D2 version for patch selection (e.g., "1.14d", "1.13c"). Defaults to "1.14d".
-  int32 screenshot_retention_days = 3; // Auto-delete Screenshot*.jpg in the install root older than N days. 0 = disabled.
-  int32 crash_log_retention_days = 4;  // Auto-delete BlizzardError subdirectories older than N days. 0 = disabled.
 }
 
 message DisplaySettings {

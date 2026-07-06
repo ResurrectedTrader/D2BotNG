@@ -34,6 +34,14 @@ export {
 } from "./useProxies";
 export type { UpdateProxyInput, ProxyTestResult } from "./useProxies";
 
+// Framework hooks (mutations only - data comes from event store)
+export {
+  useCreateFramework,
+  useUpdateFramework,
+  useDeleteFramework,
+} from "./useFrameworks";
+export type { FrameworkInput, UpdateFrameworkInput } from "./useFrameworks";
+
 // Schedule hooks (mutations only - data comes from event store)
 export {
   useCreateSchedule,

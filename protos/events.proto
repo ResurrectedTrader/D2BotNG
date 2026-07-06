@@ -14,6 +14,7 @@ import "settings.proto";
 import "updates.proto";
 import "logging.proto";
 import "proxies.proto";
+import "frameworks.proto";
 import "characters.proto";
 
 // Message color codes (values match reference implementation)
@@ -47,30 +48,32 @@ message ClearMessagesRequest {
 message Event {
   google.protobuf.Timestamp timestamp = 1;
 
+  // Case numbers are contiguous and carry no compatibility promise (see CLAUDE.md).
   oneof event {
     // Snapshots
-    ProfilesSnapshot profiles_snapshot = 10;
-    KeyListsSnapshot key_lists_snapshot = 11;
-    SchedulesSnapshot schedules_snapshot = 12;
-    ProxiesSnapshot proxies_snapshot = 13;
-    CharactersSnapshot characters_snapshot = 14;
+    ProfilesSnapshot profiles_snapshot = 2;
+    KeyListsSnapshot key_lists_snapshot = 3;
+    SchedulesSnapshot schedules_snapshot = 4;
+    ProxiesSnapshot proxies_snapshot = 5;
+    CharactersSnapshot characters_snapshot = 6;
+    FrameworksSnapshot frameworks_snapshot = 7;
 
     // Profile events
-    ProfileState profile_state = 23;
-    Character character_state = 24;
+    ProfileState profile_state = 8;
+    Character character_state = 9;
 
     // Console messages
-    Message message = 60;
+    Message message = 10;
 
     // Settings & Updates
-    Settings settings = 70;
-    UpdateStatus update_status = 71;
+    Settings settings = 11;
+    UpdateStatus update_status = 12;
 
     // Item entities
-    EntitiesChanged entities_changed = 80;
+    EntitiesChanged entities_changed = 13;
 
     // Logging
-    LogLevelsSnapshot log_levels_snapshot = 90;
+    LogLevelsSnapshot log_levels_snapshot = 14;
   }
 }
 
@@ -114,6 +117,17 @@ message ProxyWithUsage {
   Proxy proxy = 1;
   repeated string configured_profiles = 2;  // Profiles whose configured proxy is this one (persisted)
   repeated string active_profiles = 3;      // Profiles currently running with this proxy (runtime)
+}
+
+message FrameworksSnapshot {
+  repeated FrameworkWithUsage frameworks = 1;
+}
+
+// Per-framework usage: which profiles are configured to use it vs currently running with it.
+message FrameworkWithUsage {
+  Framework framework = 1;
+  repeated string configured_profiles = 2;  // Profiles whose framework is this one (persisted)
+  repeated string active_profiles = 3;       // Profiles currently running with this framework (runtime)
 }
 
 message CharactersSnapshot {

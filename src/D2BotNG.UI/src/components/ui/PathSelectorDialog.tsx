@@ -24,6 +24,15 @@ export interface PathSelectorDialogProps {
   filter?: (entry: DirectoryEntry, currentPath: string) => boolean;
 }
 
+/**
+ * Drop a trailing path separator, preserving a bare drive root ("C:\").
+ * The dialog keeps a trailing separator on the current path while browsing;
+ * this cleans the value handed back to the caller.
+ */
+function stripTrailingSeparator(path: string): string {
+  return path.length > 3 ? path.replace(/[\\/]+$/, "") : path;
+}
+
 export function PathSelectorDialog({
   open,
   onClose,
@@ -57,7 +66,9 @@ export function PathSelectorDialog({
   const buildFullPath = useCallback(
     (entryName: string) => {
       if (!currentPath) return entryName;
-      return currentPath + "\\" + entryName;
+      // currentPath carries a trailing separator (added by navigateTo); strip it
+      // before joining so we never produce a double separator ("C:\a\\b").
+      return currentPath.replace(/[\\/]+$/, "") + "\\" + entryName;
     },
     [currentPath],
   );
@@ -143,7 +154,7 @@ export function PathSelectorDialog({
   // Handle confirm button
   const handleConfirm = useCallback(() => {
     if (mode === "directory") {
-      onSelect(currentPath);
+      onSelect(stripTrailingSeparator(currentPath));
     } else if (selectedEntry) {
       onSelect(buildFullPath(selectedEntry));
     }

@@ -1,5 +1,7 @@
+using D2BotNG.Logging;
 using D2BotNG.Utilities;
 using Google.Protobuf;
+using ILogger = Serilog.ILogger;
 
 namespace D2BotNG.Data;
 
@@ -18,6 +20,8 @@ public abstract class FileRepository<TItem, TList> : IDisposable
     private volatile bool _loaded;
 
     private readonly Paths _paths;
+    private ILogger? _logger;
+    private ILogger Logger => _logger ??= TrackingLoggerFactory.ForContext(GetType());
 
     protected FileRepository(Paths paths, string fileName)
     {
@@ -42,7 +46,14 @@ public abstract class FileRepository<TItem, TList> : IDisposable
     /// </summary>
     protected abstract TList CreateList(IEnumerable<TItem> items);
 
-    private async Task EnsureLoadedAsync()
+    /// <summary>
+    /// The live backing list. Only valid while <see cref="Lock"/> is held — which
+    /// includes <see cref="SaveAsync"/> overrides, since every save runs under the lock.
+    /// Callers outside the lock must use <see cref="GetAllAsync"/> instead.
+    /// </summary>
+    protected IReadOnlyList<TItem> Items => _data;
+
+    protected async Task EnsureLoadedAsync()
     {
         if (_loaded) return;
 
@@ -59,13 +70,50 @@ public abstract class FileRepository<TItem, TList> : IDisposable
         }
     }
 
-    protected async Task LoadAsync()
+    protected Task LoadAsync() => LoadFileIntoAsync(_data);
+
+    /// <summary>
+    /// Reads and parses the backing file into <paramref name="target"/>. If the file is
+    /// unreadable (corrupt / truncated / zero-filled — see <see cref="AtomicFile"/>), it is
+    /// quarantined to a ".corrupt" sibling and the repository starts empty rather than
+    /// throwing forever: an unparseable file would otherwise wedge <c>EnsureLoadedAsync</c>
+    /// on every read and every save, so the app could never overwrite it with good data.
+    /// The next save writes a fresh file.
+    /// </summary>
+    private async Task LoadFileIntoAsync(List<TItem> target)
     {
         if (!File.Exists(FilePath)) return;
 
         var json = await File.ReadAllTextAsync(FilePath);
-        var list = ProtobufJsonConfig.Parser.Parse<TList>(json);
-        _data.AddRange(GetItems(list));
+        try
+        {
+            var list = ProtobufJsonConfig.Parser.Parse<TList>(json);
+            target.AddRange(GetItems(list));
+        }
+        catch (InvalidProtocolBufferException ex)
+        {
+            // InvalidJsonException derives from InvalidProtocolBufferException, so this
+            // catches both malformed-JSON and schema-mismatch failures.
+            QuarantineCorruptFile(ex);
+        }
+    }
+
+    private void QuarantineCorruptFile(Exception ex)
+    {
+        var quarantinePath = FilePath + ".corrupt";
+        try
+        {
+            File.Move(FilePath, quarantinePath, overwrite: true);
+            Logger.Warning(ex,
+                "Data file {FilePath} is unreadable; quarantined to {QuarantinePath} and starting empty. It will be rewritten on the next save",
+                FilePath, quarantinePath);
+        }
+        catch (Exception moveEx)
+        {
+            Logger.Error(moveEx,
+                "Data file {FilePath} is unreadable and could not be quarantined; starting empty",
+                FilePath);
+        }
     }
 
     protected virtual async Task SaveAsync()
@@ -77,34 +125,7 @@ public abstract class FileRepository<TItem, TList> : IDisposable
         var list = CreateList(_data);
         var json = ProtobufJsonConfig.Formatter.Format(list);
 
-        var tempPath = FilePath + ".tmp";
-        await File.WriteAllTextAsync(tempPath, json);
-        await ReplaceFileWithRetryAsync(tempPath, FilePath);
-    }
-
-    /// <summary>
-    /// Atomically replace <paramref name="finalPath"/> with <paramref name="tempPath"/>.
-    /// The rename can transiently fail with UnauthorizedAccessException/IOException when another
-    /// process (antivirus, the search indexer, an editor) briefly holds the file open — common for
-    /// the frequently-rewritten characters.json — so retry a few times with a short backoff before
-    /// surfacing the error.
-    /// </summary>
-    private static async Task ReplaceFileWithRetryAsync(string tempPath, string finalPath)
-    {
-        const int maxAttempts = 5;
-        for (var attempt = 1; ; attempt++)
-        {
-            try
-            {
-                File.Move(tempPath, finalPath, overwrite: true);
-                return;
-            }
-            catch (Exception ex)
-                when ((ex is IOException or UnauthorizedAccessException) && attempt < maxAttempts)
-            {
-                await Task.Delay(50 * attempt);
-            }
-        }
+        await AtomicFile.WriteAllTextAsync(FilePath, json);
     }
 
     /// <summary>
@@ -116,12 +137,7 @@ public abstract class FileRepository<TItem, TList> : IDisposable
         try
         {
             var tempData = new List<TItem>();
-            if (File.Exists(FilePath))
-            {
-                var json = await File.ReadAllTextAsync(FilePath);
-                var list = ProtobufJsonConfig.Parser.Parse<TList>(json);
-                tempData.AddRange(GetItems(list));
-            }
+            await LoadFileIntoAsync(tempData);
 
             _data.Clear();
             _data.AddRange(tempData);
@@ -133,16 +149,62 @@ public abstract class FileRepository<TItem, TList> : IDisposable
         }
     }
 
+    // Reads take the lock: an unlocked enumeration racing a structural write
+    // would throw InvalidOperationException.
+
     public async Task<IReadOnlyList<TItem>> GetAllAsync()
     {
         await EnsureLoadedAsync();
-        return _data.ToList();
+
+        await Lock.WaitAsync();
+        try
+        {
+            return _data.ToList();
+        }
+        finally
+        {
+            Lock.Release();
+        }
     }
 
     public async Task<TItem?> GetByKeyAsync(string key)
     {
         await EnsureLoadedAsync();
-        return _data.FirstOrDefault(e => GetKey(e) == key);
+
+        await Lock.WaitAsync();
+        try
+        {
+            return _data.FirstOrDefault(e => GetKey(e) == key);
+        }
+        finally
+        {
+            Lock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Atomically reads, mutates, and (when <paramref name="mutate"/> returns true)
+    /// saves the backing list under the repository lock — unlike a GetAll → modify →
+    /// ReplaceAll sequence, this cannot clobber concurrent writes.
+    /// </summary>
+    /// <returns>Whether the mutation reported a change (and the list was saved).</returns>
+    public async Task<bool> MutateAllAsync(Func<List<TItem>, bool> mutate)
+    {
+        await EnsureLoadedAsync();
+
+        await Lock.WaitAsync();
+        try
+        {
+            if (!mutate(_data))
+                return false;
+
+            await SaveAsync();
+            return true;
+        }
+        finally
+        {
+            Lock.Release();
+        }
     }
 
     public async Task<TItem> CreateAsync(TItem entity)

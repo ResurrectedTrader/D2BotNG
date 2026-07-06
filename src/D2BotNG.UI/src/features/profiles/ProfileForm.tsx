@@ -16,6 +16,8 @@ import {
   CardContent,
   CardFooter,
   PathSelectorDialog,
+  EnvVarsEditor,
+  type EnvVar,
 } from "@/components/ui";
 import {
   DiscordWebhooksList,
@@ -24,6 +26,7 @@ import {
 import {
   useKeyLists,
   useProxies,
+  useFrameworks,
   useSchedules,
   useProfiles,
   useSettings,
@@ -80,12 +83,13 @@ export function ProfileForm({
 }: ProfileFormProps) {
   // Use profile for editing, or initialValues for new profiles (e.g., cloning)
   const defaults = profile ?? initialValues;
-  // Get key lists, schedules, existing profiles, and settings from event store
+  // Get key lists, schedules, and existing profiles from event store
   const keyListsData = useKeyLists();
   const proxiesData = useProxies();
+  const frameworksData = useFrameworks();
   const schedulesData = useSchedules();
   const profilesData = useProfiles();
-  const settings = useSettings();
+  const advancedMode = useSettings()?.advancedMode ?? false;
 
   // Build set of existing profile names for uniqueness validation
   const existingNames = useMemo(() => {
@@ -113,6 +117,7 @@ export function ProfileForm({
   const [infoTag, setInfoTag] = useState(defaults?.infoTag ?? "");
   const [keyList, setKeyList] = useState(defaults?.keyList ?? "");
   const [proxy, setProxy] = useState(defaults?.proxy ?? "");
+  const [framework, setFramework] = useState(defaults?.framework ?? "");
   const [schedule, setSchedule] = useState(defaults?.schedule ?? "");
   const [runsPerKey, setRunsPerKey] = useState(defaults?.runsPerKey ?? 0);
   const [switchKeysOnRestart, setSwitchKeysOnRestart] = useState(
@@ -137,6 +142,12 @@ export function ProfileForm({
         postAnnounce: w.postAnnounce,
       })),
   );
+  const [envVars, setEnvVars] = useState<EnvVar[]>(() =>
+    Object.entries(defaults?.environment ?? {}).map(([key, value]) => ({
+      key,
+      value,
+    })),
+  );
 
   // Track which fields have been touched (blurred)
   const [touched, setTouched] = useState<Record<string, boolean>>({});
@@ -144,7 +155,14 @@ export function ProfileForm({
   // Path selector dialog state
   const [showD2PathPicker, setShowD2PathPicker] = useState(false);
 
-  const entryScriptOptions = useEntryScripts(settings?.basePath);
+  // Entry scripts come from the selected framework's D2BS directory.
+  const selectedFramework = frameworksData.find(
+    (f) => f.framework.name === framework,
+  )?.framework;
+  const entryScriptOptions = useEntryScripts(selectedFramework?.d2bsPath);
+  // The entry script only feeds d2bs.ini, so it isn't required for a
+  // uses_ini=false framework.
+  const frameworkUsesIni = selectedFramework?.usesIni ?? true;
 
   const handleBlur = useCallback((field: string) => {
     setTouched((prev) => ({ ...prev, [field]: true }));
@@ -169,6 +187,7 @@ export function ProfileForm({
       setInfoTag(defaults.infoTag ?? "");
       setKeyList(defaults.keyList ?? "");
       setProxy(defaults.proxy ?? "");
+      setFramework(defaults.framework ?? "");
       setSchedule(defaults.schedule ?? "");
       setRunsPerKey(defaults.runsPerKey ?? 0);
       setSwitchKeysOnRestart(defaults.switchKeysOnRestart ?? false);
@@ -184,8 +203,34 @@ export function ProfileForm({
           postAnnounce: w.postAnnounce,
         })),
       );
+      setEnvVars(
+        Object.entries(defaults.environment ?? {}).map(([key, value]) => ({
+          key,
+          value,
+        })),
+      );
     }
   }, [defaults]);
+
+  // Ensure a framework is always set. In basic mode profiles implicitly use the
+  // guaranteed "Default" framework; in advanced mode new profiles default to the
+  // first framework so the dropdown is never left empty.
+  useEffect(() => {
+    if (framework) return;
+    // Wait for the frameworks snapshot before auto-assigning, so we never commit a stale
+    // name (e.g. a hardcoded "Default") before data has loaded.
+    if (!frameworksData.length) return;
+    if (!advancedMode) {
+      // Basic mode uses the guaranteed "Default" framework, falling back to the first
+      // available one if Default was renamed away in advanced mode.
+      const hasDefault = frameworksData.some(
+        (f) => f.framework.name === "Default",
+      );
+      setFramework(hasDefault ? "Default" : frameworksData[0].framework.name);
+    } else if (!profile) {
+      setFramework(frameworksData[0].framework.name);
+    }
+  }, [framework, profile, frameworksData, advancedMode]);
 
   // Build key list options (keyListsData contains { keyList, usage })
   const keyListOptions = [
@@ -206,6 +251,22 @@ export function ProfileForm({
   ];
   if (proxy && !proxiesData.some((p) => p.proxy.address === proxy)) {
     proxyOptions.push({ value: proxy, label: proxy });
+  }
+
+  // Build framework options (value and label are both the framework name). No "None"
+  // option: a profile always launches via a framework (required in advanced mode,
+  // auto-set in basic mode).
+  const frameworkOptions = [
+    ...frameworksData.map((f) => ({
+      value: f.framework.name,
+      label: f.framework.name,
+    })),
+  ];
+  if (
+    framework &&
+    !frameworksData.some((f) => f.framework.name === framework)
+  ) {
+    frameworkOptions.push({ value: framework, label: framework });
   }
 
   // Build schedule options
@@ -229,21 +290,39 @@ export function ProfileForm({
         : touched.name && isDuplicateName
           ? "A profile with this name already exists"
           : undefined,
+    // The Diablo II Path is the executable this profile launches, so it's required.
     d2Path:
       touched.d2Path && d2Path.trim() === ""
         ? "Diablo II path is required"
         : undefined,
+    // Framework is only user-selectable in advanced mode; in basic mode it is
+    // auto-set to "Default" once the frameworks snapshot arrives, so the error is
+    // only ever visible in advanced mode (where the dropdown exists).
+    framework:
+      advancedMode && touched.framework && framework.trim() === ""
+        ? "Framework is required"
+        : undefined,
     entryScript:
-      touched.entryScript && entryScript.trim() === ""
+      frameworkUsesIni && touched.entryScript && entryScript.trim() === ""
         ? "Entry script is required"
         : undefined,
   };
 
+  // Surfaced near the submit button in basic mode, where the framework dropdown
+  // isn't rendered: without this, a blocked save would be a silent no-op.
+  const basicModeFrameworkError =
+    !advancedMode && framework.trim() === "" && frameworksData.length === 0
+      ? "No frameworks are available. Restart D2BotNG to recreate the Default framework, or enable Advanced Mode in Settings to create one."
+      : undefined;
+
+  // Framework is required in BOTH modes: a basic-mode save racing the frameworks
+  // snapshot must not persist an empty framework (the profile couldn't launch).
   const canSave =
     name.trim() !== "" &&
     !isDuplicateName &&
     d2Path.trim() !== "" &&
-    entryScript.trim() !== "" &&
+    framework.trim() !== "" &&
+    (!frameworkUsesIni || entryScript.trim() !== "") &&
     discordWebhooks.every((w) => w.url.trim() !== "");
 
   const handleSubmit = useCallback(
@@ -256,10 +335,19 @@ export function ProfileForm({
           ...prev,
           name: true,
           d2Path: true,
+          framework: true,
           entryScript: true,
           webhooks: true,
         }));
         return;
+      }
+
+      const environment: Record<string, string> = {};
+      for (const { key, value } of envVars) {
+        const trimmedKey = key.trim();
+        if (trimmedKey.length > 0) {
+          environment[trimmedKey] = value;
+        }
       }
 
       const data: ProfileInput = {
@@ -279,6 +367,7 @@ export function ProfileForm({
         infoTag,
         keyList: keyList || undefined,
         proxy: proxy || undefined,
+        framework,
         schedule: schedule || undefined,
         runsPerKey,
         switchKeysOnRestart,
@@ -289,6 +378,7 @@ export function ProfileForm({
             : undefined,
         scheduleEnabled,
         discordWebhooks,
+        environment,
       };
 
       onSubmit(data);
@@ -311,6 +401,7 @@ export function ProfileForm({
       infoTag,
       keyList,
       proxy,
+      framework,
       schedule,
       runsPerKey,
       switchKeysOnRestart,
@@ -319,6 +410,7 @@ export function ProfileForm({
       windowY,
       scheduleEnabled,
       discordWebhooks,
+      envVars,
       onSubmit,
     ],
   );
@@ -361,6 +453,7 @@ export function ProfileForm({
                 <PathInput
                   id="d2Path"
                   label="Diablo II Path"
+                  tooltip="The game executable this profile launches (e.g. Game.exe)."
                   value={d2Path}
                   onChange={(e) => setD2Path(e.target.value)}
                   onBlur={() => handleBlur("d2Path")}
@@ -495,6 +588,17 @@ export function ProfileForm({
               onChange={(e) => setProxy(e.target.value)}
               options={proxyOptions}
             />
+            {advancedMode && (
+              <Select
+                id="framework"
+                label="Framework"
+                value={framework}
+                onChange={(e) => setFramework(e.target.value)}
+                onBlur={() => handleBlur("framework")}
+                options={frameworkOptions}
+                error={errors.framework}
+              />
+            )}
             <Input
               id="runsPerKey"
               label="Runs Per Key"
@@ -550,6 +654,22 @@ export function ProfileForm({
           </CardContent>
         </Card>
 
+        {advancedMode && (
+          <Card>
+            <CardHeader
+              title="Environment Variables"
+              description="Extra environment variables for this profile's game process, merged over the framework's."
+            />
+            <CardContent>
+              <EnvVarsEditor
+                value={envVars}
+                onChange={setEnvVars}
+                idPrefix="profile-env"
+              />
+            </CardContent>
+          </Card>
+        )}
+
         <Card>
           <CardHeader
             title="Discord Webhooks"
@@ -573,7 +693,12 @@ export function ProfileForm({
         </Card>
 
         {/* Form Actions */}
-        <CardFooter className="flex justify-end gap-2 border-t border-zinc-800 pt-4">
+        <CardFooter className="flex items-center justify-end gap-2 border-t border-zinc-800 pt-4">
+          {basicModeFrameworkError && (
+            <span className="mr-auto text-sm text-red-400">
+              {basicModeFrameworkError}
+            </span>
+          )}
           <Button
             type="button"
             variant="ghost"
@@ -601,7 +726,7 @@ export function ProfileForm({
         initialPath={
           d2Path
             ? d2Path.replace(/[/\\][^/\\]+$/, "")
-            : settings?.game?.d2InstallPath || ""
+            : (selectedFramework?.gameDirectory ?? "")
         }
         filter={(entry) => /^(Game|Diablo II).*\.exe$/i.test(entry.name)}
       />

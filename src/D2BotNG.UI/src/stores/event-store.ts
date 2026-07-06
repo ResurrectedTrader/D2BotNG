@@ -7,18 +7,56 @@
 
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
+import { equals } from "@bufbuild/protobuf";
+import type { DescMessage, MessageShape } from "@bufbuild/protobuf";
+import { ProfileSchema, ProfileStateSchema } from "@/generated/profiles_pb";
 import type { Profile, ProfileState } from "@/generated/profiles_pb";
+import { KeyListSchema } from "@/generated/keys_pb";
 import type { KeyList } from "@/generated/keys_pb";
+import { ScheduleSchema } from "@/generated/schedules_pb";
 import type { Schedule } from "@/generated/schedules_pb";
 import type { Item } from "@/generated/items_pb";
+import { SettingsSchema } from "@/generated/settings_pb";
 import type { Settings } from "@/generated/settings_pb";
 import type { UpdateStatus } from "@/generated/updates_pb";
+import { KeyUsageSchema } from "@/generated/events_pb";
 import type { Event, KeyUsage, MessageColor } from "@/generated/events_pb";
 import type { LogLevelEntry } from "@/generated/logging_pb";
+import { ProxySchema } from "@/generated/proxies_pb";
 import type { Proxy } from "@/generated/proxies_pb";
+import { FrameworkSchema } from "@/generated/frameworks_pb";
+import type { Framework } from "@/generated/frameworks_pb";
 import type { Character } from "@/generated/characters_pb";
 
 const MAX_MESSAGES = 10_000;
+
+// Snapshots are re-broadcast whenever runtime usage changes (e.g. a profile starts
+// or stops), decoding brand-new message objects each time even when the underlying
+// data is untouched. The helpers below preserve the PREVIOUS instance whenever the
+// new one is content-equal, so consumers keyed on object identity — form-seeding
+// effects, memos — don't spuriously reset (wiping in-progress edits) on snapshots
+// that carry no actual change for them.
+
+/** The previous message when the new one is content-equal, else the new one. */
+function stable<Desc extends DescMessage>(
+  schema: Desc,
+  prev: MessageShape<Desc> | undefined,
+  next: MessageShape<Desc>,
+): MessageShape<Desc> {
+  return prev !== undefined && equals(schema, prev, next) ? prev : next;
+}
+
+function sameStrings(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+function sameMessages<Desc extends DescMessage>(
+  schema: Desc,
+  a: MessageShape<Desc>[],
+  b: MessageShape<Desc>[],
+): boolean {
+  return a.length === b.length && a.every((v, i) => equals(schema, v, b[i]));
+}
 
 /** Stable empty array reference for selectors */
 const EMPTY_MESSAGES: MessageEntry[] = [];
@@ -52,6 +90,13 @@ export interface ProxyWithUsageData {
   activeProfiles: string[];
 }
 
+/** Framework combined with usage (profiles configured with it vs currently running with it) */
+export interface FrameworkWithUsageData {
+  framework: Framework;
+  configuredProfiles: string[];
+  activeProfiles: string[];
+}
+
 interface EventState {
   // Connection status
   isConnected: boolean;
@@ -68,6 +113,9 @@ interface EventState {
 
   // Proxies (Map by address)
   proxies: Map<string, ProxyWithUsageData>;
+
+  // Frameworks (Map by name)
+  frameworks: Map<string, FrameworkWithUsageData>;
 
   // Schedules (Map by ID)
   schedules: Map<string, Schedule>;
@@ -106,6 +154,7 @@ export const useEventStore = create<EventState>((set, get) => ({
   profiles: new Map(),
   keyLists: new Map(),
   proxies: new Map(),
+  frameworks: new Map(),
   schedules: new Map(),
   entitiesVersion: 0,
   settings: null,
@@ -126,6 +175,7 @@ export const useEventStore = create<EventState>((set, get) => ({
     let profiles = state.profiles;
     let keyLists = state.keyLists;
     let proxies = state.proxies;
+    let frameworks = state.frameworks;
     let schedules = state.schedules;
     let settings = state.settings;
     let updateStatus = state.updateStatus;
@@ -139,6 +189,7 @@ export const useEventStore = create<EventState>((set, get) => ({
     let profilesDirty = false;
     let keyListsDirty = false;
     let proxiesDirty = false;
+    let frameworksDirty = false;
     let schedulesDirty = false;
     let settingsDirty = false;
     let updateStatusDirty = false;
@@ -162,7 +213,19 @@ export const useEventStore = create<EventState>((set, get) => ({
           const m = new Map<string, ProfileWithStatusData>();
           for (const p of snapshot.profiles) {
             if (p.profile) {
-              m.set(p.profile.name, { profile: p.profile, status: p });
+              const prev = profiles.get(p.profile.name);
+              const profile = stable(ProfileSchema, prev?.profile, p.profile);
+              const status =
+                prev?.status !== undefined &&
+                equals(ProfileStateSchema, prev.status, p)
+                  ? prev.status
+                  : p;
+              m.set(
+                p.profile.name,
+                prev && profile === prev.profile && status === prev.status
+                  ? prev
+                  : { profile, status },
+              );
             }
           }
           profiles = m;
@@ -177,7 +240,18 @@ export const useEventStore = create<EventState>((set, get) => ({
           const m = new Map<string, KeyListWithUsageData>();
           for (const k of snapshot.keyLists) {
             if (k.keyList) {
-              m.set(k.keyList.name, { keyList: k.keyList, usage: k.usage });
+              const prev = keyLists.get(k.keyList.name);
+              const keyList = stable(KeyListSchema, prev?.keyList, k.keyList);
+              const usage =
+                prev && sameMessages(KeyUsageSchema, prev.usage, k.usage)
+                  ? prev.usage
+                  : k.usage;
+              m.set(
+                k.keyList.name,
+                prev && keyList === prev.keyList && usage === prev.usage
+                  ? prev
+                  : { keyList, usage },
+              );
             }
           }
           keyLists = m;
@@ -190,11 +264,26 @@ export const useEventStore = create<EventState>((set, get) => ({
           const m = new Map<string, ProxyWithUsageData>();
           for (const p of snapshot.proxies) {
             if (p.proxy) {
-              m.set(p.proxy.address, {
-                proxy: p.proxy,
-                configuredProfiles: p.configuredProfiles,
-                activeProfiles: p.activeProfiles,
-              });
+              const prev = proxies.get(p.proxy.address);
+              const proxy = stable(ProxySchema, prev?.proxy, p.proxy);
+              const configuredProfiles =
+                prev &&
+                sameStrings(prev.configuredProfiles, p.configuredProfiles)
+                  ? prev.configuredProfiles
+                  : p.configuredProfiles;
+              const activeProfiles =
+                prev && sameStrings(prev.activeProfiles, p.activeProfiles)
+                  ? prev.activeProfiles
+                  : p.activeProfiles;
+              m.set(
+                p.proxy.address,
+                prev &&
+                  proxy === prev.proxy &&
+                  configuredProfiles === prev.configuredProfiles &&
+                  activeProfiles === prev.activeProfiles
+                  ? prev
+                  : { proxy, configuredProfiles, activeProfiles },
+              );
             }
           }
           proxies = m;
@@ -202,11 +291,47 @@ export const useEventStore = create<EventState>((set, get) => ({
           break;
         }
 
+        case "frameworksSnapshot": {
+          const snapshot = event.event.value;
+          const m = new Map<string, FrameworkWithUsageData>();
+          for (const f of snapshot.frameworks) {
+            if (f.framework) {
+              const prev = frameworks.get(f.framework.name);
+              const framework = stable(
+                FrameworkSchema,
+                prev?.framework,
+                f.framework,
+              );
+              const configuredProfiles =
+                prev &&
+                sameStrings(prev.configuredProfiles, f.configuredProfiles)
+                  ? prev.configuredProfiles
+                  : f.configuredProfiles;
+              const activeProfiles =
+                prev && sameStrings(prev.activeProfiles, f.activeProfiles)
+                  ? prev.activeProfiles
+                  : f.activeProfiles;
+              m.set(
+                f.framework.name,
+                prev &&
+                  framework === prev.framework &&
+                  configuredProfiles === prev.configuredProfiles &&
+                  activeProfiles === prev.activeProfiles
+                  ? prev
+                  : { framework, configuredProfiles, activeProfiles },
+              );
+            }
+          }
+          frameworks = m;
+          frameworksDirty = true;
+          break;
+        }
+
         case "schedulesSnapshot": {
           const snapshot = event.event.value;
           const m = new Map<string, Schedule>();
           for (const s of snapshot.schedules) {
-            m.set(s.name, s);
+            m.set(s.name, stable(ScheduleSchema, schedules.get(s.name), s));
           }
           schedules = m;
           schedulesDirty = true;
@@ -222,7 +347,9 @@ export const useEventStore = create<EventState>((set, get) => ({
           const existing = profiles.get(stateVal.profileName);
           if (existing) {
             profiles.set(stateVal.profileName, {
-              profile: stateVal.profile ?? existing.profile,
+              profile: stateVal.profile
+                ? stable(ProfileSchema, existing.profile, stateVal.profile)
+                : existing.profile,
               status: stateVal,
             });
           }
@@ -260,7 +387,11 @@ export const useEventStore = create<EventState>((set, get) => ({
         }
 
         case "settings": {
-          settings = event.event.value;
+          settings = stable(
+            SettingsSchema,
+            settings ?? undefined,
+            event.event.value,
+          );
           settingsDirty = true;
           break;
         }
@@ -325,6 +456,7 @@ export const useEventStore = create<EventState>((set, get) => ({
       update.hasReceivedInitialData = hasReceivedInitialData;
     if (keyListsDirty) update.keyLists = keyLists;
     if (proxiesDirty) update.proxies = proxies;
+    if (frameworksDirty) update.frameworks = frameworks;
     if (schedulesDirty) update.schedules = schedules;
     if (settingsDirty) update.settings = settings;
     if (updateStatusDirty) update.updateStatus = updateStatus;
@@ -357,6 +489,7 @@ export const useEventStore = create<EventState>((set, get) => ({
       profiles: new Map(),
       keyLists: new Map(),
       proxies: new Map(),
+      frameworks: new Map(),
       schedules: new Map(),
       entitiesVersion: 0,
       settings: null,
@@ -422,6 +555,18 @@ export function useProxies(): ProxyWithUsageData[] {
   return useEventStore(
     useShallow((state) => Array.from(state.proxies.values())),
   );
+}
+
+/** Get all frameworks as an array (already sorted by the backend; memoized with shallow equality) */
+export function useFrameworks(): FrameworkWithUsageData[] {
+  return useEventStore(
+    useShallow((state) => Array.from(state.frameworks.values())),
+  );
+}
+
+/** Get a single framework by name */
+export function useFramework(name: string): FrameworkWithUsageData | undefined {
+  return useEventStore((state) => state.frameworks.get(name));
 }
 
 /** Get all schedules as an array (memoized with shallow equality) */

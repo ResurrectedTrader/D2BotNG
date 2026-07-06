@@ -8,7 +8,9 @@ namespace D2BotNG.Windows;
 public class GameLaunchConfig
 {
     public required string GamePath { get; init; }
-    public required string D2BSPath { get; init; }
+
+    /// <summary>DLLs to inject into the game, in order (resolved absolute paths).</summary>
+    public required IReadOnlyList<string> DllPaths { get; init; }
     public required string ProfileName { get; init; }
     public string? Handle { get; init; }
 
@@ -39,4 +41,16 @@ public class GameLaunchConfig
     /// Null or empty means no -proxy argument is added.
     /// </summary>
     public string? ProxyAddress { get; init; }
+
+    /// <summary>
+    /// D2 version used to select which memory patches to apply (from the profile's framework).
+    /// Null or empty skips patching.
+    /// </summary>
+    public string? GameVersion { get; init; }
+
+    /// <summary>
+    /// Extra environment variables for the game process (the framework's, overlaid by the
+    /// profile's), merged over the manager's environment. Empty = inherit it unchanged.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Environment { get; init; } = new Dictionary<string, string>();
 }

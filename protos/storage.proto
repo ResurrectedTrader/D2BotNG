@@ -8,6 +8,7 @@ import "profiles.proto";
 import "keys.proto";
 import "schedules.proto";
 import "proxies.proto";
+import "frameworks.proto";
 import "characters.proto";
 
 // Simple list wrappers for file storage (no runtime state like ProfileStatus/KeyUsage)
@@ -25,6 +26,10 @@ message ScheduleList {
 
 message ProxyCollection {
   repeated Proxy proxies = 1;
+}
+
+message FrameworkCollection {
+  repeated Framework frameworks = 1;
 }
 
 message CharacterList {

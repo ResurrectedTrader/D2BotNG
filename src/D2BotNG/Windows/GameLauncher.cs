@@ -10,7 +10,6 @@ public class GameLauncher
     private readonly ProcessManager _processManager;
     private readonly Patcher _patcher;
     private readonly PatchRepository _patchRepository;
-    private readonly SettingsRepository _settingsRepository;
     private readonly DaclOverwriter _daclOverwriter;
 
     public GameLauncher(
@@ -18,14 +17,12 @@ public class GameLauncher
         ProcessManager processManager,
         Patcher patcher,
         PatchRepository patchRepository,
-        SettingsRepository settingsRepository,
         DaclOverwriter daclOverwriter)
     {
         _logger = logger;
         _processManager = processManager;
         _patcher = patcher;
         _patchRepository = patchRepository;
-        _settingsRepository = settingsRepository;
         _daclOverwriter = daclOverwriter;
     }
 
@@ -41,7 +38,7 @@ public class GameLauncher
         _logger.LogDebug("Launching game: {Path} {Args}", config.GamePath, args);
 
         // Step 3: Create process suspended
-        var process = _processManager.CreateSuspended(config.GamePath, args, gameDir);
+        var process = _processManager.CreateSuspended(config.GamePath, args, gameDir, config.Environment);
 
         if (process == null)
         {
@@ -58,7 +55,7 @@ public class GameLauncher
             process.EnableRaisingEvents = true;
 
             // Step 5: Apply patches
-            if (!await ApplyPatchesAsync(process, gameDir, config.Visible))
+            if (!await ApplyPatchesAsync(process, gameDir, config.Visible, config.GameVersion))
             {
                 throw new ApplicationException("Failed to apply patches");
             }
@@ -69,12 +66,12 @@ public class GameLauncher
                 throw new ApplicationException("Failed to overwrite DACL");
             }
 
-            // Step 7: Inject D2BS.dll
-            if (!string.IsNullOrEmpty(config.D2BSPath))
+            // Step 7: Inject DLL(s), in order
+            foreach (var dllPath in config.DllPaths)
             {
-                if (!await _processManager.InjectDllAsync(process, config.D2BSPath))
+                if (!await _processManager.InjectDllAsync(process, dllPath))
                 {
-                    throw new ApplicationException($"Failed to inject {config.D2BSPath} into {processId}");
+                    throw new ApplicationException($"Failed to inject {dllPath} into {processId}");
                 }
             }
 
@@ -141,14 +138,11 @@ public class GameLauncher
         }
     }
 
-    private async Task<bool> ApplyPatchesAsync(Process process, string gameDir, bool visible)
+    private async Task<bool> ApplyPatchesAsync(Process process, string gameDir, bool visible, string? version)
     {
-        var settings = await _settingsRepository.GetAsync();
-        var version = settings.Game?.GameVersion;
-
         if (string.IsNullOrEmpty(version))
         {
-            _logger.LogWarning("No D2 version configured, skipping patches");
+            _logger.LogWarning("No D2 version configured on the framework, skipping patches");
             return true;
         }
 

@@ -48,3 +48,6 @@ src/D2BotNG.UI/src/generated/
 *.tsbuildinfo
 vite.config.d.ts
 vite.config.js
+
+# Local scratch notes
+TODO.md

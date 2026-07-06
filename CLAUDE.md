@@ -81,6 +81,7 @@ All defined in `protos/*.proto`, implemented in `src/D2BotNG/Services/*ServiceIm
 |---------|-------|---------|
 | **ProfileService** | profiles.proto | CRUD, Start/Stop, ShowWindow/HideWindow, ResetStats, RotateKey, ReleaseKey, EnableSchedule/DisableSchedule, Reorder, TriggerMule |
 | **KeyService** | keys.proto | CreateKeyList, UpdateKeyList, DeleteKeyList, HoldKey, ReleaseHeldKey |
+| **FrameworkService** | frameworks.proto | CreateFramework, UpdateFramework, DeleteFramework |
 | **ScheduleService** | schedules.proto | Create, Update, Delete |
 | **EventService** | events.proto | StreamEvents (server stream), ClearMessages |
 | **SettingsService** | settings.proto | Update, TestDiscord |
@@ -94,24 +95,24 @@ All defined in `protos/*.proto`, implemented in `src/D2BotNG/Services/*ServiceIm
 Frontend uses a single gRPC server-stream for all real-time state:
 
 1. `useEventStream` hook connects to `EventService.StreamEvents()`
-2. Server sends initial snapshots (profiles, key lists, schedules, settings, update status, log levels, console history)
+2. Server sends initial snapshots (profiles, key lists, proxies, frameworks, characters, schedules, settings, update status, log levels, console history)
 3. Server streams incremental changes (ProfileState, Message, Settings, etc.)
-4. Zustand `event-store` processes events and updates state maps
+4. Zustand `event-store` processes events and updates state maps. Snapshot handlers preserve object identity for content-equal messages (usage snapshots re-broadcast on every profile start/stop; identity-keyed form-seeding effects must not reset)
 5. Mutations (create/update/delete) return `Empty` - UI updates arrive via the stream
 6. Auto-reconnect on disconnect with 5s retry
 
-**Event types:** ProfilesSnapshot, KeyListsSnapshot, SchedulesSnapshot, ProfileState, Message, Settings, UpdateStatus, EntitiesChanged, LogLevelsSnapshot
+**Event types:** ProfilesSnapshot, KeyListsSnapshot, ProxiesSnapshot, FrameworksSnapshot, SchedulesSnapshot, CharactersSnapshot, ProfileState, CharacterState, Message, Settings, UpdateStatus, EntitiesChanged, LogLevelsSnapshot
 
 ## Backend Architecture
 
 ### Engine Layer
-- **ProfileEngine** (`Engine/ProfileEngine.cs`) - Core orchestrator. State machine (Stopped -> Starting -> Running -> Stopping -> Stopped, Error -> Starting/Stopping/Stopped), process monitoring, crash recovery (max 5 retries), heartbeat tracking (30s timeout, 3 missed = kill), key rotation
+- **ProfileEngine** (`Engine/ProfileEngine.cs`) - Core orchestrator. State machine (Stopped -> Starting -> Running -> Stopping -> Stopped, Error -> Starting/Stopping/Stopped), process monitoring, crash recovery + heartbeat/unresponsive watchdogs (per-framework thresholds; defaults 5 retries, 30s heartbeat timeout, 3 missed = kill, 30s unresponsive; timeout 0 = watchdog off), key rotation
 - **ProfileInstance** (`Engine/ProfileInstance.cs`) - Thread-safe state holder per profile with SemaphoreSlim
 - **ScheduleEngine** (`Engine/ScheduleEngine.cs`) - Checks schedules every 60s, supports overnight ranges (22:00-06:00)
 - **EngineHostedService** - IHostedService that initializes both engines
 
 ### Windows Layer
-- **GameLauncher** (`Windows/GameLauncher.cs`) - 12-step launch pipeline: clear cache, build CLI args, create suspended process, patch memory, resume, inject D2BS.dll, set title
+- **GameLauncher** (`Windows/GameLauncher.cs`) - 12-step launch pipeline: clear cache, build CLI args, create suspended process, patch memory, resume, inject the framework's DLL(s), set title
 - **ProcessManager** (`Windows/ProcessManager.cs`) - DLL injection via LoadLibraryW remote thread, process creation, graceful shutdown (WM_CLOSE + force kill), job object for auto-killing child processes on crash
 - **Patcher** (`Windows/Patcher.cs`) - Binary memory patches via VirtualProtectEx + WriteProcessMemory
 - **RemoteModule** (`Windows/RemoteModule.cs`) - Resolves a target's kernel32 `LoadLibrary` address for cross-bitness injection (x64 manager → 32-bit game) and reads target module bases, via a PE export walk over ReadProcessMemory
@@ -119,12 +120,15 @@ Frontend uses a single gRPC server-stream for all real-time state:
 - **DaclOverwriter** - Changes DACL for elevated process access
 
 ### Data Layer
-- **FileRepository<TItem, TList>** - Generic protobuf JSON file-backed repo using `JsonFormatter`/`JsonParser`. Stores data in `data/ng/` as single JSON documents (list-wrapper messages from `storage.proto`). Atomic saves (write to `.tmp`, then rename). Thread-safe with SemaphoreSlim. Supports `ReloadAsync()` for base path changes.
-- **ProfileRepository** - Extends `FileRepository<Profile, ProfileList>`, writes d2bs.ini via IniWriter on save
+- **FileRepository<TItem, TList>** - Generic protobuf JSON file-backed repo using `JsonFormatter`/`JsonParser`. Stores data in `data/ng/` as single JSON documents (list-wrapper messages from `storage.proto`). Durable atomic saves via `Utilities/AtomicFile` (write `.tmp`, flush to disk, rename); unparseable files are quarantined to `.corrupt` and the repo starts empty. Reads and writes both take the SemaphoreSlim; use `MutateAllAsync()` for read-modify-write (GetAll → modify → ReplaceAll loses concurrent writes). Supports `ReloadAsync()` for base path changes.
+- **ProfileRepository** - Extends `FileRepository<Profile, ProfileList>`, writes each framework's d2bs.ini via IniWriter inside `SaveAsync` (under the repo lock, ordering ini writes with profile saves); `RewriteInisAsync()` for framework-side callers
 - **KeyListRepository** - Extends `FileRepository<KeyList, KeyListCollection>`, round-robin key selection, in-use/held state tracking (transient, not persisted)
-- **ItemRepository** - In-memory dictionary with FileSystemWatcher on `d2bs/kolbot/mules/`
-- **SettingsRepository** - Singleton, protobuf JSON in `d2botng.json` next to the exe, default D2 path from registry
-- **Paths** (`Data/Paths.cs`) - Reactive path resolver, subscribes to `SettingsChanged` event. Exposes BasePath, DataDirectory, D2BSDirectory, MulesDirectory, LegacyDataDirectory
+- **FrameworkRepository** - Extends `FileRepository<Framework, FrameworkCollection>`. A framework bundles `game_directory`, `d2bs_path`, `dll_paths`, `game_version`; profiles reference one by name (`Profile.framework`) and supply the launched executable via `Profile.d2_path`. `FrameworkPaths` resolves the DLL/ini/mules paths from a framework.
+- **FrameworkBootstrap** - Idempotent migration: ensures a `Default` framework exists and assigns it to any profile with no framework. Seeds the Default from the pre-frameworks config — `game_directory` from the old install-path setting (else the directory most profiles' `d2_path` live in, else the registry) with `d2bs_path` = `<base>/d2bs`, and game version + retention + health thresholds from `SettingsRepository.LegacySettings` (recovered by `SettingsMigrator`, since those keys were dropped from the `Settings` schema). Only a genuine first-run migration (no frameworks yet) adopts framework-less profiles; once frameworks exist, an empty `Profile.framework` (from a framework delete) is left for the user to reassign. Runs at startup and on base-path change.
+- **ItemRepository** - In-memory dictionary; aggregates and watches every framework's `kolbot/mules/`. `RefreshAsync()` rebuilds watchers when frameworks change.
+- **SettingsRepository** - Singleton, protobuf JSON in `d2botng.json` next to the exe. On load, when the file's `schema_version` is behind, recovers pre-frameworks values into `LegacySettings` via `SettingsMigrator` but deliberately does NOT rewrite the file — leaving it at the old version keeps those values recoverable if startup fails before the framework migration completes; the file upgrades on the next save. A corrupt file is quarantined to `.corrupt` and the app boots with defaults. Stamps `schema_version` on every save
+- **SettingsMigrator** (`Data/SettingsMigrator.cs`) - Versioned migration for `d2botng.json` (`schema_version`, absent = 0), applied on load up to `CurrentVersion`. Each breaking change archives the old settings shape as a **backend-only proto** in `src/D2BotNG/Legacy/Protos/` (kept out of `protos/`, so it's excluded from the frontend's buf generation) and parses the old file into it — typed and field-tolerant, not raw-JSON poking. v0→v1 recovers the removed `game`/`engine` values, exposed as `SettingsRepository.LegacySettings` for the framework migration. Only the settings file is versioned — the `repeated`-wrapper list files have no place for a version, so their one-off migrations stay in bootstraps
+- **Paths** (`Data/Paths.cs`) - Reactive path resolver, subscribes to `SettingsChanged` event. Exposes BasePath, DataDirectory, LegacyDataDirectory (d2bs/mules paths are per-framework now, via `FrameworkPaths`)
 - **ScheduleRepository**, **PatchRepository** - Standard FileRepository implementations
 - **Migration** (`Legacy/Models/Migration.cs`) - Static one-time migration from legacy JSONL files (`data/`) to modern protobuf JSON (`data/ng/`). Runs on startup and on base path change. Skips IRC profiles. Separate `MigrateLegacyApi` migrates `server.json` → `LegacyApiSettings`.
 
@@ -138,7 +142,7 @@ Frontend uses a single gRPC server-stream for all real-time state:
 - **UpdateManager** / **UpdateCheckBackgroundService** - Version checking and download management
 - **ErrorDialogWatcher** - Monitors for game error dialogs
 - **DataCache** - Transient key-value store for D2BS data retrieve/store
-- **IniWriter** - Generates d2bs.ini files with game paths and CD keys
+- **IniWriter** - Rewrites each framework's d2bs.ini, writing only the profiles assigned to that framework
 - **LoggerRegistry** - `ILogEventFilter` with per-category log level control, exposed via LoggingService gRPC
 - **TrackingLoggerFactory** - Wraps `ILoggerFactory` to register all `D2BotNG.*` logger categories in LoggerRegistry
 
@@ -167,6 +171,9 @@ Backward-compatible HTTP API for legacy D2Bot# tools (e.g., Limedrop, D2BS scrip
 /profiles/new       ProfileDetailPage (create)
 /profiles/:id       ProfileDetailPage (edit, clone via ?clone query param)
 /keys               KeysPage (key list CRUD, hold/release, usage tracking)
+/frameworks         FrameworksPage (advanced mode only — list + usage; delete)
+/frameworks/new     FrameworkDetailPage (create)
+/frameworks/:id     FrameworkDetailPage (edit — game/d2bs/dll/version, health, cleanup, env vars)
 /schedules          SchedulesPage (schedule CRUD, time period management)
 /characters         CharactersPage (entity tree, item search, virtual list)
 /settings           SettingsPage (tabs: General, Discord, Legacy API, Logging)
@@ -175,6 +182,7 @@ Backward-compatible HTTP API for legacy D2Bot# tools (e.g., Limedrop, D2BS scrip
 ### Key Patterns
 - Feature-based folder structure under `src/features/`
 - Reusable UI component library in `src/components/ui/`
+- `features/frameworks/FrameworkFields.tsx` fragments render the shared framework inputs for both FrameworkForm and the basic-mode Settings "Game" card (blank optional thresholds round-trip as proto-absent = server default)
 - gRPC clients in `src/lib/grpc-client.ts` with auth interceptor
 - DC6 sprite rendering pipeline in `src/lib/rendering/`
 - Drag-and-drop via `@dnd-kit` for profile reordering
@@ -182,7 +190,7 @@ Backward-compatible HTTP API for legacy D2Bot# tools (e.g., Limedrop, D2BS scrip
 
 ## Data Files
 
-App settings in `d2botng.json` next to the exe (protobuf `Settings` - start_minimized, close_action, server, Discord, display, legacy_api, game, base_path, window geometry).
+App settings in `d2botng.json` next to the exe (protobuf `Settings` - start_minimized, close_action, server, Discord, display, legacy_api, base_path, startup, window geometry, schema_version, advanced_mode). Versioned via `SettingsMigrator` (game/engine settings moved to frameworks).
 
 Bot data in `data/ng/` directory (protobuf JSON format, location determined by `BasePath` in settings):
 
@@ -190,6 +198,9 @@ Bot data in `data/ng/` directory (protobuf JSON format, location determined by `
 |------|---------|
 | `profiles.json` | Bot profiles (protobuf `ProfileList`) |
 | `keylists.json` | CD key lists (protobuf `KeyListCollection`) |
+| `frameworks.json` | Frameworks: game/d2bs/dll/version bundles (protobuf `FrameworkCollection`) |
+| `proxies.json` | Proxies (protobuf `ProxyCollection`) |
+| `characters.json` | Character snapshots from running bots (protobuf `CharacterList`) |
 | `schedules.json` | Schedules with time periods (protobuf `ScheduleList`) |
 | `patches.json` | Version-specific binary memory patches (protobuf `PatchList`) |
 
@@ -204,7 +215,7 @@ Legacy JSONL files in `data/` (pre-migration format, auto-migrated on first star
 | `schedules.json` | Legacy schedules (JSONL, flat time pairs) |
 | `patch.json` | Legacy patches (JSONL) |
 
-Item/mule data lives in `d2bs/kolbot/mules/` (*.txt files, watched by FileSystemWatcher).
+Item/mule data lives in each framework's `<d2bs_path>/kolbot/mules/` (*.txt files, watched by FileSystemWatcher; aggregated across all frameworks).
 
 ## Adding gRPC Methods
 
@@ -227,9 +238,10 @@ Item/mule data lives in `d2bs/kolbot/mules/` (*.txt files, watched by FileSystem
 
 | Constant | Value | Location |
 |----------|-------|----------|
-| HeartbeatTimeout | 30s | ProfileEngine |
-| MaxMissedHeartbeats | 3 | ProfileEngine |
-| MaxCrashRetries | 5 | ProfileEngine |
+| HeartbeatTimeout | 30s | Framework default (per-framework, 0 = off) |
+| MaxMissedHeartbeats | 3 | Framework default (per-framework) |
+| MaxCrashRetries | 5 | Framework default (per-framework) |
+| UnresponsiveTimeout | 30s | Framework default (per-framework, 0 = off) |
 | MaxHistorySize | 10,000 | MessageService |
 | ScheduleCheckInterval | 60s | ScheduleEngine |
 | ProcessInputIdleTimeout | 30s | GameLauncher |
@@ -257,7 +269,8 @@ Item/mule data lives in `d2bs/kolbot/mules/` (*.txt files, watched by FileSystem
 - **Windows-only** - WinForms, WebView2, Win32 APIs, P/Invoke throughout
 - **Dual-mode** - GUI (WebView2 desktop) or headless (server-only with message-only window)
 - **Frontend embedded** - Production UI builds to `wwwroot/`, served by Kestrel
-- **Protobuf source of truth** - All data models defined in `protos/`, generated for both C# and TS
+- **Protobuf source of truth** - All data models defined in `protos/`, generated for both C# and TS. Field numbers carry no compatibility promise and are kept contiguous (persistence is protobuf JSON matched by field name; the frontend regenerates in lockstep) — except enums with semantic values (e.g. `MessageColor` matches D2 color codes)
+- **Frameworks** - A profile launches via its assigned framework (`Profile.framework`): game install directory (`game_directory`), d2bs directory, inject DLL(s) (`dll_paths`, in order), patch version, per-install screenshot/crash-log retention, health/crash-recovery thresholds (`heartbeat_timeout_seconds`/`max_missed_heartbeats`/`max_crash_retries`/`unresponsive_timeout_seconds` — `optional int32`, absent = 30/3/5/30; a heartbeat or unresponsive timeout of 0 disables that watchdog), injected environment variables (`map<string,string> environment`), and `uses_ini` (`optional bool`, absent = true; off = don't write d2bs.ini — profiles on such a framework also don't require an entry script, since the entry script only feeds d2bs.ini). `ProfileEngine.MonitorProcessAsync`/`HandleCrashAsync` resolve the thresholds per profile via `FrameworkPaths.*OrDefault`, re-resolving every ~10s tick so edits apply to running profiles; there is no longer a global `EngineSettings`. **UI mode:** `Settings.advanced_mode` gates the Frameworks tab + per-profile framework dropdown; in basic mode (the default) the Settings → General "Game" section edits the `Default` framework directly and profiles implicitly use it. Environment variables layer: manager env < framework `environment` < profile `environment` (advanced mode exposes the per-profile set); the shared `EnvVarsEditor` UI control edits both. `Profile.d2_path` is the game executable the profile launches (required); the framework's `game_directory` is used only for cleanup and as the default folder when browsing for that executable. D2BS/DLL/version + the game directory + cleanup retention are all per-framework — the old `Settings.game`/`Settings.engine` (`GameSettings`/`EngineSettings`) messages are gone entirely, recovered during migration via `SettingsMigrator` (the `Default` framework's `game_directory` auto-detects the D2 install from the registry on first run). `Settings.base_path` (shown as **Data Folder**) stays global: it's the manager's own data dir (`data/ng`, `images/`), shared across all frameworks, so it can't be per-framework
 - **No tests** - No test projects currently exist
 - **Serilog logging** - Console + daily rolling file (`logs/d2bot-*.log`) + MessageService sink + per-logger level control via UI (LoggerRegistry)
 - **CORS** - AllowAnyOrigin configured for development

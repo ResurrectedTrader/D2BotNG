@@ -4,9 +4,9 @@ namespace D2BotNG.Services;
 
 /// <summary>
 /// Background service that periodically deletes old screenshots and BlizzardError
-/// crash log directories from the configured Diablo II install path. Retention is
-/// configured via <c>Settings.Game.ScreenshotRetentionDays</c> and
-/// <c>Settings.Game.CrashLogRetentionDays</c>; 0 disables that cleanup.
+/// crash log directories from each framework's game directory. Retention is
+/// configured per framework (<c>Framework.screenshot_retention_days</c> /
+/// <c>Framework.crash_log_retention_days</c>); 0 disables that cleanup.
 /// </summary>
 public class GameDirectoryCleanupService : BackgroundService
 {
@@ -14,14 +14,14 @@ public class GameDirectoryCleanupService : BackgroundService
     private static readonly TimeSpan InitialDelay = TimeSpan.FromSeconds(30);
 
     private readonly ILogger<GameDirectoryCleanupService> _logger;
-    private readonly SettingsRepository _settingsRepository;
+    private readonly FrameworkRepository _frameworkRepository;
 
     public GameDirectoryCleanupService(
         ILogger<GameDirectoryCleanupService> logger,
-        SettingsRepository settingsRepository)
+        FrameworkRepository frameworkRepository)
     {
         _logger = logger;
-        _settingsRepository = settingsRepository;
+        _frameworkRepository = frameworkRepository;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -63,25 +63,40 @@ public class GameDirectoryCleanupService : BackgroundService
 
     private async Task RunCleanupAsync()
     {
-        var settings = await _settingsRepository.GetAsync();
-        var installPath = settings.Game?.D2InstallPath;
-        if (string.IsNullOrWhiteSpace(installPath) || !Directory.Exists(installPath))
-        {
-            return;
-        }
+        var frameworks = await _frameworkRepository.GetAllAsync();
+
+        // Group by each framework's game directory (two frameworks can share an install).
+        // For a shared directory, clean using the longest retention among the frameworks
+        // that enable cleanup (retention > 0). Note a framework that disables cleanup (0)
+        // does NOT shield a shared directory — a co-located framework's window still applies
+        // to it. This is the framework's declared install directory, independent of where
+        // individual profiles' executables (d2_path) actually live.
+        var groups = frameworks
+            .Select(f => new
+            {
+                Dir = f.GameDirectory,
+                Screenshot = f.ScreenshotRetentionDays,
+                CrashLog = f.CrashLogRetentionDays
+            })
+            .Where(x => !string.IsNullOrWhiteSpace(x.Dir) && Directory.Exists(x.Dir))
+            .GroupBy(x => Path.GetFullPath(x.Dir), StringComparer.OrdinalIgnoreCase);
 
         var now = DateTime.UtcNow;
-        var screenshotDays = settings.Game?.ScreenshotRetentionDays ?? 0;
-        var crashLogDays = settings.Game?.CrashLogRetentionDays ?? 0;
-
-        if (screenshotDays > 0)
+        foreach (var group in groups)
         {
-            CleanScreenshots(installPath, now - TimeSpan.FromDays(screenshotDays));
-        }
+            var installPath = group.Key;
+            var screenshotDays = group.Select(x => x.Screenshot).Where(d => d > 0).DefaultIfEmpty(0).Max();
+            var crashLogDays = group.Select(x => x.CrashLog).Where(d => d > 0).DefaultIfEmpty(0).Max();
 
-        if (crashLogDays > 0)
-        {
-            CleanCrashLogs(installPath, now - TimeSpan.FromDays(crashLogDays));
+            if (screenshotDays > 0)
+            {
+                CleanScreenshots(installPath, now - TimeSpan.FromDays(screenshotDays));
+            }
+
+            if (crashLogDays > 0)
+            {
+                CleanCrashLogs(installPath, now - TimeSpan.FromDays(crashLogDays));
+            }
         }
     }
 

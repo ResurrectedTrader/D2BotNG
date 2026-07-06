@@ -33,6 +33,7 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
         _profileEngine.AddProfile(profile.Name);
         await _profileEngine.BroadcastProfilesSnapshotAsync();
         await _profileEngine.BroadcastProxiesSnapshotAsync();
+        await _profileEngine.BroadcastFrameworksSnapshotAsync();
 
         return new Empty();
     }
@@ -66,6 +67,7 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
         }
 
         await _profileEngine.BroadcastProxiesSnapshotAsync();
+        await _profileEngine.BroadcastFrameworksSnapshotAsync();
         return new Empty();
     }
 
@@ -79,6 +81,7 @@ public class ProfileServiceImpl : ProfileService.ProfileServiceBase
         }
         await _profileEngine.BroadcastProfilesSnapshotAsync();
         await _profileEngine.BroadcastProxiesSnapshotAsync();
+        await _profileEngine.BroadcastFrameworksSnapshotAsync();
 
         return new Empty();
     }

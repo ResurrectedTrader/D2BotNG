@@ -110,7 +110,7 @@ export function Tooltip({ content, children, className }: TooltipProps) {
             style={{ top: position.top, left: position.left }}
             role="tooltip"
           >
-            <div className="bg-zinc-800 text-zinc-200 text-xs rounded-lg px-3 py-2 shadow-lg ring-1 ring-zinc-700 max-w-xs whitespace-normal break-words">
+            <div className="bg-zinc-800 text-zinc-200 text-xs rounded-lg px-3 py-2 shadow-lg ring-1 ring-zinc-700 max-w-xs whitespace-pre-line break-words">
               {content}
             </div>
           </div>,

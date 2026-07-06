@@ -40,30 +40,4 @@ public class Paths
             return dir;
         }
     }
-
-    /// <summary>
-    /// Gets the mules directory for storing item logs.
-    /// </summary>
-    public string MulesDirectory
-    {
-        get
-        {
-            var dir = Path.Combine(D2BSDirectory, "kolbot", "mules");
-            Directory.CreateDirectory(dir);
-            return dir;
-        }
-    }
-
-    /// <summary>
-    /// Gets the d2bs directory path.
-    /// </summary>
-    public string D2BSDirectory
-    {
-        get
-        {
-            var dir = Path.Combine(BasePath, "d2bs");
-            Directory.CreateDirectory(dir);
-            return dir;
-        }
-    }
 }

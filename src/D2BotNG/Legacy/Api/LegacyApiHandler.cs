@@ -418,36 +418,18 @@ public class LegacyApiHandler
 
     private LegacyResponse HandleAccounts(LegacyRequest request, LegacyResponse response)
     {
-        var baseMulesDir = Path.GetFullPath(_paths.MulesDirectory);
-        var mulesDir = baseMulesDir;
-        if (request.Args.Length == 1)
-        {
-            mulesDir = ResolveSafePath(baseMulesDir, request.Args[0]);
-            if (mulesDir == null)
-            {
-                response.Body = "incorrect arguments";
-                return response;
-            }
-        }
-
-        if (!Directory.Exists(mulesDir))
-        {
-            response.Body = "incorrect arguments";
-            return response;
-        }
-
-        var files = Directory.GetFiles(mulesDir, "*.txt", SearchOption.AllDirectories);
-        var baseMulesDirPrefix = baseMulesDir + Path.DirectorySeparatorChar;
-        var result = files.Select(f =>
-        {
-            var relative = f.StartsWith(baseMulesDirPrefix, StringComparison.OrdinalIgnoreCase)
-                ? f[baseMulesDirPrefix.Length..]
-                : Path.GetRelativePath(baseMulesDir, f);
-            // Remove .txt extension
-            if (relative.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
-                relative = relative[..^4];
-            return relative;
-        }).ToArray();
+        // Aggregate leaf entities across every framework's mules directory (via
+        // ItemRepository), so this agrees with HandleQuery instead of being limited to the
+        // old global d2bs path. The optional arg filters by path prefix. Legacy clients
+        // send backslash-separated paths (the same format this endpoint returns below),
+        // while entity paths are stored with forward slashes — normalize before matching.
+        var prefix = request.Args.Length == 1 ? request.Args[0].Replace('\\', '/') : null;
+        // Return OS-separator (backslash) paths: legacy clients (e.g. Limedrop) split
+        // account strings on "\\", while entity paths are stored with forward slashes.
+        var result = _itemRepository.GetEntities(prefix)
+            .Where(e => e.IsLeaf)
+            .Select(e => e.Path.Replace('/', '\\'))
+            .ToArray();
 
         response.Status = "success";
         response.Body = JsonSerializer.Serialize(result);

@@ -262,52 +262,112 @@ public class ProcessManager : IDisposable
         return windows;
     }
 
-    public Process? CreateSuspended(string path, string arguments, string workingDirectory)
+    public Process? CreateSuspended(
+        string path,
+        string arguments,
+        string workingDirectory,
+        IReadOnlyDictionary<string, string>? environmentOverrides = null)
     {
         var commandLine = $"\"{path}\" {arguments}";
 
         var startupInfo = new STARTUPINFOW { cb = (uint)Marshal.SizeOf<STARTUPINFOW>() };
 
-        if (!CreateProcessW(
-            path,
-            commandLine,
-            0,
-            0,
-            false,
-            CREATE_SUSPENDED,
-            0,
-            workingDirectory,
-            ref startupInfo,
-            out var processInfo))
+        // Inherit the manager's environment (lpEnvironment = 0) unless the framework
+        // contributes overrides, in which case pass a merged Unicode block.
+        var creationFlags = CREATE_SUSPENDED;
+        var environmentBlock = nint.Zero;
+        if (environmentOverrides is { Count: > 0 })
         {
-            var error = Marshal.GetLastWin32Error();
-            _logger.LogError("CreateProcess failed with error {Error}. Command line: '{CommandLine}', working directory: '{WorkingDirectory}'", error, commandLine, workingDirectory);
-            return null;
+            environmentBlock = BuildEnvironmentBlock(environmentOverrides);
+            creationFlags |= CREATE_UNICODE_ENVIRONMENT;
         }
-
-        // Assign to job object before closing handles — process is still suspended,
-        // so it's guaranteed to be in the job before it runs any code.
-        if (_jobHandle != 0)
-        {
-            if (!AssignProcessToJobObject(_jobHandle, processInfo.hProcess))
-            {
-                _logger.LogWarning("Failed to assign process {Pid} to job object", processInfo.dwProcessId);
-            }
-        }
-
-        // Close handles - we'll use Process object instead
-        using (new SafeProcessHandle(processInfo.hThread, ownsHandle: true)) { }
-        using (new SafeProcessHandle(processInfo.hProcess, ownsHandle: true)) { }
 
         try
         {
-            return Process.GetProcessById((int)processInfo.dwProcessId);
+            if (!CreateProcessW(
+                path,
+                commandLine,
+                0,
+                0,
+                false,
+                creationFlags,
+                environmentBlock,
+                workingDirectory,
+                ref startupInfo,
+                out var processInfo))
+            {
+                var error = Marshal.GetLastWin32Error();
+                _logger.LogError("CreateProcess failed with error {Error}. Command line: '{CommandLine}', working directory: '{WorkingDirectory}'", error, commandLine, workingDirectory);
+                return null;
+            }
+
+            // Assign to job object before closing handles — process is still suspended,
+            // so it's guaranteed to be in the job before it runs any code.
+            if (_jobHandle != 0)
+            {
+                if (!AssignProcessToJobObject(_jobHandle, processInfo.hProcess))
+                {
+                    _logger.LogWarning("Failed to assign process {Pid} to job object", processInfo.dwProcessId);
+                }
+            }
+
+            // Close handles - we'll use Process object instead
+            using (new SafeProcessHandle(processInfo.hThread, ownsHandle: true)) { }
+            using (new SafeProcessHandle(processInfo.hProcess, ownsHandle: true)) { }
+
+            try
+            {
+                return Process.GetProcessById((int)processInfo.dwProcessId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get process by ID {Pid}", processInfo.dwProcessId);
+                return null;
+            }
         }
-        catch (Exception ex)
+        finally
         {
-            _logger.LogError(ex, "Failed to get process by ID {Pid}", processInfo.dwProcessId);
-            return null;
+            if (environmentBlock != nint.Zero)
+            {
+                Marshal.FreeHGlobal(environmentBlock);
+            }
         }
+    }
+
+    /// <summary>
+    /// Builds a Unicode environment block for CreateProcess: the manager's current
+    /// environment merged with (overridden by) the given variables, sorted by key,
+    /// each entry NUL-terminated. The caller frees the returned unmanaged buffer.
+    /// </summary>
+    private static nint BuildEnvironmentBlock(IReadOnlyDictionary<string, string> overrides)
+    {
+        var merged = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var current = Environment.GetEnvironmentVariables();
+        foreach (string key in current.Keys)
+        {
+            merged[key] = current[key]?.ToString() ?? "";
+        }
+
+        foreach (var (key, value) in overrides)
+        {
+            var trimmed = key.Trim();
+            // Skip malformed names that would corrupt the block: empty, containing '='
+            // (splits the entry) or a NUL (terminates it early); values may not carry NUL.
+            if (trimmed.Length == 0 || trimmed.Contains('=') || trimmed.Contains('\0')
+                || value.Contains('\0'))
+            {
+                continue;
+            }
+
+            merged[trimmed] = value;
+        }
+
+        // Each entry is NUL-terminated; StringToHGlobalUni appends the final NUL that
+        // terminates the block.
+        var block = string.Concat(merged
+            .OrderBy(kvp => kvp.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(kvp => $"{kvp.Key}={kvp.Value}\0"));
+        return Marshal.StringToHGlobalUni(block);
     }
 
     public void ResumeProcess(Process process)

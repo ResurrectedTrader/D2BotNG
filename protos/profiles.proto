@@ -34,53 +34,57 @@ service ProfileService {
   rpc Reorder(ReorderProfileRequest) returns (google.protobuf.Empty);
 }
 
+// Field numbers are contiguous and carry no compatibility promise (persistence is
+// by field name; see CLAUDE.md).
 message Profile {
   // Basic Info
   string name = 1;
   string group = 2;
-  string d2_path = 10;
-  string parameters = 22;       // Command line params (e.g., "-w -sleepy -ftj")
-  bool visible = 40;            // Window visibility on start
-  optional WindowLocation window_location = 52;
+  string framework = 3;         // Name of the Framework (from the Frameworks tab) this profile launches with.
+  string d2_path = 4;           // Full path to the game executable this profile launches (required).
+  string parameters = 5;        // Command line params (e.g., "-w -sleepy -ftj")
+  map<string, string> environment = 6; // Extra environment variables for this profile's game process, merged over (overriding) the framework's environment.
+  bool visible = 7;             // Window visibility on start
+  optional WindowLocation window_location = 8;
 
   // Network
-  string proxy = 32;            // Address of the proxy (from the Proxies tab) this profile uses. Empty = direct connection.
+  string proxy = 9;             // Address of the proxy (from the Proxies tab) this profile uses. Empty = direct connection.
 
   // Account Settings
-  string character = 13;
-  Realm realm = 14;
-  string account = 11;
-  string password = 12;
+  string character = 10;
+  Realm realm = 11;
+  string account = 12;
+  string password = 13;
 
   // Game Settings
-  Difficulty difficulty = 15;
-  GameMode mode = 16;
-  string game_name = 20;
-  string game_pass = 21;
+  Difficulty difficulty = 14;
+  GameMode mode = 15;
+  string game_name = 16;
+  string game_pass = 17;
 
   // Script Settings
-  string entry_script = 23;
-  string info_tag = 24;         // Info tag for scripts
+  string entry_script = 18;
+  string info_tag = 19;         // Info tag for scripts
 
   // Key Management
-  string key_list = 30;
-  uint32 runs_per_key = 50;
-  bool switch_keys_on_restart = 51;
+  string key_list = 20;
+  uint32 runs_per_key = 21;
+  bool switch_keys_on_restart = 22;
 
   // Schedule
-  string schedule = 31;
-  bool schedule_enabled = 41;
+  string schedule = 23;
+  bool schedule_enabled = 24;
 
   // Statistics (persisted)
-  uint32 runs = 60;
-  uint32 chickens = 61;
-  uint32 deaths = 62;
-  uint32 crashes = 63;
-  uint32 restarts = 64;
-  uint32 key_runs = 65;
+  uint32 runs = 25;
+  uint32 chickens = 26;
+  uint32 deaths = 27;
+  uint32 crashes = 28;
+  uint32 restarts = 29;
+  uint32 key_runs = 30;
 
   // Discord webhooks (per-profile)
-  repeated DiscordWebhook discord_webhooks = 70;
+  repeated DiscordWebhook discord_webhooks = 31;
 }
 
 message DiscordWebhook {
@@ -100,16 +104,16 @@ message ProfileState {
   RunState state = 2;
   string status = 3;  // Human-readable status text (state description or error message)
 
-  string key_name = 20;
-  string proxy_name = 21;  // Proxy currently in use by the running instance (runtime)
+  string key_name = 4;
+  string proxy_name = 5;  // Proxy currently in use by the running instance (runtime)
 
   // Window visibility
-  bool window_visible = 30;
+  bool window_visible = 6;
 
   // Full profile data. Always set in snapshots. In events, set only when persisted
   // profile fields changed (e.g. stats, key rotation, settings). When absent in
   // events, clients should retain their cached profile data keyed by profile_name.
-  optional Profile profile = 40;
+  optional Profile profile = 7;
 }
 
 message ReorderProfileRequest {
