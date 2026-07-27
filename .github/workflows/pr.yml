@@ -26,6 +26,7 @@ jobs:
               - 'protos/**'
             cs:
               - 'src/D2BotNG/**'
+              - 'tests/**'
               - 'protos/**'
               - '*.sln'
 
@@ -69,6 +70,21 @@ jobs:
       - name: Build
         shell: bash
         run: dotnet build src/D2BotNG/D2BotNG.csproj -c Release -p:SkipUIBuild=true
+
+  test-cs:
+    name: Test C#
+    needs: changes
+    if: needs.changes.outputs.cs == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.x
+      # SkipUIBuild: the referenced app project builds the UI by default, which needs npm.
+      - name: Test
+        shell: bash
+        run: dotnet test tests/D2BotNG.Tests/D2BotNG.Tests.csproj -c Release -p:SkipUIBuild=true
 
   format-ts:
     name: Format TS

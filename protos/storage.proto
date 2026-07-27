@@ -10,28 +10,45 @@ import "schedules.proto";
 import "proxies.proto";
 import "frameworks.proto";
 import "characters.proto";
+import "patches.proto";
 
-// Simple list wrappers for file storage (no runtime state like ProfileStatus/KeyUsage)
+// Simple list wrappers for file storage (no runtime state like ProfileStatus/KeyUsage).
+//
+// Every container carries schema_version so any of them can opt into a migration later
+// without a proto change (see FileRepository). Absent/0 means the container has never
+// needed one; FileRepository writes it only for a repository that declares a version.
+// A test asserts this field exists on every container a repository is built over.
 message ProfileList {
   repeated Profile profiles = 1;
+  int32 schema_version = 2;
 }
 
 message KeyListCollection {
   repeated KeyList key_lists = 1;
+  int32 schema_version = 2;
 }
 
 message ScheduleList {
   repeated Schedule schedules = 1;
+  int32 schema_version = 2;
 }
 
 message ProxyCollection {
   repeated Proxy proxies = 1;
+  int32 schema_version = 2;
 }
 
 message FrameworkCollection {
   repeated Framework frameworks = 1;
+  int32 schema_version = 2;
 }
 
 message CharacterList {
   repeated Character characters = 1;
+  int32 schema_version = 2;
+}
+
+message PatchList {
+  repeated Patch patches = 1;
+  int32 schema_version = 2;
 }

@@ -29,7 +29,3 @@ message Patch {
   int32 offset = 4;
   bytes data = 5;
 }
-
-message PatchList {
-  repeated Patch patches = 1;
-}

@@ -1,6 +1,7 @@
 using D2BotNG.Logging;
 using D2BotNG.Utilities;
 using Google.Protobuf;
+using Google.Protobuf.Reflection;
 using ILogger = Serilog.ILogger;
 
 namespace D2BotNG.Data;
@@ -22,7 +23,7 @@ public abstract class FileRepository<TItem, TList> : IDisposable
     private readonly Paths _paths;
     private readonly DataWriteGate _writeGate;
     private ILogger? _logger;
-    private ILogger Logger => _logger ??= TrackingLoggerFactory.ForContext(GetType());
+    protected ILogger Logger => _logger ??= TrackingLoggerFactory.ForContext(GetType());
 
     protected FileRepository(Paths paths, DataWriteGate writeGate, string fileName)
     {
@@ -70,8 +71,12 @@ public abstract class FileRepository<TItem, TList> : IDisposable
         try
         {
             if (_loaded) return;
-            await LoadAsync();
+            var migrated = await LoadAsync();
             _loaded = true;
+            // Persist the upgraded shape immediately so the migration is one-time
+            // (and, e.g., plaintext credentials leave profiles.json) rather than
+            // re-running on every load until some other write happens to save.
+            if (migrated) await PersistMigrationAsync();
         }
         finally
         {
@@ -79,31 +84,152 @@ public abstract class FileRepository<TItem, TList> : IDisposable
         }
     }
 
-    protected Task LoadAsync() => LoadFileIntoAsync(_data);
+    private Task<bool> LoadAsync() => LoadFileIntoAsync(_data);
+
+    private async Task PersistMigrationAsync()
+    {
+        try
+        {
+            await SaveAsync();
+        }
+        catch (Exception ex)
+        {
+            // A migration that can't persist must not break loading — it stays in memory
+            // (correct) and re-runs idempotently next time.
+            Logger.Warning(ex, "Could not persist migration of {FilePath}; will retry", FilePath);
+        }
+    }
 
     /// <summary>
-    /// Reads and parses the backing file into <paramref name="target"/>. If the file is
-    /// unreadable (corrupt / truncated / zero-filled — see <see cref="AtomicFile"/>), it is
+    /// The schema version this repository writes and migrates up to. 0 = unversioned
+    /// (no migration). Override, along with <see cref="MigrateAsync"/>, to opt in —
+    /// the version is stamped centrally, so there is nothing else to wire up.
+    /// </summary>
+    protected virtual int SchemaVersion => 0;
+
+    private const string SchemaVersionFieldName = "schema_version";
+
+    /// <summary>
+    /// The container's schema_version field, resolved once per closed generic type.
+    /// Every storage container declares it (asserted by a test) so any repository can
+    /// opt into versioning without a proto change.
+    /// </summary>
+    private static readonly FieldDescriptor? SchemaVersionField =
+        new TList().Descriptor.FindFieldByName(SchemaVersionFieldName);
+
+    /// <summary>Stamps the container's version before it is saved.</summary>
+    private static void StampSchemaVersion(TList list, int version)
+    {
+        if (SchemaVersionField == null)
+        {
+            throw new InvalidOperationException(
+                $"{typeof(TList).Name} declares no '{SchemaVersionFieldName}' field, so "
+                + $"{typeof(TItem).Name} cannot be versioned. Add it to the container message.");
+        }
+
+        SchemaVersionField.Accessor.SetValue(list, version);
+    }
+
+    /// <summary>
+    /// Upgrades a file at <paramref name="fromVersion"/> (&lt; <see cref="SchemaVersion"/>)
+    /// to the current shape, given its raw JSON. Only called for versioned repositories.
+    /// </summary>
+    protected virtual Task<TList> MigrateAsync(string rawJson, int fromVersion) =>
+        throw new NotSupportedException($"{GetType().Name} declares a schema version but no migration");
+
+    /// <summary>
+    /// Reads and parses the backing file into <paramref name="target"/>, running the
+    /// versioned migration first when the file is behind. If the file is unreadable
+    /// (corrupt / truncated / zero-filled — see <see cref="AtomicFile"/>), it is
     /// quarantined to a ".corrupt" sibling and the repository starts empty rather than
     /// throwing forever: an unparseable file would otherwise wedge <c>EnsureLoadedAsync</c>
-    /// on every read and every save, so the app could never overwrite it with good data.
-    /// The next save writes a fresh file.
+    /// on every read and every save. The next save writes a fresh (upgraded) file.
     /// </summary>
-    private async Task LoadFileIntoAsync(List<TItem> target)
+    /// <returns>Whether a versioned migration ran (so the caller can persist the upgrade).</returns>
+    private async Task<bool> LoadFileIntoAsync(List<TItem> target)
     {
-        if (!File.Exists(FilePath)) return;
+        if (!File.Exists(FilePath)) return false;
 
         var json = await File.ReadAllTextAsync(FilePath);
         try
         {
-            var list = ProtobufJsonConfig.Parser.Parse<TList>(json);
+            var fileVersion = SchemaVersion > 0 ? PeekSchemaVersion(json) : 0;
+            var migrated = fileVersion < SchemaVersion;
+            if (migrated)
+            {
+                await BackupBeforeMigrationAsync(json, fileVersion);
+            }
+
+            var list = migrated
+                ? await MigrateAsync(json, fileVersion)
+                : ProtobufJsonConfig.Parser.Parse<TList>(json);
             target.AddRange(GetItems(list));
+
+            if (migrated)
+            {
+                Logger.Information("Migrated {FilePath} from schema v{From} to v{To}",
+                    FilePath, fileVersion, SchemaVersion);
+            }
+
+            return migrated;
         }
         catch (InvalidProtocolBufferException ex)
         {
             // InvalidJsonException derives from InvalidProtocolBufferException, so this
             // catches both malformed-JSON and schema-mismatch failures.
             QuarantineCorruptFile(ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Preserves the file as it was before a schema migration rewrites it in place.
+    /// A migration is not reversible — profiles.json v0 holds the only copy of the inline
+    /// credentials that v1 moves into accounts.json, and an older build cannot read the
+    /// upgraded shape — so the original is kept as a sibling ".v{n}.bak".
+    ///
+    /// Never overwritten: a migration re-runs when its post-migration save fails, and the
+    /// second pass must not replace the pre-migration copy with an already-migrated one.
+    ///
+    /// Nothing reads these files; they exist for a human to restore from, and are never
+    /// cleaned up automatically — the failure they insure against (wrong credentials) may
+    /// only surface days later on a failed login, long after any sensible expiry.
+    /// Best effort: a directory we cannot write a backup into is one we cannot persist the
+    /// migration into either, so a failure here is logged rather than blocking the load.
+    /// </summary>
+    private async Task BackupBeforeMigrationAsync(string originalJson, int fromVersion)
+    {
+        var backupPath = $"{FilePath}.v{fromVersion}.bak";
+        try
+        {
+            if (File.Exists(backupPath)) return;
+
+            await AtomicFile.WriteAllTextAsync(backupPath, originalJson);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex,
+                "Could not back up {FilePath} before migrating it to schema v{To}; continuing with the migration",
+                FilePath, SchemaVersion);
+        }
+    }
+
+    /// <summary>Reads just the schema_version property from raw JSON (0 when absent).</summary>
+    private static int PeekSchemaVersion(string json)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            // The formatter emits camelCase ("schemaVersion"); also accept the proto snake_case
+            // so a hand-edited file isn't misread as v0 and re-migrated on every load.
+            var root = doc.RootElement;
+            var found = root.TryGetProperty("schemaVersion", out var v)
+                        || root.TryGetProperty("schema_version", out v);
+            return found && v.TryGetInt32(out var n) ? n : 0;
+        }
+        catch
+        {
+            return 0;
         }
     }
 
@@ -138,6 +264,7 @@ public abstract class FileRepository<TItem, TList> : IDisposable
             Directory.CreateDirectory(directory);
 
         var list = CreateList(_data);
+        if (SchemaVersion > 0) StampSchemaVersion(list, SchemaVersion);
         var json = ProtobufJsonConfig.Formatter.Format(list);
 
         await AtomicFile.WriteAllTextAsync(FilePath, json);
@@ -152,11 +279,12 @@ public abstract class FileRepository<TItem, TList> : IDisposable
         try
         {
             var tempData = new List<TItem>();
-            await LoadFileIntoAsync(tempData);
+            var migrated = await LoadFileIntoAsync(tempData);
 
             _data.Clear();
             _data.AddRange(tempData);
             _loaded = true;
+            if (migrated) await PersistMigrationAsync();
         }
         finally
         {
