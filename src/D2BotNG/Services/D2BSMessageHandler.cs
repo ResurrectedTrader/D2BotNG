@@ -370,7 +370,7 @@ public class D2BSMessageHandler : BackgroundService
             Directory.CreateDirectory(imagesDir);
             var index = Directory.GetFiles(imagesDir, item.Name + "*").Length + 1;
             var path = Path.Combine(imagesDir, $"{item.Name}{index}.png");
-            File.WriteAllBytes(path, png);
+            AtomicFile.WriteAllBytes(path, png);
             _logger.LogDebug("Saved item screenshot to {Path}", path);
         }
         catch (Exception ex)

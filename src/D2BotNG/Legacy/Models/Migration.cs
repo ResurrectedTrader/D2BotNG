@@ -116,7 +116,7 @@ public static class Migration
             }
         }
 
-        File.WriteAllText(modernPath, ProtobufJsonConfig.Formatter.Format(collection));
+        AtomicFile.WriteAllText(modernPath, ProtobufJsonConfig.Formatter.Format(collection));
         Logger.Information("Migrated {Count} {EntityName}", getCount(collection), entityName);
     }
 
@@ -153,7 +153,7 @@ public static class Migration
             }
         }
 
-        File.WriteAllText(Path.Combine(modernDir, "profiles.json"), ProtobufJsonConfig.Formatter.Format(profiles));
+        AtomicFile.WriteAllText(modernPath, ProtobufJsonConfig.Formatter.Format(profiles));
         Logger.Information("Migrated {Count} profiles", profiles.Profiles.Count);
     }
 }

@@ -303,6 +303,10 @@ public class UpdateManager
                         UpdateStatusAndBroadcast(s => s.DownloadProgress = progress);
                     }
                 }
+
+                // Force to physical disk before the swap below: a crash in between could
+                // otherwise leave a correctly-sized but zero-filled exe in place.
+                fileStream.Flush(flushToDisk: true);
             }
 
             _logger.LogInformation("Download complete: {Path}", stagingPath);

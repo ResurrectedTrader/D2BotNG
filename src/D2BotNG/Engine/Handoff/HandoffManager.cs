@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using D2BotNG.Data;
+using D2BotNG.Utilities;
 using D2BotNG.Windows;
 
 namespace D2BotNG.Engine.Handoff;
@@ -66,7 +67,7 @@ public class HandoffManager
         {
             var manifest = await BuildManifestAsync(adoptedEventName);
             manifestPath = Path.Combine(Path.GetTempPath(), $"D2BotNG.Handoff.{sessionId}.json");
-            await File.WriteAllTextAsync(manifestPath, SerializeManifest(manifest), cancellationToken);
+            await AtomicFile.WriteAllTextAsync(manifestPath, SerializeManifest(manifest), cancellationToken);
             _logger.LogInformation("Wrote handoff manifest to {Path} ({Profiles} profiles, {Payloads} participant payloads)",
                 manifestPath, manifest.Profiles.Count, manifest.Payloads.Count);
 

@@ -255,6 +255,7 @@ Item/mule data lives in each framework's `<d2bs_path>/kolbot/mules/` (*.txt file
 
 ## Workflow
 
+- **Write files through `Utilities/AtomicFile`, never `File.WriteAllText`/`WriteAllBytes`.** It stages a sibling `.tmp`, flushes it to physical disk, then atomically swaps it over the target, retrying the swap while another process holds the file open. Without the flush a crash can leave a correctly-sized but zero-filled file — that is how an all-null `characters.json` appeared. Async is the default; the sync `WriteAllText` overload exists for callers that cannot await (IniWriter holds a named mutex with thread affinity). The one exception is a caller whose swap can't be a plain replace: `UpdateManager` renames the running exe aside first, since that is the only way Windows replaces an in-use executable, so it flushes durably and does its own swap
 - **After making backend changes**, always build with format + inspect and check the SARIF output:
   `dotnet build -p:RunFormat=true -p:RunInspect=true -p:SkipUIBuild=true` then review `src/D2BotNG/obj/inspect.sarif`
 - **If no UI changes were made**, skip the UI build for faster iteration:

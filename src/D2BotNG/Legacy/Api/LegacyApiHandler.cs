@@ -5,6 +5,7 @@ using D2BotNG.Engine;
 using D2BotNG.Legacy.Models;
 using D2BotNG.Rendering;
 using D2BotNG.Services;
+using D2BotNG.Utilities;
 using D2BotNG.Windows;
 
 namespace D2BotNG.Legacy.Api;
@@ -228,7 +229,7 @@ public class LegacyApiHandler
 
         var dir = Path.Combine(_paths.LegacyDataDirectory, request.Args[0]);
         Directory.CreateDirectory(dir);
-        await File.WriteAllTextAsync(Path.Combine(dir, fileName), value);
+        await AtomicFile.WriteAllTextAsync(Path.Combine(dir, fileName), value);
 
         response.Status = "success";
         response.Body = request.Args[1];

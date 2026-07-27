@@ -15,8 +15,6 @@ public class IniWriter
     // so the two serialize against each other.
     private const string IniLockName = @"Local\d2bs-ini-lock";
     private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(5);
-    private const int ReplaceAttempts = 5;
-    private const int ReplaceRetryMs = 20;
 
     private readonly ILogger<IniWriter> _logger;
 
@@ -105,7 +103,6 @@ public class IniWriter
             return;
         }
 
-        string? tempPath = null;
         try
         {
             const string marker = "; gateway=";
@@ -127,59 +124,13 @@ public class IniWriter
                 WriteProfileSection(sb, profile);
             }
 
-            // Stage on a temp file in the same directory (same volume, so the swap
-            // is atomic), then replace d2bs.ini.
-            var directory = Path.GetDirectoryName(iniPath)!;
-            tempPath = Path.Combine(directory, Path.GetRandomFileName());
-            AtomicFile.WriteDurable(tempPath, sb.ToString(), Encoding.Unicode);
-            ReplaceWithRetry(tempPath, iniPath);
-            tempPath = null; // consumed by the successful replace
+            AtomicFile.WriteAllText(iniPath, sb.ToString(), Encoding.Unicode);
 
             _logger.LogDebug("Wrote {iniPath} with {Count} profiles", iniPath, profiles.Count);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to write {iniPath}", iniPath);
-        }
-        finally
-        {
-            if (tempPath is not null)
-            {
-                TryDelete(tempPath);
-            }
-        }
-    }
-
-    // Atomically swap the staged temp file over d2bs.ini. A reader that briefly
-    // holds the file open (the game-side GetPrivateProfileString) can trip a
-    // sharing violation, so retry a few times before giving up.
-    private static void ReplaceWithRetry(string tempPath, string iniPath)
-    {
-        for (var attempt = 0; ; attempt++)
-        {
-            try
-            {
-                // iniPath is known to exist; File.Replace is atomic on NTFS and
-                // preserves the destination's attributes.
-                File.Replace(tempPath, iniPath, null);
-                return;
-            }
-            catch (IOException) when (attempt < ReplaceAttempts - 1)
-            {
-                Thread.Sleep(ReplaceRetryMs);
-            }
-        }
-    }
-
-    private static void TryDelete(string path)
-    {
-        try
-        {
-            File.Delete(path);
-        }
-        catch (Exception)
-        {
-            // Best-effort cleanup of the staged temp file; nothing to do on failure.
         }
     }
 
