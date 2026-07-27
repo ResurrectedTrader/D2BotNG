@@ -78,7 +78,8 @@ internal static class Program
             MessageServiceSink.Initialize(messageService);
             TrackingLoggerFactory.Initialize(loggerRegistry);
 
-            // Migrate legacy data files using the configured base path from settings
+            // Load settings once, before anything that reads them is resolved; everything
+            // downstream then uses the synchronous SettingsRepository.Current.
             var settingsRepository = app.Services.GetRequiredService<SettingsRepository>();
             var settings = settingsRepository.GetAsync().GetAwaiter().GetResult();
             var basePath = string.IsNullOrWhiteSpace(settings.BasePath)
@@ -188,7 +189,7 @@ internal static class Program
         }
 
         // Check if we should start minimized
-        var settings = settingsRepo.GetAsync().GetAwaiter().GetResult();
+        var settings = settingsRepo.Current;
         var startMinimized = settings.StartMinimized;
 
         // Start Windows Forms application

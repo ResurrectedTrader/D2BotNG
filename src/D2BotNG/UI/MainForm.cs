@@ -105,7 +105,7 @@ public class MainForm : Form
     private bool ShouldMinimizeToTray()
     {
         // Settings are cached after first load; this is effectively a property read.
-        return _settingsRepository.GetAsync().GetAwaiter().GetResult().MinimizeToTray;
+        return _settingsRepository.Current.MinimizeToTray;
     }
 
     private async void OnFormLoad(object? sender, EventArgs e)
@@ -388,7 +388,7 @@ public class MainForm : Form
 
     private void LoadWindowSettings()
     {
-        var settings = _settingsRepository.GetAsync().GetAwaiter().GetResult();
+        var settings = _settingsRepository.Current;
         var window = settings.Window;
 
         if (window is { Width: > 0, Height: > 0 })

@@ -14,7 +14,7 @@ public class Paths
     public Paths(SettingsRepository settingsRepository)
     {
         _settingsRepository = settingsRepository;
-        BasePath = ResolveBasePath(settingsRepository.GetAsync().GetAwaiter().GetResult());
+        BasePath = ResolveBasePath(settingsRepository.Current);
         _settingsRepository.SettingsChanged += (_, settings) => BasePath = ResolveBasePath(settings);
     }
 

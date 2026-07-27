@@ -62,7 +62,7 @@ public class ProfileEngine
         _processManager = processManager;
         _messageWindow = messageWindow;
 
-        ApplySettings(settingsRepository.GetAsync().GetAwaiter().GetResult());
+        ApplySettings(settingsRepository.Current);
         settingsRepository.SettingsChanged += (_, s) => ApplySettings(s);
     }
 

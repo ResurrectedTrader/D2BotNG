@@ -150,6 +150,17 @@ public class SettingsRepository
         return _settings!;
     }
 
+    /// <summary>
+    /// The loaded settings. Program.Main loads them once at startup, before anything that
+    /// reads them is resolved, so this is a property read rather than sync-over-async.
+    /// Throws if read earlier, which would mean a new caller resolved ahead of that load.
+    /// </summary>
+    public Settings Current => _loaded
+        ? _settings!
+        : throw new InvalidOperationException(
+            "Settings have not been loaded yet. Program.Main loads them at startup; "
+            + "await GetAsync() if you genuinely need them before that.");
+
     public async Task<Settings> UpdateAsync(Settings settings)
     {
         await _lock.WaitAsync();

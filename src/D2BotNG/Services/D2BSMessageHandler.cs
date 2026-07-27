@@ -363,7 +363,7 @@ public class D2BSMessageHandler : BackgroundService
         {
             var legacyItem = JsonSerializer.Deserialize<LegacyItem>(itemJson)!;
             var item = legacyItem.ToModern();
-            var settings = _settingsRepository.GetAsync().GetAwaiter().GetResult();
+            var settings = _settingsRepository.Current;
             var itemFont = settings.Display?.ItemFont ?? ItemFont.Exocet;
             var png = _itemRenderer.RenderItemTooltip(item, itemFont);
             var imagesDir = Path.Combine(_paths.BasePath, "images");

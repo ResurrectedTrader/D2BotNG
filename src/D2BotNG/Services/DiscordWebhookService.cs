@@ -47,7 +47,7 @@ public class DiscordWebhookService
         var urls = SelectUrls(profile, w => w.PostItems);
         if (urls.Length == 0) return;
 
-        var settings = _settingsRepository.GetAsync().GetAwaiter().GetResult();
+        var settings = _settingsRepository.Current;
         var itemFont = settings.Display?.ItemFont ?? ItemFont.Exocet;
 
         byte[] png;
@@ -85,7 +85,7 @@ public class DiscordWebhookService
 
     private string[] SelectUrls(Profile profile, Func<DiscordWebhook, bool> selector)
     {
-        var settings = _settingsRepository.GetAsync().GetAwaiter().GetResult();
+        var settings = _settingsRepository.Current;
         IEnumerable<DiscordWebhook> globals = settings.Discord?.Webhooks ?? Enumerable.Empty<DiscordWebhook>();
         return profile.DiscordWebhooks
             .Concat(globals)
