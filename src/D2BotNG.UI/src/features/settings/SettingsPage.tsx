@@ -53,7 +53,6 @@ function blankDefaultFramework(): FrameworkInput {
     // Health thresholds deliberately absent: blank inputs = the server's
     // built-in defaults, not values pinned at creation time.
     environment: {},
-    usesIni: true,
   };
 }
 
@@ -96,10 +95,10 @@ export function SettingsPage() {
 
   // Mirror the Default framework into editable local state. Copy ALL fields —
   // basic mode only edits game/health/cleanup, but saving must not wipe the
-  // advanced-only DLLs, environment, or usesIni.
+  // advanced-only DLLs, environment, or backend.
   useEffect(() => {
     // Deep-clone the whole message: basic mode only edits game/health/cleanup,
-    // but saving must not wipe the advanced-only DLLs, environment, or usesIni.
+    // but saving must not wipe the advanced-only DLLs, environment, or backend.
     setLocalFramework(
       defaultFramework
         ? clone(FrameworkSchema, defaultFramework)

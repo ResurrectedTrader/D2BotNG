@@ -7,6 +7,9 @@ namespace D2BotNG.Windows;
 /// </summary>
 public class GameLaunchConfig
 {
+    /// <summary>Which game this profile launches (from its framework); selects the backend.</summary>
+    public required GameType GameType { get; init; }
+
     public required string GamePath { get; init; }
 
     /// <summary>DLLs to inject into the game, in order (resolved absolute paths).</summary>

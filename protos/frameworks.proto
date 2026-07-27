@@ -5,12 +5,20 @@ package d2bot;
 option csharp_namespace = "D2BotNG.Core.Protos";
 
 import "google/protobuf/empty.proto";
+import "common.proto";
 
 // Framework management service - mutations return Empty, data arrives via events.
 service FrameworkService {
   rpc CreateFramework(Framework) returns (google.protobuf.Empty);
   rpc UpdateFramework(UpdateFrameworkRequest) returns (google.protobuf.Empty);
   rpc DeleteFramework(FrameworkName) returns (google.protobuf.Empty);
+}
+
+// Which injected botting system a framework uses. With one value there is nothing yet
+// to branch on; a second will select the log/heartbeat transport and whether the manager
+// writes d2bs.ini. 0 = D2BS so existing frameworks default to it (no migration).
+enum BottingFramework {
+  BOTTING_FRAMEWORK_D2BS = 0; // D2BS: reports over WM_COPYDATA
 }
 
 // A framework bundles the botting system a profile launches with: the D2BS
@@ -26,20 +34,19 @@ message Framework {
   int32 screenshot_retention_days = 6; // Auto-delete Screenshot*.jpg in this framework's game directory older than N days. 0 = disabled.
   int32 crash_log_retention_days = 7;  // Auto-delete BlizzardError subdirectories in this framework's game directory older than N days. 0 = disabled.
 
-  // Reads the manager-written d2bs.ini (account, character, entry script). Optional;
-  // absent = true. False = the manager won't write d2bs.ini for this framework's profiles.
-  optional bool uses_ini = 8;
-
   // Health monitoring & crash recovery, per framework. Optional; absent = the built-in
   // default shown in parentheses. Disable a watchdog by setting its timeout to 0.
-  optional int32 heartbeat_timeout_seconds = 9;    // Seconds without a heartbeat before a miss. 0 = heartbeat watchdog disabled (won't restart a silent game). (30)
-  optional int32 max_missed_heartbeats = 10;       // Consecutive missed heartbeats before restart. (3)
-  optional int32 max_crash_retries = 11;           // Restart attempts after a crash before giving up and disabling the schedule. (5)
-  optional int32 unresponsive_timeout_seconds = 12; // Seconds the game window may be continuously hung (OS "not responding") before restart. 0 = disabled. (30)
+  optional int32 heartbeat_timeout_seconds = 8;    // Seconds without a heartbeat before a miss. 0 = heartbeat watchdog disabled (won't restart a silent game). (30)
+  optional int32 max_missed_heartbeats = 9;        // Consecutive missed heartbeats before restart. (3)
+  optional int32 max_crash_retries = 10;           // Restart attempts after a crash before giving up and disabling the schedule. (5)
+  optional int32 unresponsive_timeout_seconds = 11; // Seconds the game window may be continuously hung (OS "not responding") before restart. 0 = disabled. (30)
 
   // Extra environment variables for the launched game process, merged over (and
   // overriding) the manager's own environment.
-  map<string, string> environment = 13;
+  map<string, string> environment = 12;
+
+  GameType game_type = 13;                 // Game launched. Absent/0 = D2.
+  BottingFramework botting_framework = 14; // Injected botting system. Absent/0 = D2BS.
 }
 
 message UpdateFrameworkRequest {

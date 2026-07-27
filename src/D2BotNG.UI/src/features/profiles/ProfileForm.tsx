@@ -167,9 +167,6 @@ export function ProfileForm({
     (f) => f.framework.name === framework,
   )?.framework;
   const entryScriptOptions = useEntryScripts(selectedFramework?.d2bsPath);
-  // The entry script only feeds d2bs.ini, so it isn't required for a
-  // uses_ini=false framework.
-  const frameworkUsesIni = selectedFramework?.usesIni ?? true;
 
   const handleBlur = useCallback((field: string) => {
     setTouched((prev) => ({ ...prev, [field]: true }));
@@ -310,7 +307,7 @@ export function ProfileForm({
         ? "Framework is required"
         : undefined,
     entryScript:
-      frameworkUsesIni && touched.entryScript && entryScript.trim() === ""
+      touched.entryScript && entryScript.trim() === ""
         ? "Entry script is required"
         : undefined,
   };
@@ -329,7 +326,7 @@ export function ProfileForm({
     !isDuplicateName &&
     d2Path.trim() !== "" &&
     framework.trim() !== "" &&
-    (!frameworkUsesIni || entryScript.trim() !== "") &&
+    entryScript.trim() !== "" &&
     discordWebhooks.every((w) => w.url.trim() !== "");
 
   const handleSubmit = useCallback(

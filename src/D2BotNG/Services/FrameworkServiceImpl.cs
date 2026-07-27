@@ -182,9 +182,20 @@ public class FrameworkServiceImpl : FrameworkService.FrameworkServiceBase
             RejectNul(dll, "DLL path");
         }
 
+        // A botting framework only works with the game it targets, and its ABI can't run
+        // on another — reject an unsupported combination at the write boundary rather
+        // than fail cryptically at launch.
+        if (!IsValidPairing(framework.GameType, framework.BottingFramework))
+        {
+            throw new RpcException(new Status(StatusCode.InvalidArgument,
+                $"{framework.BottingFramework} does not support {framework.GameType}"));
+        }
+
         var normalized = new Framework
         {
             Name = framework.Name.Trim(),
+            GameType = framework.GameType,
+            BottingFramework = framework.BottingFramework,
             GameDirectory = framework.GameDirectory.Trim(),
             D2BsPath = framework.D2BsPath.Trim(),
             GameVersion = framework.GameVersion.Trim(),
@@ -194,11 +205,6 @@ public class FrameworkServiceImpl : FrameworkService.FrameworkServiceBase
 
         normalized.DllPaths.AddRange(
             framework.DllPaths.Select(d => d.Trim()).Where(d => d.Length > 0));
-
-        if (framework.HasUsesIni)
-        {
-            normalized.UsesIni = framework.UsesIni;
-        }
 
         if (framework.HasHeartbeatTimeoutSeconds)
         {
@@ -236,6 +242,14 @@ public class FrameworkServiceImpl : FrameworkService.FrameworkServiceBase
 
         return normalized;
     }
+
+    private static bool IsValidPairing(GameType game, BottingFramework botting) => game switch
+    {
+        GameType.D2 => botting == BottingFramework.D2Bs,
+        // Unknown enum values reach here from non-UI gRPC callers; protobuf passes them
+        // through as ints rather than rejecting them.
+        _ => false,
+    };
 
     private static void RejectNul(string value, string fieldName)
     {

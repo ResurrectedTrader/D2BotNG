@@ -13,7 +13,8 @@ public static class FrameworkPaths
 
     /// <summary>
     /// Absolute paths of the DLLs to inject, in order. Relative entries resolve against
-    /// d2bs_path. When none are configured, defaults to a single "D2BS.dll".
+    /// d2bs_path. A D2BS framework with none configured defaults to a single "D2BS.dll";
+    /// other botting frameworks legitimately inject nothing by default.
     /// </summary>
     public static IReadOnlyList<string> DllFullPaths(this Framework framework)
     {
@@ -21,7 +22,7 @@ public static class FrameworkPaths
             .Select(d => d.Trim())
             .Where(d => d.Length > 0)
             .ToList();
-        if (dlls.Count == 0)
+        if (dlls.Count == 0 && framework.BottingFramework == BottingFramework.D2Bs)
         {
             dlls.Add(DefaultDllName);
         }
@@ -30,10 +31,6 @@ public static class FrameworkPaths
             .Select(dll => Path.IsPathRooted(dll) ? dll : Path.Combine(framework.D2BsPath, dll))
             .ToList();
     }
-
-    /// <summary>Whether the framework reads the manager-written d2bs.ini (absent = true).</summary>
-    public static bool UsesIniOrDefault(this Framework framework) =>
-        !framework.HasUsesIni || framework.UsesIni;
 
     /// <summary>Seconds without a heartbeat before a miss (absent = 30). 0 or less = watchdog disabled.</summary>
     public static int HeartbeatTimeoutOrDefault(this Framework framework) =>

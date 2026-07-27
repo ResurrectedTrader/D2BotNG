@@ -742,6 +742,7 @@ public class ProfileEngine
 
             var config = new GameLaunchConfig
             {
+                GameType = framework.GameType,
                 GamePath = gamePath,
                 ProfileName = profileName,
                 Handle = _messageWindow.Handle.ToString(),

@@ -385,6 +385,7 @@ internal static class Program
         // Add Windows integration services
         services.AddSingleton<DaclOverwriter>();
         services.AddSingleton<GameLauncher>();
+        services.AddSingleton<IGameBackend, D2Backend>();
         services.AddSingleton<Patcher>();
         services.AddSingleton<ProcessManager>();
         services.AddSingleton<MessageWindow>();

@@ -41,9 +41,6 @@ interface FrameworkFormProps {
   isLoading?: boolean;
 }
 
-const checkboxClass =
-  "h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-d2-gold focus:ring-d2-gold focus:ring-offset-zinc-900";
-
 export function FrameworkForm({
   framework,
   initialValues,
@@ -63,12 +60,15 @@ export function FrameworkForm({
   const [shared, setShared] = useState<FrameworkInput>({});
   const [dllPaths, setDllPaths] = useState<string[]>(["D2BS.dll"]);
   const [envVars, setEnvVars] = useState<EnvVar[]>([]);
-  const [usesIni, setUsesIni] = useState(true);
   const [nameTouched, setNameTouched] = useState(false);
 
   useEffect(() => {
     setName(source?.name ?? "");
     setShared({
+      // Carried, not edited: the submit below is a full replacement, so anything the
+      // form drops is silently zeroed on the stored framework.
+      gameType: source?.gameType,
+      bottingFramework: source?.bottingFramework,
       gameDirectory: source?.gameDirectory ?? "",
       d2bsPath: source?.d2bsPath ?? "",
       gameVersion: source?.gameVersion ?? "",
@@ -90,8 +90,6 @@ export function FrameworkForm({
         value,
       })),
     );
-    // uses_ini is optional (absent = true).
-    setUsesIni(source?.usesIni ?? true);
     setNameTouched(false);
   }, [source]);
 
@@ -143,10 +141,9 @@ export function FrameworkForm({
         gameVersion: (shared.gameVersion ?? "").trim(),
         dllPaths: dllPaths.map((d) => d.trim()).filter((d) => d.length > 0),
         environment,
-        usesIni,
       } as FrameworkInput);
     },
-    [nameError, name, shared, dllPaths, envVars, usesIni, onSubmit],
+    [nameError, name, shared, dllPaths, envVars, onSubmit],
   );
 
   return (
@@ -270,22 +267,6 @@ export function FrameworkForm({
             onChange={setEnvVars}
             idPrefix="framework-env"
           />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader title="Options" />
-        <CardContent>
-          <label className="flex cursor-pointer items-center gap-3">
-            <input
-              type="checkbox"
-              checked={usesIni}
-              onChange={(e) => setUsesIni(e.target.checked)}
-              className={checkboxClass}
-            />
-            <span className="text-sm text-zinc-300">Uses d2bs.ini</span>
-            <HelpTooltip text="The manager writes account, character, and entry-script config to this framework's d2bs.ini. Turn off for frameworks configured a different way." />
-          </label>
         </CardContent>
       </Card>
 

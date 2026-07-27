@@ -38,6 +38,12 @@ enum RunState {
   RUN_STATE_STOPPING = 4;
 }
 
+// The game a framework launches. Drives the launch, injection, and auth pipeline
+// (see IGameBackend). One value today; 0 = D2 so existing data defaults to it.
+enum GameType {
+  GAME_TYPE_D2 = 0;  // 32-bit Diablo II (LoD): suspend/patch/resume, CD keys
+}
+
 // Common request/response types
 message ProfileName {
   string name = 1;

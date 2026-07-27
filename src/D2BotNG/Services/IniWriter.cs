@@ -67,10 +67,10 @@ public class IniWriter
             // Two frameworks can target the same d2bs.ini (e.g. a shared kolbot install
             // with different DLLs/version/env). Group by the resolved ini path and write
             // the union of every in-group framework's profiles, so one framework's write
-            // can't drop the profiles of another that shares the file. Frameworks that opt
-            // out of ini writing, or have no d2bs directory, are excluded.
+            // can't drop the profiles of another that shares the file. Frameworks with no
+            // d2bs directory are excluded.
             var writable = frameworks
-                .Where(f => f.UsesIniOrDefault() && !string.IsNullOrWhiteSpace(f.D2BsPath))
+                .Where(f => !string.IsNullOrWhiteSpace(f.D2BsPath))
                 .ToList();
 
             foreach (var group in writable.GroupBy(
