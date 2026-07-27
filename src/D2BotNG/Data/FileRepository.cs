@@ -11,7 +11,7 @@ namespace D2BotNG.Data;
 /// Stores data as a single JSON document using protobuf's JsonFormatter/JsonParser.
 /// </summary>
 /// <typeparam name="TItem">The protobuf message type for individual entities</typeparam>
-/// <typeparam name="TList">The protobuf list-wrapper message type (e.g., ProfileList)</typeparam>
+/// <typeparam name="TList">The protobuf container message type (e.g., ProfileCollection)</typeparam>
 public abstract class FileRepository<TItem, TList> : IDisposable
     where TItem : IMessage<TItem>
     where TList : IMessage<TList>, new()

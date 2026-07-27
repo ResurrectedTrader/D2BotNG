@@ -124,7 +124,7 @@ Frontend uses a single gRPC server-stream for all real-time state:
 
 ### Data Layer
 - **FileRepository<TItem, TList>** - Generic protobuf JSON file-backed repo using `JsonFormatter`/`JsonParser`. Stores data in `data/ng/` as single JSON documents (list-wrapper messages from `storage.proto`). Durable atomic saves via `Utilities/AtomicFile` (write `.tmp`, flush to disk, rename); unparseable files are quarantined to `.corrupt` and the repo starts empty. Reads and writes both take the SemaphoreSlim; use `MutateAllAsync()` for read-modify-write (GetAll → modify → ReplaceAll loses concurrent writes). Supports `ReloadAsync()` for base path changes. Every save is gated on `DataWriteGate`, so a predecessor mid-handoff writes nothing. **Versioned migration:** a repo opts in by overriding `SchemaVersion` (+ `MigrateAsync`) — on load a behind-version file is upgraded before parsing, persisted immediately (so it is one-time), and stamped on every save. `schema_version` is stamped *centrally* by looking the field up on the container descriptor, so there is no per-repo boilerplate; every storage container declares the field, and `tests/D2BotNG.Tests` asserts that for each repository so a future opt-in can't fail at a user's migration. Before anything is transformed the original file is copied to `<name>.v<n>.bak` — written once, never overwritten (the migration re-runs after a failed persist), never read back, and never auto-deleted.
-- **ProfileRepository** - Extends `FileRepository<Profile, ProfileList>`, writes each framework's d2bs.ini via IniWriter inside `SaveAsync` (under the repo lock, ordering ini writes with profile saves); `RewriteInisAsync()` for framework-side callers
+- **ProfileRepository** - Extends `FileRepository<Profile, ProfileCollection>`, writes each framework's d2bs.ini via IniWriter inside `SaveAsync` (under the repo lock, ordering ini writes with profile saves); `RewriteInisAsync()` for framework-side callers
 - **KeyListRepository** - Extends `FileRepository<KeyList, KeyListCollection>`, round-robin key selection, in-use/held state tracking (transient, not persisted)
 - **FrameworkRepository** - Extends `FileRepository<Framework, FrameworkCollection>`. A framework bundles `game_directory`, `d2bs_path`, `dll_paths`, `game_version`; profiles reference one by name (`Profile.framework`) and supply the launched executable via `Profile.d2_path`. `FrameworkPaths` resolves the DLL/ini/mules paths from a framework.
 - **FrameworkBootstrap** - Idempotent migration: ensures a `Default` framework exists and assigns it to any profile with no framework. Seeds the Default from the pre-frameworks config — `game_directory` from the old install-path setting (else the directory most profiles' `d2_path` live in, else the registry) with `d2bs_path` = `<base>/d2bs`, and game version + retention + health thresholds from `SettingsRepository.LegacySettings` (recovered by `SettingsMigrator`, since those keys were dropped from the `Settings` schema). Adopts framework-less profiles whenever there is nothing to choose — no frameworks yet (first-run migration) or exactly one — since the assignment it would make is the only one the user could make by hand. With two or more it declines and logs a warning naming the profiles: an empty `Profile.framework` there is the deliberate post-delete state and guessing could launch against the wrong game directory. The one-framework case is not a nicety: basic mode renders no framework control at all (nav hidden, route redirected, dropdown gated on `advanced_mode`), so an orphaned profile refused to start with no UI to repair it — `ProfileForm` now also forces the dropdown visible when the saved profile has no framework, in either mode. Runs at startup and on base-path change.
@@ -200,13 +200,13 @@ Bot data in `data/ng/` directory (protobuf JSON format, location determined by `
 
 | File | Content |
 |------|---------|
-| `profiles.json` | Bot profiles (protobuf `ProfileList`) |
+| `profiles.json` | Bot profiles (protobuf `ProfileCollection`) |
 | `keylists.json` | CD key lists (protobuf `KeyListCollection`) |
 | `frameworks.json` | Frameworks: game/d2bs/dll/version bundles (protobuf `FrameworkCollection`) |
 | `proxies.json` | Proxies (protobuf `ProxyCollection`) |
-| `characters.json` | Character snapshots from running bots (protobuf `CharacterList`) |
-| `schedules.json` | Schedules with time periods (protobuf `ScheduleList`) |
-| `patches.json` | Version-specific binary memory patches (protobuf `PatchList`) |
+| `characters.json` | Character snapshots from running bots (protobuf `CharacterCollection`) |
+| `schedules.json` | Schedules with time periods (protobuf `ScheduleCollection`) |
+| `patches.json` | Version-specific binary memory patches (protobuf `PatchCollection`) |
 
 Item PNGs from the D2BS `saveItem` message are written to `<BasePath>/images/`.
 

@@ -18,7 +18,7 @@ import "patches.proto";
 // without a proto change (see FileRepository). Absent/0 means the container has never
 // needed one; FileRepository writes it only for a repository that declares a version.
 // A test asserts this field exists on every container a repository is built over.
-message ProfileList {
+message ProfileCollection {
   repeated Profile profiles = 1;
   int32 schema_version = 2;
 }
@@ -28,7 +28,7 @@ message KeyListCollection {
   int32 schema_version = 2;
 }
 
-message ScheduleList {
+message ScheduleCollection {
   repeated Schedule schedules = 1;
   int32 schema_version = 2;
 }
@@ -43,12 +43,12 @@ message FrameworkCollection {
   int32 schema_version = 2;
 }
 
-message CharacterList {
+message CharacterCollection {
   repeated Character characters = 1;
   int32 schema_version = 2;
 }
 
-message PatchList {
+message PatchCollection {
   repeated Patch patches = 1;
   int32 schema_version = 2;
 }

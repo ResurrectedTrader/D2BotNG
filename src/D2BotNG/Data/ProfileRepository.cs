@@ -3,7 +3,7 @@ using D2BotNG.Services;
 
 namespace D2BotNG.Data;
 
-public class ProfileRepository : FileRepository<Profile, ProfileList>
+public class ProfileRepository : FileRepository<Profile, ProfileCollection>
 {
     private readonly IniWriter _iniWriter;
     private readonly FrameworkRepository _frameworkRepository;
@@ -21,11 +21,11 @@ public class ProfileRepository : FileRepository<Profile, ProfileList>
 
     protected override string GetKey(Profile p) => p.Name;
 
-    protected override IList<Profile> GetItems(ProfileList list) => list.Profiles;
+    protected override IList<Profile> GetItems(ProfileCollection list) => list.Profiles;
 
-    protected override ProfileList CreateList(IEnumerable<Profile> items)
+    protected override ProfileCollection CreateList(IEnumerable<Profile> items)
     {
-        var list = new ProfileList();
+        var list = new ProfileCollection();
         list.Profiles.AddRange(items);
         return list;
     }

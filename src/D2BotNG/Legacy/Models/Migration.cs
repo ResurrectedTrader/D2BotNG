@@ -34,12 +34,12 @@ public static class Migration
             (collection, legacy) => collection.KeyLists.Add(legacy.ToModern()),
             c => c.KeyLists.Count, "key lists");
 
-        MigrateLegacyFile<LegacySchedule, ScheduleList>(
+        MigrateLegacyFile<LegacySchedule, ScheduleCollection>(
             legacyDir, modernDir, "schedules.json", "schedules.json",
             (collection, legacy) => collection.Schedules.Add(legacy.ToModern()),
             c => c.Schedules.Count, "schedules");
 
-        MigrateLegacyFile<LegacyPatch, PatchList>(
+        MigrateLegacyFile<LegacyPatch, PatchCollection>(
             legacyDir, modernDir, "patch.json", "patches.json",
             (collection, legacy) => collection.Patches.Add(legacy.ToModern()),
             c => c.Patches.Count, "patches");
@@ -131,7 +131,7 @@ public static class Migration
         var legacyPath = Path.Combine(legacyDir, "profile.json");
         if (!File.Exists(legacyPath)) return;
 
-        var profiles = new ProfileList();
+        var profiles = new ProfileCollection();
         foreach (var line in File.ReadAllLines(legacyPath))
         {
             if (string.IsNullOrWhiteSpace(line) || line.StartsWith("//")) continue;

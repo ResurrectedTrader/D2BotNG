@@ -2,7 +2,7 @@ using D2BotNG.Core.Protos;
 
 namespace D2BotNG.Data;
 
-public class PatchRepository : FileRepository<Patch, PatchList>
+public class PatchRepository : FileRepository<Patch, PatchCollection>
 {
     private static readonly string[] ModuleNames =
     [
@@ -15,11 +15,11 @@ public class PatchRepository : FileRepository<Patch, PatchList>
 
     protected override string GetKey(Patch patch) => $"{patch.Name}{patch.Version}";
 
-    protected override IList<Patch> GetItems(PatchList list) => list.Patches;
+    protected override IList<Patch> GetItems(PatchCollection list) => list.Patches;
 
-    protected override PatchList CreateList(IEnumerable<Patch> items)
+    protected override PatchCollection CreateList(IEnumerable<Patch> items)
     {
-        var list = new PatchList();
+        var list = new PatchCollection();
         list.Patches.AddRange(items);
         return list;
     }
