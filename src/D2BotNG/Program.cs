@@ -28,6 +28,11 @@ internal static class Program
 {
     private static readonly ILogger Logger = TrackingLoggerFactory.ForContext(typeof(Program));
 
+    private static readonly HttpClient Client = new()
+    {
+        Timeout = TimeSpan.FromSeconds(2)
+    };
+
     [STAThread]
     private static void Main(string[] args)
     {
@@ -241,13 +246,11 @@ internal static class Program
         }
 
         // Phase 2: confirm the HTTP endpoint is actually responding.
-        using var client = new HttpClient();
-        client.Timeout = TimeSpan.FromSeconds(2);
         while (DateTime.UtcNow < deadline)
         {
             try
             {
-                var response = client.GetAsync(url).GetAwaiter().GetResult();
+                var response = Client.GetAsync(url).GetAwaiter().GetResult();
                 if (response.IsSuccessStatusCode)
                 {
                     return true;
