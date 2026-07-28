@@ -48,7 +48,7 @@ For headless/server use (no GUI window), run with `--headless`. See [Command Lin
 
 ## Configuration
 
-App settings are stored in `d2botng.json` next to the exe (server, Discord, display, base path, UI mode). Game and botting-framework configuration (game directory, D2BS path, inject DLLs, game version, health thresholds, cleanup) lives per **framework**: by default everything uses the built-in `Default` framework, edited from Settings → General; enable **Advanced Mode** to manage multiple frameworks (e.g. different kolbot installs or D2 versions) and assign them per profile.
+App settings are stored in `d2botng.json` next to the exe (server, Discord, display, base path). Game and botting-framework configuration (game directory, D2BS path, inject DLLs, game version, health thresholds, cleanup) lives per **framework**, managed on the **Frameworks** tab: a built-in `Default` framework is created on first run and new profiles use it automatically. Add more frameworks (e.g. different kolbot installs or D2 versions) and a per-profile framework picker appears so you can assign them.
 
 Bot data files are stored under the **base path** in `data/ng/` (protobuf JSON format). The base path defaults to the exe directory but can be changed in Settings:
 

@@ -49,7 +49,6 @@ message Settings {
   optional bool minimize_to_tray = 9; // When the minimize button or system minimize is invoked, hide to tray instead of the taskbar. Optional so absence can default to true.
   StartupSettings startup = 10;
   int32 schema_version = 11; // Migration schema version of this settings file (see SettingsMigrator). 0/absent = pre-versioning.
-  bool advanced_mode = 12;   // UI: expose the Frameworks tab + per-profile framework dropdown. Off = basic mode (Settings edits the Default framework).
 }
 
 // Controls how profile starts are paced. Each profile waits its turn (limited by

@@ -17,19 +17,6 @@ import { CharactersPage } from "@/features/characters";
 import { SettingsPage } from "@/features/settings";
 import { useEventStream } from "@/hooks/useEventStream";
 import { useAuthStore } from "@/lib/auth";
-import { useSettings } from "@/stores/event-store";
-
-/**
- * Gates a route on Settings.advanced_mode (matching the sidebar). Renders the
- * page while settings are still loading rather than bouncing users on refresh.
- */
-function AdvancedOnly({ children }: { children: React.ReactElement }) {
-  const settings = useSettings();
-  if (settings && !settings.advancedMode) {
-    return <Navigate to="/profiles" replace />;
-  }
-  return children;
-}
 
 export default function App() {
   // Start the event stream at app root
@@ -72,30 +59,9 @@ export default function App() {
           <Route path="keys" element={<KeysPage />} />
           <Route path="proxies" element={<ProxiesPage />} />
           <Route path="frameworks">
-            <Route
-              index
-              element={
-                <AdvancedOnly>
-                  <FrameworksPage />
-                </AdvancedOnly>
-              }
-            />
-            <Route
-              path="new"
-              element={
-                <AdvancedOnly>
-                  <FrameworkDetailPage />
-                </AdvancedOnly>
-              }
-            />
-            <Route
-              path=":id"
-              element={
-                <AdvancedOnly>
-                  <FrameworkDetailPage />
-                </AdvancedOnly>
-              }
-            />
+            <Route index element={<FrameworksPage />} />
+            <Route path="new" element={<FrameworkDetailPage />} />
+            <Route path=":id" element={<FrameworkDetailPage />} />
           </Route>
           <Route path="schedules" element={<SchedulesPage />} />
           <Route path="characters" element={<CharactersPage />} />

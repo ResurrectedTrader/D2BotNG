@@ -12,9 +12,9 @@ import {
 } from "@heroicons/react/24/outline";
 import clsx from "clsx";
 import { AboutDialog } from "../AboutDialog";
-import { useSettings } from "@/stores/event-store";
 
-const navigation = [
+/** Nav entries, shared by both sidebars. */
+export const NAV_ITEMS = [
   { name: "Profiles", href: "/profiles", icon: UserGroupIcon },
   { name: "Characters", href: "/characters", icon: UserIcon },
   { name: "Keys", href: "/keys", icon: KeyIcon },
@@ -26,12 +26,6 @@ const navigation = [
 
 export function Sidebar() {
   const [aboutOpen, setAboutOpen] = useState(false);
-  const advanced = useSettings()?.advancedMode ?? false;
-
-  // Frameworks are an advanced-mode concept; hide the nav entry in basic mode.
-  const navItems = navigation.filter(
-    (item) => advanced || item.name !== "Frameworks",
-  );
 
   return (
     <>
@@ -47,7 +41,7 @@ export function Sidebar() {
             <ul role="list" className="flex flex-1 flex-col gap-y-7">
               <li>
                 <ul role="list" className="-mx-2 space-y-1">
-                  {navItems.map((item) => (
+                  {NAV_ITEMS.map((item) => (
                     <li key={item.name}>
                       <NavLink
                         to={item.href}
@@ -103,5 +97,3 @@ export function Sidebar() {
     </>
   );
 }
-
-export { navigation };

@@ -25,7 +25,7 @@ import {
   useScrollRestoration,
   PROFILE_COLUMNS,
 } from "@/hooks";
-import { useProfiles, useIsLoading } from "@/stores/event-store";
+import { useProfiles, useIsLoading, useFrameworks } from "@/stores/event-store";
 import type { Profile } from "@/generated/profiles_pb";
 import { canStart, canStop, isActive } from "./profile-states";
 import { ProfilesTable } from "./ProfilesTable";
@@ -52,14 +52,30 @@ export function ProfilesPage() {
   const isLocalhost = useIsLocalhost();
 
   // Column visibility
+  const frameworksData = useFrameworks();
+  const multipleFrameworks = frameworksData.length > 1;
+  const multipleGameTypes =
+    new Set(frameworksData.map((f) => f.framework.gameType)).size > 1;
   const { isColumnVisible, toggleColumn } = useProfileTableColumns();
 
-  const visibleColumns = useMemo(
-    () => PROFILE_COLUMNS.filter((col) => isColumnVisible(col.key)),
-    [isColumnVisible],
+  // Framework and Game are constant columns until their values can actually differ
+  // between profiles, so keep each out of the table and the picker until then.
+  const availableColumns = useMemo(
+    () =>
+      PROFILE_COLUMNS.filter((col) => {
+        if (col.key === "framework") return multipleFrameworks;
+        if (col.key === "gameType") return multipleGameTypes;
+        return true;
+      }),
+    [multipleFrameworks, multipleGameTypes],
   );
 
-  const columnSelectorItems: DropdownItem[] = PROFILE_COLUMNS.map((col) => ({
+  const visibleColumns = useMemo(
+    () => availableColumns.filter((col) => isColumnVisible(col.key)),
+    [availableColumns, isColumnVisible],
+  );
+
+  const columnSelectorItems: DropdownItem[] = availableColumns.map((col) => ({
     label: col.label,
     checked: isColumnVisible(col.key),
     onClick: () => toggleColumn(col.key),

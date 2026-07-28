@@ -15,7 +15,8 @@ export type ProfileColumnKey =
   | "restarts"
   | "key"
   | "gamePath"
-  | "framework";
+  | "framework"
+  | "gameType";
 
 export interface ProfileColumn {
   key: ProfileColumnKey;
@@ -32,6 +33,7 @@ export const PROFILE_COLUMNS: ProfileColumn[] = [
   { key: "key", label: "Key", defaultVisible: false },
   { key: "gamePath", label: "Target", defaultVisible: false },
   { key: "framework", label: "Framework", defaultVisible: false },
+  { key: "gameType", label: "Game", defaultVisible: false },
 ];
 
 const STORAGE_KEY = "d2bot:profileTableColumns";

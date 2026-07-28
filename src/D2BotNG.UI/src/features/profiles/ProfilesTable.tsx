@@ -41,10 +41,10 @@ import {
   type DropdownItem,
   useContextMenu,
 } from "@/components/ui";
-import { useAllProfileStates } from "@/stores/event-store";
+import { useAllProfileStates, useFrameworks } from "@/stores/event-store";
 import { useProfileActions, useHasHover, useIsLocalhost } from "@/hooks";
 import type { ProfileColumnKey } from "@/hooks";
-import { RunState } from "@/generated/common_pb";
+import { RunState, GameType } from "@/generated/common_pb";
 import type { Profile, ProfileState } from "@/generated/profiles_pb";
 import { canStart, canStop, isActive } from "./profile-states";
 import { ProfileStatusBadge } from "./ProfileStatusBadge";
@@ -112,9 +112,16 @@ function getColumnAlignedInlineClass(columnCount: number): string {
   return INLINE_BREAKPOINT_CLASSES[breakpointIndex];
 }
 
+// Exhaustive by construction: adding a GameType value fails to compile until it has a
+// label here, so the Game column can't silently render a raw enum number.
+const GAME_TYPE_LABELS: Record<GameType, string> = {
+  [GameType.D2]: "D2",
+};
+
 function getColumnValue(
   key: ProfileColumnKey,
   profile: Profile,
+  gameTypeByFramework: Map<string, GameType>,
   status?: ProfileState,
 ): string | number {
   switch (key) {
@@ -138,6 +145,10 @@ function getColumnValue(
     }
     case "framework":
       return profile.framework || "-";
+    case "gameType": {
+      const gameType = gameTypeByFramework.get(profile.framework);
+      return gameType === undefined ? "-" : (GAME_TYPE_LABELS[gameType] ?? "-");
+    }
     default:
       return "-";
   }
@@ -151,6 +162,7 @@ interface SortableProfileRowProps {
   profile: Profile;
   status?: ProfileState;
   visibleColumns: { key: ProfileColumnKey; label: string }[];
+  gameTypeByFramework: Map<string, GameType>;
   actions: ReturnType<typeof useProfileActions>;
   isSelected: boolean;
   hasHover: boolean;
@@ -165,6 +177,7 @@ function SortableProfileRow({
   profile,
   status,
   visibleColumns,
+  gameTypeByFramework,
   actions,
   isSelected,
   hasHover,
@@ -244,7 +257,7 @@ function SortableProfileRow({
           key={col.key}
           className={`${getColumnBreakpointClass(index)} w-px whitespace-nowrap text-zinc-400 text-right`}
         >
-          {getColumnValue(col.key, profile, status)}
+          {getColumnValue(col.key, profile, gameTypeByFramework, status)}
         </TableCell>
       ))}
       {!hasHover && (
@@ -341,6 +354,16 @@ export function ProfilesTable({
   const actions = useProfileActions();
   const hasHover = useHasHover();
   const isLocalhost = useIsLocalhost();
+  const frameworksData = useFrameworks();
+
+  // A profile's game comes from its framework; resolve once for the whole table.
+  const gameTypeByFramework = useMemo(
+    () =>
+      new Map(
+        frameworksData.map((f) => [f.framework.name, f.framework.gameType]),
+      ),
+    [frameworksData],
+  );
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [overGroupId, setOverGroupId] = useState<string | null>(null);
@@ -860,6 +883,7 @@ export function ProfilesTable({
                     profile={profile}
                     status={statuses[profile.name]}
                     visibleColumns={visibleColumns}
+                    gameTypeByFramework={gameTypeByFramework}
                     actions={actions}
                     isSelected={selectedProfiles.has(profile.name)}
                     hasHover={hasHover}
@@ -889,6 +913,7 @@ export function ProfilesTable({
                           profile={profile}
                           status={statuses[profile.name]}
                           visibleColumns={visibleColumns}
+                          gameTypeByFramework={gameTypeByFramework}
                           actions={actions}
                           isSelected={selectedProfiles.has(profile.name)}
                           hasHover={hasHover}

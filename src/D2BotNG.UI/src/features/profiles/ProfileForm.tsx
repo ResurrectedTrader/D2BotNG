@@ -4,7 +4,13 @@
  * Form for creating/editing bot profiles with all configuration fields.
  */
 
-import { useState, useCallback, useEffect, useMemo } from "react";
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+} from "react";
 import {
   Button,
   Input,
@@ -29,7 +35,6 @@ import {
   useFrameworks,
   useSchedules,
   useProfiles,
-  useSettings,
 } from "@/stores/event-store";
 import { useEntryScripts } from "@/hooks";
 import { Realm, Difficulty, GameMode } from "@/generated/common_pb";
@@ -89,14 +94,6 @@ export function ProfileForm({
   const frameworksData = useFrameworks();
   const schedulesData = useSchedules();
   const profilesData = useProfiles();
-  const advancedMode = useSettings()?.advancedMode ?? false;
-
-  // Basic mode hides frameworks entirely, but a saved profile can still be left without
-  // one — deleting a framework clears every reference to it — and such a profile refuses to
-  // start. Hiding the only control that repairs it turns that into a dead end, so show
-  // the picker whenever the profile on disk has no framework, in either mode.
-  const frameworkOrphaned = !!profile && !profile.framework;
-  const showFramework = advancedMode || frameworkOrphaned;
 
   // Build set of existing profile names for uniqueness validation
   const existingNames = useMemo(() => {
@@ -216,25 +213,21 @@ export function ProfileForm({
     }
   }, [defaults]);
 
-  // Ensure a framework is always set. In basic mode profiles implicitly use the
-  // guaranteed "Default" framework; in advanced mode new profiles default to the
-  // first framework so the dropdown is never left empty.
-  useEffect(() => {
-    if (framework) return;
-    // Wait for the frameworks snapshot before auto-assigning, so we never commit a stale
-    // name (e.g. a hardcoded "Default") before data has loaded.
+  // Give a NEW profile a framework so the common single-framework case needs no
+  // choice. An existing profile with none had it cleared by a framework delete and
+  // must be reassigned deliberately — the backend refuses to rebind those too, and
+  // the picker below is forced visible for exactly that case.
+  //
+  // Layout effect, not effect: an empty framework makes the picker visible (via the
+  // blank option), so assigning after paint would flash the picker and shift the
+  // grid on every New Profile.
+  useLayoutEffect(() => {
+    if (framework || profile) return;
+    // Wait for the frameworks snapshot before auto-assigning, so we never commit a
+    // name before data has loaded.
     if (!frameworksData.length) return;
-    if (!advancedMode) {
-      // Basic mode uses the guaranteed "Default" framework, falling back to the first
-      // available one if Default was renamed away in advanced mode.
-      const hasDefault = frameworksData.some(
-        (f) => f.framework.name === "Default",
-      );
-      setFramework(hasDefault ? "Default" : frameworksData[0].framework.name);
-    } else if (!profile) {
-      setFramework(frameworksData[0].framework.name);
-    }
-  }, [framework, profile, frameworksData, advancedMode]);
+    setFramework(frameworksData[0].framework.name);
+  }, [framework, profile, frameworksData]);
 
   // Build key list options (keyListsData contains { keyList, usage })
   const keyListOptions = [
@@ -258,8 +251,7 @@ export function ProfileForm({
   }
 
   // Build framework options (value and label are both the framework name). No "None"
-  // option: a profile always launches via a framework (required in advanced mode,
-  // auto-set in basic mode).
+  // option: a profile always launches via a framework.
   const frameworkOptions = [
     ...frameworksData.map((f) => ({
       value: f.framework.name,
@@ -272,6 +264,17 @@ export function ProfileForm({
   ) {
     frameworkOptions.push({ value: framework, label: framework });
   }
+  if (!framework) {
+    // A profile left without a framework (by a framework delete) needs an option
+    // matching its empty value. Without one the browser displays the first framework
+    // while state stays "", and re-picking that framework fires no change event —
+    // leaving the profile permanently unsaveable behind a "required" error.
+    frameworkOptions.unshift({ value: "", label: "Select a framework…" });
+  }
+
+  // Only worth showing when there is something to decide (the blank placeholder above
+  // makes this true whenever a profile is missing its framework).
+  const showFrameworkPicker = frameworkOptions.length > 1;
 
   // Build schedule options
   const scheduleOptions = [
@@ -299,11 +302,10 @@ export function ProfileForm({
       touched.d2Path && d2Path.trim() === ""
         ? "Diablo II path is required"
         : undefined,
-    // Framework is only user-selectable where the dropdown is rendered; elsewhere it
-    // is auto-set to "Default" once the frameworks snapshot arrives, so the error can
-    // only ever be seen next to the control it refers to.
+    // Only surfaced when the dropdown is rendered; otherwise the framework is
+    // auto-assigned once the frameworks snapshot arrives.
     framework:
-      showFramework && touched.framework && framework.trim() === ""
+      showFrameworkPicker && touched.framework && framework.trim() === ""
         ? "Framework is required"
         : undefined,
     entryScript:
@@ -312,15 +314,17 @@ export function ProfileForm({
         : undefined,
   };
 
-  // Surfaced near the submit button in basic mode, where the framework dropdown
-  // isn't rendered: without this, a blocked save would be a silent no-op.
-  const basicModeFrameworkError =
-    !showFramework && framework.trim() === "" && frameworksData.length === 0
-      ? "No frameworks are available. Restart D2BotNG to recreate the Default framework, or enable Advanced Mode in Settings to create one."
+  // Surfaced near the submit button when the framework dropdown isn't rendered:
+  // without this, a blocked save would be a silent no-op.
+  const hiddenPickerFrameworkError =
+    !showFrameworkPicker &&
+    framework.trim() === "" &&
+    frameworksData.length === 0
+      ? "No frameworks are available. Create one on the Frameworks tab, or restart D2BotNG to recreate the Default framework."
       : undefined;
 
-  // Framework is required in BOTH modes: a basic-mode save racing the frameworks
-  // snapshot must not persist an empty framework (the profile couldn't launch).
+  // Always required: a save racing the frameworks snapshot must not persist an
+  // empty framework (the profile couldn't launch).
   const canSave =
     name.trim() !== "" &&
     !isDuplicateName &&
@@ -592,7 +596,7 @@ export function ProfileForm({
               onChange={(e) => setProxy(e.target.value)}
               options={proxyOptions}
             />
-            {showFramework && (
+            {showFrameworkPicker && (
               <Select
                 id="framework"
                 label="Framework"
@@ -658,21 +662,19 @@ export function ProfileForm({
           </CardContent>
         </Card>
 
-        {advancedMode && (
-          <Card>
-            <CardHeader
-              title="Environment Variables"
-              description="Extra environment variables for this profile's game process, merged over the framework's."
+        <Card>
+          <CardHeader
+            title="Environment Variables"
+            description="Extra environment variables for this profile's game process, merged over the framework's."
+          />
+          <CardContent>
+            <EnvVarsEditor
+              value={envVars}
+              onChange={setEnvVars}
+              idPrefix="profile-env"
             />
-            <CardContent>
-              <EnvVarsEditor
-                value={envVars}
-                onChange={setEnvVars}
-                idPrefix="profile-env"
-              />
-            </CardContent>
-          </Card>
-        )}
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader
@@ -698,9 +700,9 @@ export function ProfileForm({
 
         {/* Form Actions */}
         <CardFooter className="flex items-center justify-end gap-2 border-t border-zinc-800 pt-4">
-          {basicModeFrameworkError && (
+          {hiddenPickerFrameworkError && (
             <span className="mr-auto text-sm text-red-400">
-              {basicModeFrameworkError}
+              {hiddenPickerFrameworkError}
             </span>
           )}
           <Button

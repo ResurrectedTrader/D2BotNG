@@ -8,9 +8,8 @@ import {
 import { XMarkIcon, InformationCircleIcon } from "@heroicons/react/24/outline";
 import { NavLink } from "react-router-dom";
 import clsx from "clsx";
-import { navigation } from "./Sidebar";
+import { NAV_ITEMS } from "./Sidebar";
 import { AboutDialog } from "../AboutDialog";
-import { useSettings } from "@/stores/event-store";
 
 interface MobileSidebarProps {
   open: boolean;
@@ -19,12 +18,6 @@ interface MobileSidebarProps {
 
 export function MobileSidebar({ open, onClose }: MobileSidebarProps) {
   const [aboutOpen, setAboutOpen] = useState(false);
-  const advanced = useSettings()?.advancedMode ?? false;
-
-  // Frameworks are an advanced-mode concept; hide the nav entry in basic mode.
-  const navItems = navigation.filter(
-    (item) => advanced || item.name !== "Frameworks",
-  );
 
   return (
     <>
@@ -72,7 +65,7 @@ export function MobileSidebar({ open, onClose }: MobileSidebarProps) {
                 <ul role="list" className="flex flex-1 flex-col gap-y-7">
                   <li>
                     <ul role="list" className="-mx-2 space-y-1">
-                      {navItems.map((item) => (
+                      {NAV_ITEMS.map((item) => (
                         <li key={item.name}>
                           <NavLink
                             to={item.href}

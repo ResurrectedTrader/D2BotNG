@@ -1,9 +1,8 @@
 /**
  * GeneralSettings component
  *
- * The General settings tab: a "General Configuration" card (server, application
- * behavior, data folder, startup pacing) plus, in basic mode, a separate "Game"
- * card that edits the Default framework inline.
+ * The General settings tab: server, application behavior, data folder, and startup
+ * pacing. Game and botting-framework configuration lives on the Frameworks tab.
  */
 
 import { useState } from "react";
@@ -16,19 +15,11 @@ import {
   PathInput,
   Select,
   PathSelectorDialog,
-  HelpTooltip,
 } from "@/components/ui";
 import { CloseAction, ItemFont } from "@/generated/settings_pb";
 import type { ServerSettings as ServerSettingsType } from "@/generated/settings_pb";
 import type { DisplaySettings as DisplaySettingsType } from "@/generated/settings_pb";
 import type { StartupSettings as StartupSettingsType } from "@/generated/settings_pb";
-import type { FrameworkInput } from "@/hooks/useFrameworks";
-import {
-  FrameworkPathFields,
-  FrameworkVersionField,
-  HealthThresholdFields,
-  CleanupRetentionFields,
-} from "@/features/frameworks/FrameworkFields";
 
 interface GeneralSettingsProps {
   /** Current server settings */
@@ -45,10 +36,6 @@ interface GeneralSettingsProps {
   closeAction: CloseAction;
   /** Application base directory path */
   basePath: string;
-  /** Whether advanced mode is enabled (shows Frameworks tab & per-profile framework) */
-  advancedMode: boolean;
-  /** The Default framework, edited inline as the "Game" card in basic mode */
-  defaultFramework: FrameworkInput;
   /** Callback when server settings change */
   onServerChange: (server: Partial<ServerSettingsType>) => void;
   /** Callback when display settings change */
@@ -63,10 +50,6 @@ interface GeneralSettingsProps {
   onCloseActionChange: (value: CloseAction) => void;
   /** Callback when base path changes */
   onBasePathChange: (value: string) => void;
-  /** Callback when advanced mode changes */
-  onAdvancedModeChange: (value: boolean) => void;
-  /** Callback when a Default framework field changes */
-  onFrameworkChange: (partial: Partial<FrameworkInput>) => void;
 }
 
 const closeActionOptions = [
@@ -92,8 +75,6 @@ export function GeneralSettings({
   minimizeToTray,
   closeAction,
   basePath,
-  advancedMode,
-  defaultFramework,
   onServerChange,
   onDisplayChange,
   onStartupChange,
@@ -101,8 +82,6 @@ export function GeneralSettings({
   onMinimizeToTrayChange,
   onCloseActionChange,
   onBasePathChange,
-  onAdvancedModeChange,
-  onFrameworkChange,
 }: GeneralSettingsProps) {
   const [showBasePathPicker, setShowBasePathPicker] = useState(false);
 
@@ -205,21 +184,6 @@ export function GeneralSettings({
                 />
                 <span className="text-sm text-zinc-300">Show Item Header</span>
               </label>
-
-              <label className="flex cursor-pointer items-center gap-3">
-                <input
-                  type="checkbox"
-                  checked={advancedMode}
-                  onChange={(e) => onAdvancedModeChange(e.target.checked)}
-                  className={checkboxClass}
-                />
-                <span className="text-sm text-zinc-300">Advanced Mode</span>
-                <HelpTooltip
-                  text={
-                    "Shows the Frameworks tab and lets each profile pick which framework to launch with. Off keeps game settings here and uses a single Default framework.\n\nA framework bundles what's needed to launch a bot: the game executable, the D2BS directory, which DLL(s) to inject, the game version, and health/crash-recovery thresholds."
-                  }
-                />
-              </label>
             </div>
 
             <Select
@@ -298,50 +262,6 @@ export function GeneralSettings({
           initialPath={basePath}
         />
       </Card>
-
-      {/* Game — edits the Default framework directly via the shared field
-          fragments. In advanced mode this (and DLLs / env vars) is managed per
-          framework on the Frameworks tab instead. */}
-      {!advancedMode && (
-        <Card>
-          <CardHeader
-            title="Game"
-            description="Where the game and botting framework live, and how the manager monitors them."
-          />
-          <CardContent className="space-y-3">
-            <FrameworkPathFields
-              value={defaultFramework}
-              onChange={onFrameworkChange}
-              idPrefix="default"
-            />
-            <FrameworkVersionField
-              value={defaultFramework}
-              onChange={onFrameworkChange}
-              idPrefix="default"
-            />
-
-            {/* Health & Crash Recovery */}
-            <div className="flex items-center gap-1.5 pt-1">
-              <span className="text-sm font-medium text-zinc-400">
-                Health &amp; Crash Recovery
-              </span>
-              <HelpTooltip text="How the manager monitors and recovers games. Set a timeout to 0 to disable that watchdog." />
-            </div>
-            <HealthThresholdFields
-              value={defaultFramework}
-              onChange={onFrameworkChange}
-              idPrefix="default"
-            />
-
-            {/* Game Directory Cleanup */}
-            <CleanupRetentionFields
-              value={defaultFramework}
-              onChange={onFrameworkChange}
-              idPrefix="default"
-            />
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }
