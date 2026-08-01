@@ -224,7 +224,9 @@ jobs:
           path: src/D2BotNG/wwwroot
       - name: Publish
         shell: bash
-        run: dotnet publish src/D2BotNG/D2BotNG.csproj -c Release --self-contained -p:SkipUIBuild=true -p:Version=${{ needs.prepare-release.outputs.version }} -p:BuildVariant=standalone
+        env:
+          APTABASE_APP_KEY: ${{ secrets.APTABASE_APP_KEY }}
+        run: dotnet publish src/D2BotNG/D2BotNG.csproj -c Release --self-contained -p:SkipUIBuild=true -p:Version=${{ needs.prepare-release.outputs.version }} -p:BuildVariant=standalone -p:AptabaseAppKey="$APTABASE_APP_KEY"
       - uses: actions/upload-artifact@v4
         with:
           name: exe-standalone
@@ -247,7 +249,9 @@ jobs:
           path: src/D2BotNG/wwwroot
       - name: Publish
         shell: bash
-        run: dotnet publish src/D2BotNG/D2BotNG.csproj -c Release --no-self-contained -p:SkipUIBuild=true -p:Version=${{ needs.prepare-release.outputs.version }} -p:BuildVariant=framework
+        env:
+          APTABASE_APP_KEY: ${{ secrets.APTABASE_APP_KEY }}
+        run: dotnet publish src/D2BotNG/D2BotNG.csproj -c Release --no-self-contained -p:SkipUIBuild=true -p:Version=${{ needs.prepare-release.outputs.version }} -p:BuildVariant=framework -p:AptabaseAppKey="$APTABASE_APP_KEY"
       - uses: actions/upload-artifact@v4
         with:
           name: exe-framework

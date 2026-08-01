@@ -17,6 +17,10 @@
 
   <PropertyGroup>
     <BuildVariant Condition="'$(BuildVariant)' == ''">standalone</BuildVariant>
+    <!-- Aptabase app key, supplied only by CI (-p:AptabaseAppKey=... from the
+         APTABASE_APP_KEY secret) and never committed. The empty default is the
+         deliberate "analytics off" sentinel: a local build reports nothing. -->
+    <AptabaseAppKey Condition="'$(AptabaseAppKey)' == ''"></AptabaseAppKey>
   </PropertyGroup>
 
   <ItemGroup>
@@ -24,10 +28,18 @@
       <_Parameter1>BuildVariant</_Parameter1>
       <_Parameter2>$(BuildVariant)</_Parameter2>
     </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>AptabaseAppKey</_Parameter1>
+      <_Parameter2>$(AptabaseAppKey)</_Parameter2>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="app.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="D2BotNG.Tests" />
   </ItemGroup>
 
   <!-- Embedded resources for item rendering (all under /assets/rendering/) -->

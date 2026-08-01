@@ -15,11 +15,13 @@ import {
   PathInput,
   Select,
   PathSelectorDialog,
+  HelpTooltip,
 } from "@/components/ui";
 import { CloseAction, ItemFont } from "@/generated/settings_pb";
 import type { ServerSettings as ServerSettingsType } from "@/generated/settings_pb";
 import type { DisplaySettings as DisplaySettingsType } from "@/generated/settings_pb";
 import type { StartupSettings as StartupSettingsType } from "@/generated/settings_pb";
+import { useServerInfo } from "@/stores/event-store";
 
 interface GeneralSettingsProps {
   /** Current server settings */
@@ -36,6 +38,8 @@ interface GeneralSettingsProps {
   closeAction: CloseAction;
   /** Application base directory path */
   basePath: string;
+  /** Whether anonymous usage reporting is opted out of */
+  analyticsDisabled: boolean;
   /** Callback when server settings change */
   onServerChange: (server: Partial<ServerSettingsType>) => void;
   /** Callback when display settings change */
@@ -50,6 +54,8 @@ interface GeneralSettingsProps {
   onCloseActionChange: (value: CloseAction) => void;
   /** Callback when base path changes */
   onBasePathChange: (value: string) => void;
+  /** Callback when the usage-statistics opt-out changes */
+  onAnalyticsDisabledChange: (value: boolean) => void;
 }
 
 const closeActionOptions = [
@@ -75,6 +81,7 @@ export function GeneralSettings({
   minimizeToTray,
   closeAction,
   basePath,
+  analyticsDisabled,
   onServerChange,
   onDisplayChange,
   onStartupChange,
@@ -82,8 +89,10 @@ export function GeneralSettings({
   onMinimizeToTrayChange,
   onCloseActionChange,
   onBasePathChange,
+  onAnalyticsDisabledChange,
 }: GeneralSettingsProps) {
   const [showBasePathPicker, setShowBasePathPicker] = useState(false);
+  const analyticsAvailable = useServerInfo()?.analyticsAvailable ?? false;
 
   return (
     <div className="space-y-4">
@@ -184,6 +193,27 @@ export function GeneralSettings({
                 />
                 <span className="text-sm text-zinc-300">Show Item Header</span>
               </label>
+
+              {analyticsAvailable && (
+                // The tooltip sits outside the label: nested, its icon has no interactive
+                // element of its own, so clicking to read the text would toggle the setting.
+                <div className="flex items-center gap-1.5">
+                  <label className="flex cursor-pointer items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={!analyticsDisabled}
+                      onChange={(e) =>
+                        onAnalyticsDisabledChange(!e.target.checked)
+                      }
+                      className={checkboxClass}
+                    />
+                    <span className="text-sm text-zinc-300">
+                      Usage Statistics
+                    </span>
+                  </label>
+                  <HelpTooltip text="Sends anonymous usage data: how many profiles, frameworks, proxies and keys you have, how many of them use each optional feature, and basic hardware/OS info. Never names, paths, accounts, keys or proxy addresses. Games D2BotNG launches report the same way; changing this reaches each one the next time it starts." />
+                </div>
+              )}
             </div>
 
             <Select

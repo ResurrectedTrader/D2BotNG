@@ -2,6 +2,7 @@ using D2BotNG.Core.Protos;
 using D2BotNG.Data;
 using D2BotNG.Engine;
 using D2BotNG.Logging;
+using D2BotNG.Services.Analytics;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 
@@ -75,6 +76,19 @@ public class EventServiceImpl : EventService.EventServiceBase
     private async Task SendSnapshotsAsync(IServerStreamWriter<Event> responseStream, CancellationToken ct)
     {
         var now = Timestamp.FromDateTime(DateTime.UtcNow);
+
+        // 0. Server facts fixed at build time. First, so no snapshot the UI gates on can
+        // arrive before them (the client flushes per animation frame, so a later position
+        // lets a page render before it knows what this build supports).
+        await responseStream.WriteAsync(new Event
+        {
+            Timestamp = now,
+            ServerInfo = new ServerInfo
+            {
+                Version = UpdateManager.AppVersion,
+                AnalyticsAvailable = AnalyticsBuild.IsConfigured,
+            }
+        }, ct);
 
         // 1. Profiles snapshot with status
         await responseStream.WriteAsync(new Event

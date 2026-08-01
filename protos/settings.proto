@@ -49,6 +49,10 @@ message Settings {
   optional bool minimize_to_tray = 9; // When the minimize button or system minimize is invoked, hide to tray instead of the taskbar. Optional so absence can default to true.
   StartupSettings startup = 10;
   int32 schema_version = 11; // Migration schema version of this settings file (see SettingsMigrator). 0/absent = pre-versioning.
+  // Opt out of anonymous usage reporting, for the manager and for the games it launches
+  // (passed on as -noanalytics). Phrased as "disabled" so absent/false means on, matching
+  // the shipped default -- an "enabled" field would silently opt every existing install out.
+  bool analytics_disabled = 12;
 }
 
 // Controls how profile starts are paced. Each profile waits its turn (limited by

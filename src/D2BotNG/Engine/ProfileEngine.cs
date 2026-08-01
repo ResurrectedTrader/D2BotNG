@@ -40,6 +40,12 @@ public class ProfileEngine
     /// </summary>
     private bool _handoffInProgress;
 
+    /// <summary>
+    /// Cached from settings; passed to each launched game as -noanalytics. Volatile like
+    /// <see cref="_startupDelayMs"/>: same pattern of a SettingsChanged write read by launch threads.
+    /// </summary>
+    private volatile bool _analyticsDisabled;
+
     public ProfileEngine(
         ILogger<ProfileEngine> logger,
         ProfileRepository profileRepository,
@@ -70,6 +76,9 @@ public class ProfileEngine
     {
         var concurrency = Math.Max(0, settings.Startup?.Concurrency ?? 0);
         _startupDelayMs = Math.Max(0, settings.Startup?.DelayMs ?? 0);
+        // Read here rather than at launch so a toggle applies to the next game started,
+        // without the engine holding the settings repository.
+        _analyticsDisabled = settings.AnalyticsDisabled;
 
         // Replace the semaphore; in-flight starts already hold a reference to the previous
         // instance and will release it correctly. New starts use the fresh one.
@@ -743,6 +752,7 @@ public class ProfileEngine
             var config = new GameLaunchConfig
             {
                 GameType = framework.GameType,
+                DisableAnalytics = _analyticsDisabled,
                 GamePath = gamePath,
                 ProfileName = profileName,
                 Handle = _messageWindow.Handle.ToString(),

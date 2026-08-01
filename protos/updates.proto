@@ -16,16 +16,18 @@ service UpdateService {
   rpc StartUpdate(google.protobuf.Empty) returns (google.protobuf.Empty);
 }
 
+// The result of an update check. The running version is not here: it is a build-time fact
+// about the server, so it lives on ServerInfo — consumers that only want the version (the
+// About dialog) shouldn't have to wait for an update check to learn it.
 message UpdateStatus {
-  string current_version = 1;
-  string latest_version = 2;
-  bool update_available = 3;
-  string release_notes = 4;
-  string download_url = 5;
-  int64 download_size = 6;
-  UpdateState state = 7;
-  int32 download_progress = 8;  // 0-100 percentage
-  string error_message = 9;
+  string latest_version = 1;
+  bool update_available = 2;
+  string release_notes = 3;
+  string download_url = 4;
+  int64 download_size = 5;
+  UpdateState state = 6;
+  int32 download_progress = 7;  // 0-100 percentage
+  string error_message = 8;
 }
 
 enum UpdateState {

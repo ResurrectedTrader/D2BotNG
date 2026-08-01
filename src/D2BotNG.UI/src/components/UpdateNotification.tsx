@@ -24,10 +24,11 @@ import {
   getUpdateStateLabel,
   UpdateState,
 } from "@/hooks/useUpdates";
-import { useUpdateStatus } from "@/stores/event-store";
+import { useServerInfo, useUpdateStatus } from "@/stores/event-store";
 
 export function UpdateNotification() {
   const status = useUpdateStatus();
+  const serverInfo = useServerInfo();
   const startUpdate = useStartUpdate();
   const isVisible = useUpdateVisibility(status);
   const [dismissed, setDismissed] = useState(false);
@@ -119,7 +120,9 @@ export function UpdateNotification() {
             <div className="mb-3 space-y-1 text-sm">
               <div className="flex justify-between">
                 <span className="text-zinc-400">Current:</span>
-                <span className="text-zinc-200">{status.currentVersion}</span>
+                <span className="text-zinc-200">
+                  {serverInfo?.version || "0.0.0"}
+                </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-zinc-400">Latest:</span>

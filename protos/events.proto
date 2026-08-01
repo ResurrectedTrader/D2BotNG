@@ -74,7 +74,20 @@ message Event {
 
     // Logging
     LogLevelsSnapshot log_levels_snapshot = 14;
+
+    // Server facts
+    ServerInfo server_info = 15;
   }
+}
+
+// Facts about the running server that are fixed at build time, so the UI can't infer them
+// and they don't belong in Settings (which is user configuration, and persisted). Sent once
+// when a client connects.
+message ServerInfo {
+  string version = 1; // Running app version, e.g. "0.0.21".
+  // An Aptabase app key was baked in at build time. Without one the app reports nothing at
+  // all, so the UI hides the usage-statistics opt-out rather than offering a dead control.
+  bool analytics_available = 2;
 }
 
 // Item entities changed event - signals UI to refresh entity list and search

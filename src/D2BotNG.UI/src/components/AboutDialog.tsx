@@ -12,7 +12,7 @@ import { useEffect } from "react";
 import { Dialog, DialogHeader, DialogContent, DialogFooter } from "./ui/Dialog";
 import { Button } from "./ui/Button";
 import { useCheckForUpdate, UpdateState } from "@/hooks/useUpdates";
-import { useUpdateStatus } from "@/stores/event-store";
+import { useServerInfo, useUpdateStatus } from "@/stores/event-store";
 
 interface AboutDialogProps {
   open: boolean;
@@ -21,6 +21,7 @@ interface AboutDialogProps {
 
 export function AboutDialog({ open, onClose }: AboutDialogProps) {
   const updateStatus = useUpdateStatus();
+  const serverInfo = useServerInfo();
   const checkForUpdate = useCheckForUpdate();
   const { reset } = checkForUpdate;
 
@@ -31,7 +32,7 @@ export function AboutDialog({ open, onClose }: AboutDialogProps) {
     }
   }, [open, reset]);
 
-  const currentVersion = updateStatus?.currentVersion || "0.0.0";
+  const currentVersion = serverInfo?.version || "0.0.0";
   const isChecking = updateStatus?.state === UpdateState.CHECKING;
   const hasError =
     checkForUpdate.isError || updateStatus?.state === UpdateState.ERROR;

@@ -10,6 +10,12 @@ public class GameLaunchConfig
     /// <summary>Which game this profile launches (from its framework); selects the backend.</summary>
     public required GameType GameType { get; init; }
 
+    /// <summary>
+    /// Propagates the manager's analytics opt-out to the injected botting framework, so one
+    /// setting covers both rather than the game reporting after the user opted out here.
+    /// </summary>
+    public required bool DisableAnalytics { get; init; }
+
     public required string GamePath { get; init; }
 
     /// <summary>DLLs to inject into the game, in order (resolved absolute paths).</summary>

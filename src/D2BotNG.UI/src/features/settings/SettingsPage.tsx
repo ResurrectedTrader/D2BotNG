@@ -170,6 +170,15 @@ export function SettingsPage() {
     setIsDirty(true);
   }, []);
 
+  // Handler for the usage-statistics opt-out
+  const handleAnalyticsDisabledChange = useCallback((value: boolean) => {
+    setLocalSettings((prev) => {
+      if (!prev) return prev;
+      return { ...prev, analyticsDisabled: value };
+    });
+    setIsDirty(true);
+  }, []);
+
   // Handler for legacy API settings changes
   const handleLegacyApiChange = useCallback(
     (updates: Partial<LegacyApiSettingsType>) => {
@@ -295,6 +304,7 @@ export function SettingsPage() {
               minimizeToTray={localSettings.minimizeToTray ?? true}
               closeAction={localSettings.closeAction}
               basePath={localSettings.basePath}
+              analyticsDisabled={localSettings.analyticsDisabled ?? false}
               onServerChange={handleServerChange}
               onDisplayChange={handleDisplayChange}
               onStartupChange={handleStartupChange}
@@ -302,6 +312,7 @@ export function SettingsPage() {
               onMinimizeToTrayChange={handleMinimizeToTrayChange}
               onCloseActionChange={handleCloseActionChange}
               onBasePathChange={handleBasePathChange}
+              onAnalyticsDisabledChange={handleAnalyticsDisabledChange}
             />
           </TabPanel>
 

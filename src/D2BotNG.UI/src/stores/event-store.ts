@@ -20,7 +20,12 @@ import { SettingsSchema } from "@/generated/settings_pb";
 import type { Settings } from "@/generated/settings_pb";
 import type { UpdateStatus } from "@/generated/updates_pb";
 import { KeyUsageSchema } from "@/generated/events_pb";
-import type { Event, KeyUsage, MessageColor } from "@/generated/events_pb";
+import type {
+  Event,
+  KeyUsage,
+  MessageColor,
+  ServerInfo,
+} from "@/generated/events_pb";
 import type { LogLevelEntry } from "@/generated/logging_pb";
 import { ProxySchema } from "@/generated/proxies_pb";
 import type { Proxy } from "@/generated/proxies_pb";
@@ -136,6 +141,9 @@ interface EventState {
   // Log levels (session-only)
   logLevels: LogLevelEntry[];
 
+  // Build-time facts about the connected server (version, compiled-in capabilities)
+  serverInfo: ServerInfo | null;
+
   // Characters (Map by profile name) - live state from the bot engine
   characters: Map<string, Character>;
 
@@ -162,6 +170,7 @@ export const useEventStore = create<EventState>((set, get) => ({
   messages: [],
   messagesBySource: new Map(),
   logLevels: [],
+  serverInfo: null,
   characters: new Map(),
 
   setConnected: (connected) => set({ isConnected: connected }),
@@ -182,6 +191,7 @@ export const useEventStore = create<EventState>((set, get) => ({
     let messages = state.messages;
     let messagesBySource = state.messagesBySource;
     let logLevels = state.logLevels;
+    let serverInfo = state.serverInfo;
     let characters = state.characters;
     let entitiesVersion = state.entitiesVersion;
     let hasReceivedInitialData = state.hasReceivedInitialData;
@@ -195,6 +205,7 @@ export const useEventStore = create<EventState>((set, get) => ({
     let updateStatusDirty = false;
     let messagesDirty = false;
     let logLevelsDirty = false;
+    let serverInfoDirty = false;
     let charactersDirty = false;
     let entitiesVersionDirty = false;
     let hasReceivedInitialDataDirty = false;
@@ -414,6 +425,12 @@ export const useEventStore = create<EventState>((set, get) => ({
           break;
         }
 
+        case "serverInfo": {
+          serverInfo = event.event.value;
+          serverInfoDirty = true;
+          break;
+        }
+
         case "charactersSnapshot": {
           const m = new Map<string, Character>();
           for (const c of event.event.value.characters) {
@@ -465,6 +482,7 @@ export const useEventStore = create<EventState>((set, get) => ({
       update.messagesBySource = messagesBySource;
     }
     if (logLevelsDirty) update.logLevels = logLevels;
+    if (serverInfoDirty) update.serverInfo = serverInfo;
     if (charactersDirty) update.characters = characters;
     if (entitiesVersionDirty) update.entitiesVersion = entitiesVersion;
 
@@ -497,6 +515,7 @@ export const useEventStore = create<EventState>((set, get) => ({
       messages: [],
       messagesBySource: new Map(),
       logLevels: [],
+      serverInfo: null,
       characters: new Map(),
     }),
 }));
@@ -611,6 +630,11 @@ export function useIsLoading(): boolean {
 /** Get all log level entries (memoized with shallow equality) */
 export function useLogLevels(): LogLevelEntry[] {
   return useEventStore(useShallow((state) => state.logLevels));
+}
+
+/** Build-time facts about the connected server (null until the stream delivers them) */
+export function useServerInfo(): ServerInfo | null {
+  return useEventStore((state) => state.serverInfo);
 }
 
 /** Get all characters as an array (memoized with shallow equality) */

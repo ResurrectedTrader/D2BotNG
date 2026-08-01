@@ -23,7 +23,18 @@ public class UpdateManager
     // are cached.
     private readonly IServiceProvider _serviceProvider;
     private readonly HttpClient _httpClient;
-    private readonly string _currentVersion;
+    /// <summary>
+    /// Running app version ("0.0.0" for a local build CI never stamped). A build-time fact
+    /// rather than update state, so it is reported on ServerInfo and read from here.
+    /// </summary>
+    public static string AppVersion { get; } = ResolveAppVersion();
+
+    private static string ResolveAppVersion()
+    {
+        var version = Assembly.GetExecutingAssembly().GetName().Version;
+        return version != null ? $"{version.Major}.{version.Minor}.{version.Build}" : "0.0.0";
+    }
+
     private readonly string _repoOwner;
     private readonly string _repoName;
     private readonly string _buildVariant;
@@ -54,10 +65,6 @@ public class UpdateManager
         _httpClient = new HttpClient();
         _httpClient.DefaultRequestHeaders.Add("User-Agent", "D2BotNG");
 
-        // Get current version from assembly
-        var version = Assembly.GetExecutingAssembly().GetName().Version;
-        _currentVersion = version != null ? $"{version.Major}.{version.Minor}.{version.Build}" : "0.0.0";
-
         _repoOwner = "ResurrectedTrader";
         _repoName = "D2BotNG";
 
@@ -67,8 +74,7 @@ public class UpdateManager
 
         _currentStatus = new UpdateStatus
         {
-            CurrentVersion = _currentVersion,
-            LatestVersion = _currentVersion,
+            LatestVersion = AppVersion,
             UpdateAvailable = false,
             State = UpdateState.Unknown
         };
@@ -101,7 +107,7 @@ public class UpdateManager
 
     public async Task CheckForUpdateAsync(CancellationToken cancellationToken = default)
     {
-        if (_currentVersion == "0.0.0")
+        if (AppVersion == "0.0.0")
         {
             _logger.LogDebug("Skipping update check for non-release build (version 0.0.0)");
             return;
@@ -155,7 +161,7 @@ public class UpdateManager
             }
 
             var latestVersion = release.TagName.TrimStart('v');
-            var updateAvailable = IsNewerVersion(latestVersion, _currentVersion);
+            var updateAvailable = IsNewerVersion(latestVersion, AppVersion);
 
             // Find the asset matching our build variant (e.g., D2BotNG-standalone.exe)
             var expectedName = $"D2BotNG-{_buildVariant}.exe";
@@ -175,7 +181,7 @@ public class UpdateManager
             if (!updateAvailable)
             {
                 _logger.LogDebug("Update check complete. Current: {Current}, Latest: {Latest}, UpdateAvailable: {Available}",
-                    _currentVersion, latestVersion, updateAvailable);
+                    AppVersion, latestVersion, updateAvailable);
             }
             else
             {

@@ -98,13 +98,15 @@ All defined in `protos/*.proto`, implemented in `src/D2BotNG/Services/*ServiceIm
 Frontend uses a single gRPC server-stream for all real-time state:
 
 1. `useEventStream` hook connects to `EventService.StreamEvents()`
-2. Server sends initial snapshots (profiles, key lists, proxies, frameworks, characters, schedules, settings, update status, log levels, console history)
+2. Server sends initial snapshots (server info first, then profiles, key lists, proxies, frameworks, characters, schedules, settings, update status, log levels, console history)
 3. Server streams incremental changes (ProfileState, Message, Settings, etc.)
 4. Zustand `event-store` processes events and updates state maps. Snapshot handlers preserve object identity for content-equal messages (usage snapshots re-broadcast on every profile start/stop; identity-keyed form-seeding effects must not reset)
 5. Mutations (create/update/delete) return `Empty` - UI updates arrive via the stream
 6. Auto-reconnect on disconnect with 5s retry
 
-**Event types:** ProfilesSnapshot, KeyListsSnapshot, ProxiesSnapshot, FrameworksSnapshot, SchedulesSnapshot, CharactersSnapshot, ProfileState, CharacterState, Message, Settings, UpdateStatus, EntitiesChanged, LogLevelsSnapshot
+**Event types:** ProfilesSnapshot, KeyListsSnapshot, ProxiesSnapshot, FrameworksSnapshot, SchedulesSnapshot, CharactersSnapshot, ProfileState, CharacterState, Message, Settings, UpdateStatus, EntitiesChanged, LogLevelsSnapshot, ServerInfo
+
+**ServerInfo** carries facts fixed when the server was compiled — the running `version` and `analytics_available` (whether an Aptabase key was baked in; the UI hides the Usage Statistics opt-out when it wasn't). Sent once per connection, and first, so nothing the UI gates on renders before it. They don't belong in `Settings` (user configuration, and persisted — a build fact would go stale on disk), and the version isn't on `UpdateStatus` because the About dialog wants it without waiting for an update check.
 
 ## Backend Architecture
 
@@ -143,7 +145,8 @@ Frontend uses a single gRPC server-stream for all real-time state:
 - **AuthInterceptor** - gRPC interceptor checking `x-auth-password` header
 - **DiscordService** - Discord.Net BackgroundService with slash commands (/list, /status, /start, /stop, /restart, /mule, /schedule, /identify), rich embeds, per-user auth, auto-reconnect on settings change
 - **DiscordWebhookService** - Posts profile messages and item PNGs to per-profile and global Discord webhooks; fire-and-forget
-- **UpdateManager** / **UpdateCheckBackgroundService** - Version checking and download management
+- **UpdateManager** / **UpdateCheckBackgroundService** - Version checking and download management. `UpdateManager.AppVersion` is the running version, static so `EventServiceImpl` can put it on `ServerInfo` without an update check
+- **AnalyticsService** (`Services/Analytics/`) - Anonymous usage reporting to Aptabase: a `session_start` install-shape snapshot ~15s after startup (inventory counts, per-feature adoption counts — `profilesWith*`/`frameworksWith*`, so "12 profiles, 1 proxied" is distinguishable from "12 profiles, all proxied" — install-level feature tags, game versions, build variant, hardware, Wine) and a 12-hourly `heartbeat` (profiles running, uptime). Only counts, booleans and environment facts — never a name, path, key or address. The app key is baked in at build time from the `APTABASE_APP_KEY` secret (`-p:AptabaseAppKey=`, surfaced as assembly metadata exactly like `BuildVariant`); **an absent key disables analytics**, so local and fork builds report nothing and the key is never committed. `Settings.analytics_disabled` (Settings → General → **Usage Statistics**) is the opt-out; it is re-read per send and cached into `ProfileEngine` off `SettingsChanged`, so toggling it applies immediately — no restart — to both the manager and the next game launched, which gets `-noanalytics` passed through. Phrased as *disabled* so absent/false means on; an `enabled` field would opt every existing install out on upgrade. `D2BOTNG_ANALYTICS_HOST` overrides the ingest host (self-hosted/dev keys). `InstallId` derives the install identifier as `sha256(salt|MachineGuid|volumeSerial|computerName)` in lowercase hex — **byte-identical to d2bsng's `DeriveInstallId`** so a machine's manager and its injected DLLs join to one install; nothing is stored, and the shared salt is what makes the two agree. `InstallIdTests` pins that format, since the two implementations are linked by nothing but convention
 - **ErrorDialogWatcher** - Monitors for game error dialogs
 - **DataCache** - Transient key-value store for D2BS data retrieve/store
 - **IniWriter** - Rewrites each framework's d2bs.ini, writing only the profiles assigned to that framework
@@ -194,7 +197,7 @@ Backward-compatible HTTP API for legacy D2Bot# tools (e.g., Limedrop, D2BS scrip
 
 ## Data Files
 
-App settings in `d2botng.json` next to the exe (protobuf `Settings` - start_minimized, close_action, server, Discord, display, legacy_api, base_path, startup, window geometry, schema_version). Versioned via `SettingsMigrator` (game/engine settings moved to frameworks).
+App settings in `d2botng.json` next to the exe (protobuf `Settings` - start_minimized, close_action, server, Discord, display, legacy_api, base_path, startup, window geometry, analytics_disabled, schema_version). Versioned via `SettingsMigrator` (game/engine settings moved to frameworks).
 
 Bot data in `data/ng/` directory (protobuf JSON format, location determined by `BasePath` in settings):
 

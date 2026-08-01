@@ -188,8 +188,9 @@ public class D2Backend : IGameBackend
     }
 
     /// <summary>
-    /// Build command line matching original D2Bot format:
-    /// [CD Keys] -profile "{name}" -handle "{handle}" -cachefix -multi -title "{name}" {user_params}
+    /// Build command line matching original D2Bot format, plus the switches this manager adds:
+    /// [CD keys] [-proxy] -profile "{name}" -handle "{handle}" -cachefix -multi -title "{name}"
+    /// [-noanalytics] {user_params}
     /// </summary>
     private static string BuildCommandLine(GameLaunchConfig config)
     {
@@ -222,6 +223,11 @@ public class D2Backend : IGameBackend
 
         sb.Append("-cachefix -multi ");
         sb.Append($"-title \"{config.ProfileName}\" ");
+
+        if (config.DisableAnalytics)
+        {
+            sb.Append("-noanalytics ");
+        }
 
         // 5. User parameters (passed through as-is)
         if (!string.IsNullOrEmpty(userParams))

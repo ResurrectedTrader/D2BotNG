@@ -9,6 +9,7 @@ using D2BotNG.Legacy.Models;
 using D2BotNG.Logging;
 using D2BotNG.Rendering;
 using D2BotNG.Services;
+using D2BotNG.Services.Analytics;
 using D2BotNG.UI;
 using D2BotNG.Windows;
 using Microsoft.AspNetCore.StaticFiles;
@@ -443,6 +444,7 @@ internal static class Program
         services.AddHostedService<ErrorDialogWatcher>();
         services.AddHostedService<UpdateCheckBackgroundService>();
         services.AddHostedService<GameDirectoryCleanupService>();
+        services.AddHostedService<AnalyticsService>();
         services.AddHostedService<D2BSMessageHandler>();
         services.AddHostedService(sp => sp.GetRequiredService<CharacterStateService>());
         services.AddHostedService(sp => sp.GetRequiredService<DiscordService>());
