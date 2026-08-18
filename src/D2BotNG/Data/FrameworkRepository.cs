@@ -10,7 +10,7 @@ namespace D2BotNG.Data;
 /// </summary>
 public class FrameworkRepository : FileRepository<Framework, FrameworkCollection>
 {
-    public FrameworkRepository(Paths paths) : base(paths, "frameworks.json") { }
+    public FrameworkRepository(Paths paths, DataWriteGate writeGate) : base(paths, writeGate, "frameworks.json") { }
 
     protected override string GetKey(Framework f) => f.Name;
 

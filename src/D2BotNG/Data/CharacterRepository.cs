@@ -8,7 +8,7 @@ namespace D2BotNG.Data;
 /// </summary>
 public class CharacterRepository : FileRepository<Character, CharacterList>
 {
-    public CharacterRepository(Paths paths) : base(paths, "characters.json") { }
+    public CharacterRepository(Paths paths, DataWriteGate writeGate) : base(paths, writeGate, "characters.json") { }
 
     protected override string GetKey(Character c) => c.Profile;
 

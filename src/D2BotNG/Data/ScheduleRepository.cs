@@ -4,7 +4,7 @@ namespace D2BotNG.Data;
 
 public class ScheduleRepository : FileRepository<Schedule, ScheduleList>
 {
-    public ScheduleRepository(Paths paths) : base(paths, "schedules.json") { }
+    public ScheduleRepository(Paths paths, DataWriteGate writeGate) : base(paths, writeGate, "schedules.json") { }
 
     protected override string GetKey(Schedule s) => s.Name;
 

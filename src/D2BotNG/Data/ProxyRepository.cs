@@ -9,7 +9,7 @@ namespace D2BotNG.Data;
 /// </summary>
 public class ProxyRepository : FileRepository<Proxy, ProxyCollection>
 {
-    public ProxyRepository(Paths paths) : base(paths, "proxies.json") { }
+    public ProxyRepository(Paths paths, DataWriteGate writeGate) : base(paths, writeGate, "proxies.json") { }
 
     protected override string GetKey(Proxy p) => p.Address;
 

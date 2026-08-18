@@ -91,6 +91,13 @@ export function ProfileForm({
   const profilesData = useProfiles();
   const advancedMode = useSettings()?.advancedMode ?? false;
 
+  // Basic mode hides frameworks entirely, but a saved profile can still be left without
+  // one — deleting a framework clears every reference to it — and such a profile refuses to
+  // start. Hiding the only control that repairs it turns that into a dead end, so show
+  // the picker whenever the profile on disk has no framework, in either mode.
+  const frameworkOrphaned = !!profile && !profile.framework;
+  const showFramework = advancedMode || frameworkOrphaned;
+
   // Build set of existing profile names for uniqueness validation
   const existingNames = useMemo(() => {
     return new Set(profilesData.map((p) => p.profile.name.toLowerCase()));
@@ -295,11 +302,11 @@ export function ProfileForm({
       touched.d2Path && d2Path.trim() === ""
         ? "Diablo II path is required"
         : undefined,
-    // Framework is only user-selectable in advanced mode; in basic mode it is
-    // auto-set to "Default" once the frameworks snapshot arrives, so the error is
-    // only ever visible in advanced mode (where the dropdown exists).
+    // Framework is only user-selectable where the dropdown is rendered; elsewhere it
+    // is auto-set to "Default" once the frameworks snapshot arrives, so the error can
+    // only ever be seen next to the control it refers to.
     framework:
-      advancedMode && touched.framework && framework.trim() === ""
+      showFramework && touched.framework && framework.trim() === ""
         ? "Framework is required"
         : undefined,
     entryScript:
@@ -311,7 +318,7 @@ export function ProfileForm({
   // Surfaced near the submit button in basic mode, where the framework dropdown
   // isn't rendered: without this, a blocked save would be a silent no-op.
   const basicModeFrameworkError =
-    !advancedMode && framework.trim() === "" && frameworksData.length === 0
+    !showFramework && framework.trim() === "" && frameworksData.length === 0
       ? "No frameworks are available. Restart D2BotNG to recreate the Default framework, or enable Advanced Mode in Settings to create one."
       : undefined;
 
@@ -588,7 +595,7 @@ export function ProfileForm({
               onChange={(e) => setProxy(e.target.value)}
               options={proxyOptions}
             />
-            {advancedMode && (
+            {showFramework && (
               <Select
                 id="framework"
                 label="Framework"

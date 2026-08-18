@@ -20,14 +20,23 @@ public abstract class FileRepository<TItem, TList> : IDisposable
     private volatile bool _loaded;
 
     private readonly Paths _paths;
+    private readonly DataWriteGate _writeGate;
     private ILogger? _logger;
     private ILogger Logger => _logger ??= TrackingLoggerFactory.ForContext(GetType());
 
-    protected FileRepository(Paths paths, string fileName)
+    protected FileRepository(Paths paths, DataWriteGate writeGate, string fileName)
     {
         _paths = paths;
+        _writeGate = writeGate;
         FilePath = fileName;
     }
+
+    /// <summary>
+    /// Whether this process still owns the data directory. False once a handoff has
+    /// given it to a successor — see <see cref="DataWriteGate"/>. Overrides of
+    /// <see cref="SaveAsync"/> that write files of their own must check this too.
+    /// </summary>
+    protected bool CanWrite => !_writeGate.IsClosed;
 
     private string FilePath => Path.Combine(_paths.DataDirectory, field);
 
@@ -118,6 +127,12 @@ public abstract class FileRepository<TItem, TList> : IDisposable
 
     protected virtual async Task SaveAsync()
     {
+        if (!CanWrite)
+        {
+            Logger.Debug("Handoff in progress; not writing {FilePath} — the successor owns it now", FilePath);
+            return;
+        }
+
         var directory = Path.GetDirectoryName(FilePath);
         if (directory != null)
             Directory.CreateDirectory(directory);

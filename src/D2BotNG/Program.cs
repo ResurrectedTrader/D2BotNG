@@ -369,6 +369,7 @@ internal static class Program
         services.AddSingleton<EventBroadcaster>();
 
         // Add data repositories
+        services.AddSingleton<DataWriteGate>();
         services.AddSingleton<SettingsRepository>();
         services.AddSingleton<Paths>();
         services.AddSingleton<ProfileRepository>();
