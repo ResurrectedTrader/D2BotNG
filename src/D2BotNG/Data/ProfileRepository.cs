@@ -8,8 +8,12 @@ public class ProfileRepository : FileRepository<Profile, ProfileList>
     private readonly IniWriter _iniWriter;
     private readonly FrameworkRepository _frameworkRepository;
 
-    public ProfileRepository(Paths paths, IniWriter iniWriter, FrameworkRepository frameworkRepository)
-        : base(paths, "profiles.json")
+    public ProfileRepository(
+        Paths paths,
+        DataWriteGate writeGate,
+        IniWriter iniWriter,
+        FrameworkRepository frameworkRepository)
+        : base(paths, writeGate, "profiles.json")
     {
         _iniWriter = iniWriter;
         _frameworkRepository = frameworkRepository;
@@ -29,6 +33,9 @@ public class ProfileRepository : FileRepository<Profile, ProfileList>
     protected override async Task SaveAsync()
     {
         await base.SaveAsync();
+        // base.SaveAsync() no-ops during a handoff; the ini files are ours to write too.
+        if (!CanWrite) return;
+
         // Rewrite each framework's d2bs.ini so it reflects only its assigned profiles.
         // Runs under the repository lock (so use Items, not GetAllAsync, which would
         // deadlock), which also orders ini writes with profile saves.
@@ -42,6 +49,8 @@ public class ProfileRepository : FileRepository<Profile, ProfileList>
     /// </summary>
     public async Task RewriteInisAsync()
     {
+        if (!CanWrite) return;
+
         await EnsureLoadedAsync();
 
         await Lock.WaitAsync();

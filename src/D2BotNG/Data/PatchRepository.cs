@@ -11,7 +11,7 @@ public class PatchRepository : FileRepository<Patch, PatchList>
         "STORM.dll", "D2CMP.dll", "D2MULTI.dll", "D2MCPCLIENT.dll", "Game.exe"
     ];
 
-    public PatchRepository(Paths paths) : base(paths, "patches.json") { }
+    public PatchRepository(Paths paths, DataWriteGate writeGate) : base(paths, writeGate, "patches.json") { }
 
     protected override string GetKey(Patch patch) => $"{patch.Name}{patch.Version}";
 

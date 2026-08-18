@@ -8,7 +8,7 @@ public class KeyListRepository : FileRepository<KeyList, KeyListCollection>, IHa
 {
     private readonly Dictionary<string, int> _currentIndex = new();
 
-    public KeyListRepository(Paths paths) : base(paths, "keylists.json") { }
+    public KeyListRepository(Paths paths, DataWriteGate writeGate) : base(paths, writeGate, "keylists.json") { }
 
     protected override string GetKey(KeyList k) => k.Name;
 

@@ -13,6 +13,11 @@ namespace D2BotNG.Data;
 /// A "Default" framework is synthesized from those settings and assigned to every
 /// profile that has no framework yet. Existing per-profile <c>d2_path</c> values (the
 /// launched executable) are preserved unchanged.
+///
+/// It also self-heals afterwards: while only one framework exists, a profile left
+/// without one (a framework delete clears every reference to it) is rebound to it on
+/// the next run. Basic mode exposes no framework control at all, so such a profile was
+/// otherwise unstartable with no way in the UI to fix it.
 /// </summary>
 public class FrameworkBootstrap
 {
@@ -52,11 +57,19 @@ public class FrameworkBootstrap
             return false;
         }
 
-        // Only a genuine first-run migration (no frameworks yet) adopts framework-less
-        // profiles. Once frameworks exist, an empty Framework means the user deleted one
-        // and must reassign explicitly — we must not silently rebind those profiles.
         var frameworksExisted = frameworks.Count > 0;
         var changed = false;
+
+        // A framework-less profile is only adopted when there is nothing to choose:
+        // either this is a genuine first-run migration (no frameworks yet), or exactly
+        // one framework exists — in which case the assignment we would make is the only
+        // one the user could have made by hand, so making it cannot be wrong.
+        //
+        // With two or more, an empty Framework is the deliberate post-delete state and
+        // the profile is awaiting reassignment; guessing could launch it against the
+        // wrong game directory. We decline, but say so — the profile is unstartable
+        // until someone acts, and silence made that look like a bug rather than a choice.
+        var canAdopt = frameworks.Count <= 1;
 
         // The framework new/orphaned profiles will be attached to.
         var targetName = frameworks.FirstOrDefault(f => f.Name == DefaultFrameworkName)?.Name
@@ -65,10 +78,8 @@ public class FrameworkBootstrap
 
         // Adopt profiles BEFORE creating the framework: a crash between the two
         // writes then leaves a state the next run completes (frameworks.Count is
-        // still 0 on retry). The reverse order would strand the profiles — an
-        // existing framework plus empty references is the post-delete state that
-        // must NOT be rebound.
-        if (missing.Count > 0 && !frameworksExisted)
+        // still 0 on retry).
+        if (missing.Count > 0 && canAdopt)
         {
             await _profileRepository.MutateAllAsync(list =>
             {
@@ -86,6 +97,14 @@ public class FrameworkBootstrap
             _logger.LogInformation(
                 "Assigned framework '{Name}' to {Count} profile(s) with no framework",
                 targetName, missing.Count);
+        }
+        else if (missing.Count > 0)
+        {
+            _logger.LogWarning(
+                "{Count} profile(s) have no framework and {FrameworkCount} frameworks exist, so "
+                + "none was assigned automatically: {Profiles}. Each must be assigned a framework "
+                + "before it can start",
+                missing.Count, frameworks.Count, string.Join(", ", missing.Select(p => p.Name)));
         }
 
         if (!frameworksExisted)

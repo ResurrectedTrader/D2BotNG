@@ -13,8 +13,14 @@ public class SettingsRepository
 
     private readonly string _filePath = Path.Combine(AppContext.BaseDirectory, "d2botng.json");
     private readonly SemaphoreSlim _lock = new(1, 1);
+    private readonly DataWriteGate _writeGate;
     private Settings? _settings;
     private bool _loaded;
+
+    public SettingsRepository(DataWriteGate writeGate)
+    {
+        _writeGate = writeGate;
+    }
 
     /// <summary>
     /// Pre-frameworks game/engine values recovered from a v0 settings file during load,
@@ -163,6 +169,14 @@ public class SettingsRepository
 
     private async Task SaveInternalAsync()
     {
+        if (_writeGate.IsClosed)
+        {
+            // A successor owns the settings file now — and it may already have upgraded
+            // its schema. Writing our copy back would undo that. See DataWriteGate.
+            Logger.Debug("Handoff in progress; not writing {FilePath}", _filePath);
+            return;
+        }
+
         // Every save writes the current schema version so the file stays stamped.
         _settings!.SchemaVersion = SettingsMigrator.CurrentVersion;
         var json = ProtobufJsonConfig.Formatter.Format(_settings);
