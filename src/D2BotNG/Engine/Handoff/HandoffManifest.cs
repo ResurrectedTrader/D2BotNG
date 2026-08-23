@@ -43,7 +43,10 @@ public class HandoffProfile
 
     [JsonPropertyName("proxyName")] public string? ProxyName { get; set; }
 
-    [JsonPropertyName("crashCount")] public int CrashCount { get; set; }
+    // Renamed from "crashCount" when the retry budget was scoped to launch failures. A manifest
+    // written by an older predecessor simply won't bind this, leaving 0 — a fresh budget, which
+    // is the permissive direction.
+    [JsonPropertyName("launchFailureCount")] public int LaunchFailureCount { get; set; }
 
     [JsonPropertyName("startedAt")] public DateTime? StartedAt { get; set; }
 
