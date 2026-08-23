@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using D2BotNG.Core.Protos;
@@ -30,6 +31,11 @@ public class D2BSMessageHandler : BackgroundService
     private readonly Paths _paths;
     private readonly SettingsRepository _settingsRepository;
     private readonly CharacterStateService _characterStateService;
+
+    /// <summary>
+    /// Handles we've already warned about, so a 1Hz sender doesn't flood the log.
+    /// </summary>
+    private readonly ConcurrentDictionary<nint, byte> _unroutedHandles = new();
 
     public D2BSMessageHandler(
         ILogger<D2BSMessageHandler> logger,
@@ -89,7 +95,22 @@ public class D2BSMessageHandler : BackgroundService
         _logger.LogDebug("D2BS command: {Command} from {Profile}", msg.Message, profile?.Name ?? "unknown");
 
         if (profile == null)
+        {
+            // A message we cannot attribute is a message we throw away — including a heartbeat,
+            // which then reads as a dead bot. This used to vanish into the Debug log above with
+            // no counter, so a leaked or misrouted entry in the engine's handle map was
+            // invisible. Warn once per handle rather than per message: a bot sends ~1Hz.
+            if (_unroutedHandles.TryAdd(msg.SenderHandle, 0))
+            {
+                _logger.LogWarning(
+                    "Discarding D2BS message from unknown window handle {Handle} ({Function}) — " +
+                    "no running profile is registered for it",
+                    msg.SenderHandle, msg.Message.Function ?? "?");
+            }
             return;
+        }
+
+        _unroutedHandles.TryRemove(msg.SenderHandle, out _);
 
         var args = msg.Message.Arguments;
 
@@ -154,11 +175,11 @@ public class D2BSMessageHandler : BackgroundService
                 break;
 
             case "restartProfile":
-                await HandleRestartProfileAsync(profile.Name, args.Length > 1 && args[1].Equals("true", StringComparison.OrdinalIgnoreCase));
+                HandleRestartProfile(profile.Name, args.Length > 1 && args[1].Equals("true", StringComparison.OrdinalIgnoreCase));
                 break;
 
             case "stop":
-                await _profileEngine.StopProfileAsync(profile.Name);
+                RunDetached("Stop", profile.Name, () => _profileEngine.StopProfileAsync(profile.Name));
                 break;
 
             case "start":
@@ -304,7 +325,7 @@ public class D2BSMessageHandler : BackgroundService
         await _profileEngine.UpdateProfileAndNotifyAsync(profile);
 
         if (rollover)
-            await _profileEngine.RestartProfileAsync(profile.Name, rotateKey: profile.SwitchKeysOnRestart);
+            HandleRestartProfile(profile.Name, rotateKey: profile.SwitchKeysOnRestart);
     }
 
     private async Task HandleUpdateChickensAsync(Profile profile)
@@ -442,9 +463,33 @@ public class D2BSMessageHandler : BackgroundService
         await _profileEngine.UpdateProfileAndNotifyAsync(profile);
     }
 
-    private async Task HandleRestartProfileAsync(string profileName, bool rotateKey)
+    /// <summary>
+    /// Runs profile lifecycle work off the dispatch loop.
+    /// </summary>
+    /// <remarks>
+    /// This loop processes one message at a time for the entire fleet, so anything awaited here
+    /// is time during which no other profile's messages — including its heartbeats — are read.
+    /// A restart is <c>StopProfileAsync</c> (up to a 5s terminate grace) + a 1s settle + start,
+    /// so awaiting it inline stalls the whole pipeline for six seconds or more; a handful of
+    /// profiles rotating keys together was enough to push uninvolved bots past the missed-
+    /// heartbeat threshold and recruit them into the same restart storm.
+    /// <para>
+    /// D2Bot# never did this inline either — <c>D2Profile.Stop()</c> queued a Worker onto one of
+    /// ten shards keyed by profile name hash. The engine's own state machine already rejects
+    /// invalid transitions, so concurrent lifecycle requests for one profile are safe.
+    /// </para>
+    /// </remarks>
+    private void RunDetached(string description, string profileName, Func<Task> work)
     {
-        await _profileEngine.RestartProfileAsync(profileName, rotateKey: rotateKey);
+        _ = Task.Run(work).ContinueWith(
+            t => _logger.LogError(t.Exception, "{Description} failed for profile {Profile}", description, profileName),
+            TaskContinuationOptions.OnlyOnFaulted);
+    }
+
+    private void HandleRestartProfile(string profileName, bool rotateKey)
+    {
+        RunDetached("Restart", profileName,
+            () => _profileEngine.RestartProfileAsync(profileName, rotateKey: rotateKey));
     }
 
     private async Task HandleCDKeyDisabledAsync(Profile profile, string keyName)

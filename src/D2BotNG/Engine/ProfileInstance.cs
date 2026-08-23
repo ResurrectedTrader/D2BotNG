@@ -17,8 +17,31 @@ public class ProfileInstance : IDisposable
     public string Status { get; set; } = "";
     public DateTime? StartedAt { get; private set; }
     public DateTime? LastHeartbeat { get; private set; }
-    public int CrashCount { get; set; }
+
+    /// <summary>
+    /// Consecutive failures to get the game up (launch or DLL injection). This is the only
+    /// counter that feeds the retry budget, and any successful launch zeroes it — a runtime
+    /// fault never consumes it. Mirrors D2Bot#'s <c>Crashed</c>, which was incremented only
+    /// from the two LoadRemoteLibrary catch blocks and cleared on every successful load.
+    /// </summary>
+    public int LaunchFailureCount { get; set; }
+
+    /// <summary>
+    /// Consecutive restarts caused by a runtime fault (heartbeat timeout, hung window,
+    /// unexpected exit). Drives restart backoff only — never a budget, so a failing bot keeps
+    /// being retried, just progressively more slowly.
+    /// </summary>
+    public int RuntimeRestartCount { get; set; }
+
     public int MissedHeartbeats { get; set; }
+
+    /// <summary>
+    /// The game window handle registered for WM_COPYDATA routing, captured once at launch.
+    /// Deliberately stored rather than re-derived: <c>Extensions.GameWindow</c> enumerates the
+    /// windows owned by the pid, so a process that has already exited yields 0 — and every
+    /// removal keyed on a live re-read silently leaks its routing entry instead.
+    /// </summary>
+    public nint GameWindowHandle { get; set; }
 
     /// <summary>When the game window first became continuously unresponsive; null while responsive.</summary>
     public DateTime? UnresponsiveSince { get; set; }
@@ -63,13 +86,19 @@ public class ProfileInstance : IDisposable
         UnresponsiveSince = null;
     }
 
-    public void UpdateHeartbeat()
+    /// <summary>
+    /// Records a heartbeat. <paramref name="at"/> is when the message was *received* on the
+    /// message pump, not when it was dispatched — see <see cref="MessageWindow"/>. Passing the
+    /// receive time is what keeps a backed-up dispatch queue from looking like a dead bot.
+    /// </summary>
+    public void UpdateHeartbeat(DateTime? at = null)
     {
-        LastHeartbeat = DateTime.UtcNow;
+        LastHeartbeat = at ?? DateTime.UtcNow;
         MissedHeartbeats = 0;
-        // CrashCount is deliberately NOT reset here: a crash-looping bot that emits even one
-        // heartbeat between failures would otherwise zero its budget and never reach
-        // MaxCrashRetries. It is reset only on a manual start (ProfileEngine.StartProfileAsync).
+        // Neither retry counter is reset here. LaunchFailureCount is cleared by a successful
+        // launch; RuntimeRestartCount only by a run that stays up long enough to count as
+        // healthy (see ProfileEngine.MonitorProcessAsync) — a bot that emits a single heartbeat
+        // between failures must not be able to zero its own backoff.
     }
 
     /// <summary>
@@ -82,10 +111,11 @@ public class ProfileInstance : IDisposable
         string status,
         string? keyName,
         string? proxyName,
-        int crashCount,
+        int launchFailureCount,
         int missedHeartbeats,
         DateTime? startedAt,
-        DateTime? lastHeartbeat)
+        DateTime? lastHeartbeat,
+        nint gameWindowHandle)
     {
         Process?.Dispose();
         Process = process;
@@ -93,7 +123,8 @@ public class ProfileInstance : IDisposable
         Status = status;
         KeyName = keyName;
         ProxyName = proxyName;
-        CrashCount = crashCount;
+        LaunchFailureCount = launchFailureCount;
+        GameWindowHandle = gameWindowHandle;
         MissedHeartbeats = missedHeartbeats;
         StartedAt = startedAt;
         LastHeartbeat = lastHeartbeat;

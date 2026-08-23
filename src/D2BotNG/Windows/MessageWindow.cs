@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -35,6 +36,15 @@ public class MessageWindow : IDisposable
 {
     private readonly ILogger<MessageWindow> _logger;
     private readonly Channel<D2BSMessage> _messageChannel;
+
+    /// <summary>
+    /// When each sender last reported in, stamped on the message pump. Liveness must not be a
+    /// function of dispatch latency: the dispatch queue is shared by the whole fleet and does
+    /// slow work (renders, file writes, profile restarts), so a heartbeat stamped when it
+    /// reaches the front of that queue says as much about the manager as about the bot.
+    /// </summary>
+    private readonly ConcurrentDictionary<nint, DateTime> _lastHeartbeatAt = new();
+
     private nint _wndProcPtr;
     private WndProcDelegate? _wndProcDelegate;
     private bool _disposed;
@@ -58,6 +68,18 @@ public class MessageWindow : IDisposable
     /// Channel reader for processing incoming D2BS messages.
     /// </summary>
     public ChannelReader<D2BSMessage> Messages => _messageChannel.Reader;
+
+    /// <summary>
+    /// When the given sender last sent a heartbeat, as observed on the message pump.
+    /// </summary>
+    public bool TryGetLastHeartbeat(nint senderHandle, out DateTime at) =>
+        _lastHeartbeatAt.TryGetValue(senderHandle, out at);
+
+    /// <summary>
+    /// Drops a sender's recorded liveness. Called when a profile's routing entry is removed so
+    /// the map tracks running profiles instead of accreting a row per game ever launched.
+    /// </summary>
+    public void ForgetHandle(nint senderHandle) => _lastHeartbeatAt.TryRemove(senderHandle, out _);
 
     /// <summary>
     /// Creates the message-only window. Call once from Program.Main before any hosted
@@ -123,13 +145,33 @@ public class MessageWindow : IDisposable
             while (length > 0 && bytes[length - 1] == 0) length--;
 
             var messageType = (MessageType)copyData.dwData.ToInt64();
+
+            // Heartbeats are recorded here and never enqueued. kolbot's dedicated heartbeat
+            // thread sends mode 0xBBBB once a second (threads/HeartBeat.js), so this is an O(1)
+            // check that also keeps the highest-frequency message in the system off the shared
+            // dispatch queue entirely. A framework that signals liveness some other way still
+            // works: its message falls through, is parsed properly by the consumer, and the
+            // "heartBeat" case there records it — late, but correctly.
+            //
+            // This deliberately does NOT treat any other message as proof of life. kolbot sends
+            // console output, characterState and status updates from threads that outlive a
+            // wedged main script, so counting them would mask the failure the watchdog exists
+            // to catch.
+            if (messageType == MessageType.Heartbeat)
+            {
+                _lastHeartbeatAt[wParam] = DateTime.UtcNow;
+                return;
+            }
+
             var data = Encoding.UTF8.GetString(bytes, 0, length);
 
             _logger.LogDebug("WM_COPYDATA received: sender={Sender}, type={Type}, len={Len}, data={Data}",
                 wParam, messageType, copyData.cbData, data);
 
-            // Normalize heartbeat event.
-            if (messageType == MessageType.Heartbeat || data.Contains("heartBeat"))
+            // Normalize heartbeat event. Only reachable for a sender that doesn't set the
+            // 0xBBBB mode (handled by the fast path above) — it goes down the queue and the
+            // consumer's "heartBeat" case records it, later but correctly.
+            if (data.Contains("heartBeat"))
             {
                 data = JsonSerializer.Serialize(new ProfileMessage
                 {

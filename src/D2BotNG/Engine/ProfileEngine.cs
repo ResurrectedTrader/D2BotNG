@@ -111,6 +111,53 @@ public class ProfileEngine
         return null;
     }
 
+    /// <summary>
+    /// Registers the game window a profile's D2BS will send WM_COPYDATA from, and remembers it
+    /// on the instance so every later removal keys off the value we actually registered.
+    /// </summary>
+    private void RegisterHandle(ProfileInstance instance, nint handle)
+    {
+        if (handle == 0) return;
+
+        if (_handleToProfile.TryGetValue(handle, out var existing) && existing != instance.ProfileName)
+        {
+            // USER handle values are recycled. If this ever fires, messages for one of the two
+            // profiles were about to be routed to the other — which presents as a perfectly
+            // healthy bot that never heartbeats.
+            _logger.LogError(
+                "Window handle {Handle} was still mapped to profile {Existing} while registering {New} — " +
+                "stale routing entry; messages for one of them may have been misrouted",
+                handle, existing, instance.ProfileName);
+        }
+
+        instance.GameWindowHandle = handle;
+        _handleToProfile[handle] = instance.ProfileName;
+    }
+
+    /// <summary>
+    /// Removes every routing entry for a profile. Uses the stored handle rather than re-reading
+    /// <c>Process.GameWindow</c>: that enumerates windows owned by the pid, so once the process
+    /// has exited it returns 0 and the removal silently no-ops, leaking the entry for the life
+    /// of the manager. The sweep by name is belt-and-braces for an entry registered under a
+    /// different handle (e.g. restored from a handoff manifest recording a drifted top-level).
+    /// </summary>
+    private void UnregisterHandles(ProfileInstance instance)
+    {
+        if (instance.GameWindowHandle != 0)
+        {
+            _handleToProfile.TryRemove(instance.GameWindowHandle, out _);
+            _messageWindow.ForgetHandle(instance.GameWindowHandle);
+            instance.GameWindowHandle = 0;
+        }
+
+        foreach (var kvp in _handleToProfile)
+        {
+            if (kvp.Value != instance.ProfileName) continue;
+            _handleToProfile.TryRemove(kvp.Key, out _);
+            _messageWindow.ForgetHandle(kvp.Key);
+        }
+    }
+
     public void BroadcastToAll(MessageType messageType, string message)
     {
         foreach (var instance in _instances.Values)
@@ -159,7 +206,8 @@ public class ProfileEngine
 
         _logger.LogDebug("Starting profile {Name} (caller: {Caller})", profileName, caller);
 
-        instance.CrashCount = 0;
+        instance.LaunchFailureCount = 0;
+        instance.RuntimeRestartCount = 0;
         await NotifyProfileStateChangedAsync(profileName);
 
         _ = RunProfileBackgroundAsync(instance);
@@ -190,7 +238,7 @@ public class ProfileEngine
         instance.CancelRun();
 
         // Unregister handle before terminating
-        _handleToProfile.TryRemove(instance.Process?.GameWindow ?? 0, out _);
+        UnregisterHandles(instance);
 
         if (instance.Process != null)
         {
@@ -584,6 +632,10 @@ public class ProfileEngine
         instance.MissedHeartbeats = 0;
         await NotifyProfileStateChangedAsync(profileName);
 
+        // Set by the launch step below so the catch-all can tell a game that never started from
+        // one that started and later failed. Only the former consumes the retry budget.
+        var launchFailed = false;
+
         try
         {
             var profile = await _profileRepository.GetByKeyAsync(profileName);
@@ -705,15 +757,34 @@ public class ProfileEngine
                 Environment = environment
             };
 
-            // Launch game
-            var gameProcess = await _gameLauncher.LaunchAsync(config, cancellationToken);
+            // Launch game. Only a failure to get the game up consumes the retry budget — see
+            // HandleCrashAsync. Anything that goes wrong after this point is a runtime fault and
+            // is retried indefinitely with backoff instead.
+            Process gameProcess;
+            try
+            {
+                gameProcess = await _gameLauncher.LaunchAsync(config, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                launchFailed = true;
+                throw;
+            }
+
             instance.SetGameProcess(gameProcess);
 
             // Register handle for message routing
-            if (gameProcess.GameWindow != 0)
-            {
-                _handleToProfile[gameProcess.GameWindow] = profileName;
-            }
+            RegisterHandle(instance, gameProcess.GameWindow);
+
+            // The game is up, so the budget is spent on nothing: clear it. This is what makes
+            // the counter mean "consecutive failures to start" rather than "things that have
+            // ever gone wrong", and it is why a long-running fleet can no longer ratchet itself
+            // into a permanent stop one incident at a time.
+            instance.LaunchFailureCount = 0;
 
             if (!await instance.TransitionToAsync(RunState.Running))
             {
@@ -734,14 +805,13 @@ public class ProfileEngine
             _logger.LogError(ex, "Error running profile {Name}", profileName);
 
             // Clean up handle mapping
-            if (instance.Process?.GameWindow is > 0 and var handle)
-                _handleToProfile.TryRemove(handle, out _);
+            UnregisterHandles(instance);
 
             await instance.SetErrorAsync(ex.Message);
             await NotifyProfileStateChangedAsync(profileName);
 
             // Handle crash recovery
-            await HandleCrashAsync(instance, cancellationToken);
+            await HandleCrashAsync(instance, cancellationToken, launchFailed);
         }
     }
 
@@ -810,6 +880,11 @@ public class ProfileEngine
         process.SendMessage((MessageType)_messageWindow.Handle, "Handle");
 
         var lastHeartbeatCheck = DateTime.UtcNow;
+        var lastHungCheck = DateTime.UtcNow;
+        // The hung-window probe blocks for up to a second on a wedged window, on a thread-pool
+        // thread. It feeds a timeout measured in tens of seconds, so 1Hz precision buys nothing
+        // and costs a pinned thread per unhealthy profile.
+        const int hungCheckIntervalSeconds = 5;
         // Retry handle delivery for ~10s (loop cadence is 1s) even when heartbeats are
         // disabled, then stop so a no-heartbeat framework doesn't ping forever.
         const int maxHandleResends = 10;
@@ -822,7 +897,7 @@ public class ProfileEngine
                 _logger.LogDebug("Profile {Name} process exited with code {Code}",
                     instance.ProfileName, process.ExitCode);
 
-                _handleToProfile.TryRemove(process.GameWindow, out _);
+                UnregisterHandles(instance);
 
                 if (instance.State == RunState.Running)
                 {
@@ -846,8 +921,30 @@ public class ProfileEngine
                 handleResends++;
             }
 
-            // Check heartbeat every ~10 seconds
             var now = DateTime.UtcNow;
+
+            // Pull liveness from the message pump rather than waiting for the dispatch queue to
+            // deliver it. The timestamp is when the heartbeat was *received*; stamping it at
+            // dispatch made a backed-up queue indistinguishable from a dead bot, and under the
+            // old shared counter that mistake was then recorded as a crash.
+            if (instance.GameWindowHandle != 0
+                && _messageWindow.TryGetLastHeartbeat(instance.GameWindowHandle, out var seenAt)
+                && seenAt > (instance.LastHeartbeat ?? DateTime.MinValue))
+            {
+                instance.UpdateHeartbeat(seenAt);
+
+                // A run that has been up a while and is reporting in has earned a clean slate.
+                // Gated on uptime so a bot that crash-loops while emitting the odd heartbeat
+                // can't keep resetting its own backoff.
+                if (instance.RuntimeRestartCount > 0
+                    && instance.StartedAt.HasValue
+                    && (now - instance.StartedAt.Value).TotalSeconds >= 60)
+                {
+                    instance.RuntimeRestartCount = 0;
+                }
+            }
+
+            // Check heartbeat every ~10 seconds
             if ((now - lastHeartbeatCheck).TotalSeconds >= 10)
             {
                 lastHeartbeatCheck = now;
@@ -895,20 +992,28 @@ public class ProfileEngine
             // (OS-level "not responding") continuously past the timeout, the bot is hung
             // even though kolbot's background heartbeat thread may still be ticking.
             // Mirrors the reference manager's Process.Responding watchdog.
-            var hwnd = process.GameWindow;
-            if (unresponsiveTimeout > 0 && hwnd != 0 && IsGameWindowHung(hwnd))
+            // Use the handle captured at launch rather than re-deriving it: Process.GameWindow
+            // is an EnumWindows sweep of every top-level window in the session, and it cannot
+            // change for a running game.
+            var hwnd = instance.GameWindowHandle;
+            if (unresponsiveTimeout > 0 && hwnd != 0
+                && (now - lastHungCheck).TotalSeconds >= hungCheckIntervalSeconds)
             {
-                instance.UnresponsiveSince ??= now;
-                if ((now - instance.UnresponsiveSince.Value).TotalSeconds >= unresponsiveTimeout)
+                lastHungCheck = now;
+                if (IsGameWindowHung(hwnd))
                 {
-                    await KillUnresponsiveAndRecoverAsync(
-                        instance, process, "Game window not responding", cancellationToken);
-                    return;
+                    instance.UnresponsiveSince ??= now;
+                    if ((now - instance.UnresponsiveSince.Value).TotalSeconds >= unresponsiveTimeout)
+                    {
+                        await KillUnresponsiveAndRecoverAsync(
+                            instance, process, "Game window not responding", cancellationToken);
+                        return;
+                    }
                 }
-            }
-            else
-            {
-                instance.UnresponsiveSince = null;
+                else
+                {
+                    instance.UnresponsiveSince = null;
+                }
             }
 
             await Task.Delay(1000, cancellationToken);
@@ -938,7 +1043,7 @@ public class ProfileEngine
         ProfileInstance instance, Process process, string reason, CancellationToken cancellationToken)
     {
         _logger.LogWarning("Profile {Name} {Reason}, treating as crash", instance.ProfileName, reason);
-        _handleToProfile.TryRemove(process.GameWindow, out _);
+        UnregisterHandles(instance);
 
         // Kill the unresponsive process. Pass the cancellation token so that if the user
         // clicks Stop while we're waiting out the WM_CLOSE grace period, the wait aborts
@@ -953,10 +1058,28 @@ public class ProfileEngine
         await HandleCrashAsync(instance, cancellationToken);
     }
 
-    private async Task HandleCrashAsync(ProfileInstance instance, CancellationToken cancellationToken)
+    /// <summary>
+    /// Restarts a profile after a failure.
+    /// </summary>
+    /// <param name="instance">The failed profile's runtime state.</param>
+    /// <param name="cancellationToken">Cancelled when the user stops the profile mid-backoff.</param>
+    /// <param name="launchFailure">
+    /// True when the game never came up (launch or DLL injection threw). Only these consume the
+    /// retry budget, and only consecutively — a successful launch clears the count. A runtime
+    /// fault (heartbeat timeout, hung window, unexpected exit) is always retried, with backoff.
+    /// <para>
+    /// This mirrors D2Bot#, where the budget (<c>Crashed</c>, cap 6) was incremented only from
+    /// the two LoadRemoteLibrary catch blocks and cleared on every successful load, while the
+    /// heartbeat and Responding watchdogs restarted unconditionally and forever. D2BotNG had
+    /// collapsed both into one lifetime counter, which made time-to-give-up a function of
+    /// uptime alone: at a couple of transient faults a day, a profile was absorbed in ~2 days
+    /// regardless of whether anything was actually wrong with it.
+    /// </para>
+    /// </param>
+    private async Task HandleCrashAsync(
+        ProfileInstance instance, CancellationToken cancellationToken, bool launchFailure = false)
     {
         var profileName = instance.ProfileName;
-        instance.CrashCount++;
 
         var profile = await _profileRepository.GetByKeyAsync(profileName);
         if (profile != null)
@@ -970,59 +1093,106 @@ public class ProfileEngine
             ? (await ResolveFrameworkAsync(profile))?.MaxCrashRetriesOrDefault() ?? 5
             : 5;
 
-        if (instance.CrashCount < maxCrashRetries)
+        TimeSpan delay;
+        if (launchFailure)
         {
-            _logger.LogWarning("Profile {Name} crashed, restarting ({Count}/{Max})",
-                profileName, instance.CrashCount, maxCrashRetries);
-
-            try
+            instance.LaunchFailureCount++;
+            if (instance.LaunchFailureCount >= maxCrashRetries)
             {
-                await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                _logger.LogDebug("Profile {Name} crash delay interrupted by stop request", profileName);
+                await GiveUpAfterLaunchFailuresAsync(instance, maxCrashRetries);
                 return;
             }
 
-            // If state changed during delay (e.g. user stopped), don't restart
-            if (instance.State != RunState.Error)
-            {
-                _logger.LogDebug("Profile {Name} state changed to {State} during crash delay, not restarting",
-                    profileName, instance.State);
-                return;
-            }
-
-            if (await instance.TransitionToAsync(RunState.Starting))
-            {
-                await NotifyProfileStateChangedAsync(profileName);
-                _ = RunProfileBackgroundAsync(instance);
-            }
+            _logger.LogWarning("Profile {Name} failed to launch, retrying ({Count}/{Max})",
+                profileName, instance.LaunchFailureCount, maxCrashRetries);
+            delay = TimeSpan.FromSeconds(5);
         }
         else
         {
-            _logger.LogError("Profile {Name} exceeded max crash retries", profileName);
+            // Runtime faults are never fatal. Back off instead so a profile that comes up but
+            // can never report in (bad DLL, broken entry script, wrong game version) stops
+            // burning keys and shared message-loop time, without ever becoming permanently dead
+            // the way a hard cap made it.
+            instance.RuntimeRestartCount++;
+            delay = RuntimeRestartDelay(instance.RuntimeRestartCount);
+            _logger.LogWarning("Profile {Name} crashed, restarting in {Delay} (attempt {Count})",
+                profileName, delay, instance.RuntimeRestartCount);
+            instance.Status = delay > TimeSpan.FromSeconds(15)
+                ? $"Restarting in {FormatDelay(delay)}..."
+                : "Restarting...";
+            await NotifyProfileStateChangedAsync(profileName);
+        }
 
-            // Disable schedule to prevent ScheduleEngine from restarting
-            if (profile is { ScheduleEnabled: true })
-            {
-                profile.ScheduleEnabled = false;
-                await _profileRepository.UpdateAsync(profile);
-                _logger.LogWarning("Disabled schedule for profile {Name} due to repeated crashes", profileName);
-            }
+        try
+        {
+            await Task.Delay(delay, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug("Profile {Name} crash delay interrupted by stop request", profileName);
+            return;
+        }
 
-            // Set error status before transitioning to Stopped so the message is preserved.
-            // Do NOT use SetErrorAsync here — it would set state to Error, allowing restarts.
-            instance.Status = $"Exceeded max crash retries ({maxCrashRetries})";
-            instance.KeyName = null;
-            instance.ProxyName = null;
-            await instance.TransitionToAsync(RunState.Stopped);
-            await NotifyProfileStateChangedAsync(profileName, includeProfile: true);
-            await BroadcastKeyListsSnapshotAsync();
-            await BroadcastProxiesSnapshotAsync();
-            await BroadcastFrameworksSnapshotAsync();
+        // If state changed during delay (e.g. user stopped), don't restart
+        if (instance.State != RunState.Error)
+        {
+            _logger.LogDebug("Profile {Name} state changed to {State} during crash delay, not restarting",
+                profileName, instance.State);
+            return;
+        }
+
+        if (await instance.TransitionToAsync(RunState.Starting))
+        {
+            await NotifyProfileStateChangedAsync(profileName);
+            _ = RunProfileBackgroundAsync(instance);
         }
     }
+
+    /// <summary>
+    /// Stops a profile that has failed to launch <c>maxCrashRetries</c> times in a row.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately does NOT touch <c>ScheduleEnabled</c>. That wrote persisted user
+    /// configuration as a side effect of a fault the manager cannot diagnose — it sees "N things
+    /// went wrong" without knowing whether that is a dead DLL, a realm-down, or its own message
+    /// loop running behind — and it turned a transient failure into one that survived restart
+    /// and needed per-profile manual repair. D2Bot# set <c>ScheduleEnable = false</c> from
+    /// exactly four places, all deliberate (the script's stopSchedule message, the context menu,
+    /// the IRC command, the profile editor), and left an exhausted profile for the scheduler to
+    /// recover on its next tick. The <c>stopSchedule</c> handler remains the supported way for a
+    /// script — which does know why it is failing — to opt out.
+    /// </remarks>
+    private async Task GiveUpAfterLaunchFailuresAsync(ProfileInstance instance, int maxCrashRetries)
+    {
+        _logger.LogError("Profile {Name} failed to launch {Count} times in a row, giving up until restarted",
+            instance.ProfileName, maxCrashRetries);
+
+        // Set error status before transitioning to Stopped so the message is preserved.
+        // Do NOT use SetErrorAsync here — it would set state to Error, allowing restarts.
+        instance.Status = $"Failed to launch {maxCrashRetries} times in a row";
+        instance.KeyName = null;
+        instance.ProxyName = null;
+        await instance.TransitionToAsync(RunState.Stopped);
+        await NotifyProfileStateChangedAsync(instance.ProfileName, includeProfile: true);
+        await BroadcastKeyListsSnapshotAsync();
+        await BroadcastProxiesSnapshotAsync();
+        await BroadcastFrameworksSnapshotAsync();
+    }
+
+    /// <summary>
+    /// Backoff for repeated runtime failures: 5s doubling to a 5 minute ceiling.
+    /// </summary>
+    private static TimeSpan RuntimeRestartDelay(int consecutiveRestarts)
+    {
+        const int baseSeconds = 5;
+        const int capSeconds = 300;
+        // Shift is clamped before it can overflow the exponent.
+        var exponent = Math.Min(Math.Max(consecutiveRestarts - 1, 0), 8);
+        return TimeSpan.FromSeconds(Math.Min(baseSeconds << exponent, capSeconds));
+    }
+
+    private static string FormatDelay(TimeSpan delay) =>
+        delay.TotalMinutes >= 1 ? $"{(int)delay.TotalMinutes}m" : $"{(int)delay.TotalSeconds}s";
 
     public void AddProfile(string profileName)
     {
@@ -1080,12 +1250,13 @@ public class ProfileEngine
                 continue;
             }
 
-            // Reverse-lookup the routing-map entry for this profile so the successor can
-            // restore it verbatim (Process.MainWindowHandle can drift to a different
-            // top-level window than the one D2BS sends from).
-            var registeredHandle = _handleToProfile
-                .FirstOrDefault(kvp => kvp.Value == instance.ProfileName)
-                .Key.ToInt64();
+            // The handle registered at launch, so the successor can restore it verbatim
+            // (Process.MainWindowHandle can drift to a different top-level window than the one
+            // D2BS sends from). Read from the instance rather than reverse-looked-up out of the
+            // routing map: with more than one row per profile that lookup returned an arbitrary
+            // one, so a stale entry could hand the successor a dead handle and silently drop
+            // every message from that profile after an update.
+            var registeredHandle = instance.GameWindowHandle.ToInt64();
 
             result.Add(new HandoffProfile
             {
@@ -1095,7 +1266,7 @@ public class ProfileEngine
                 Status = instance.Status,
                 KeyName = instance.KeyName,
                 ProxyName = instance.ProxyName,
-                CrashCount = instance.CrashCount,
+                LaunchFailureCount = instance.LaunchFailureCount,
                 StartedAt = instance.StartedAt,
                 Handle = registeredHandle
                 // MissedHeartbeats and LastHeartbeat intentionally not carried over —
@@ -1167,10 +1338,11 @@ public class ProfileEngine
                 snapshot.Status,
                 snapshot.KeyName,
                 snapshot.ProxyName,
-                snapshot.CrashCount,
+                snapshot.LaunchFailureCount,
                 missedHeartbeats: 0,
                 snapshot.StartedAt,
-                lastHeartbeat: DateTime.UtcNow);
+                lastHeartbeat: DateTime.UtcNow,
+                gameWindowHandle: snapshot.Handle != 0 ? (nint)snapshot.Handle : process.GameWindow);
 
             _logger.LogInformation("Adopted profile {Name} (PID {Pid}, state {State})",
                 snapshot.ProfileName, snapshot.Pid, snapshot.State);
@@ -1178,16 +1350,9 @@ public class ProfileEngine
             // Restore the predecessor's routing entry verbatim. The HWND D2BS sends
             // from is whatever was registered before — may differ from what we'd read
             // now if Process.MainWindowHandle has drifted to a different top-level.
-            if (snapshot.Handle != 0)
-            {
-                _handleToProfile[(nint)snapshot.Handle] = snapshot.ProfileName;
-            }
-            else if (process.GameWindow != 0)
-            {
-                // Predecessor had no entry for this profile (e.g. registration raced with
-                // launch); fall back to the game window we can see now.
-                _handleToProfile[process.GameWindow] = snapshot.ProfileName;
-            }
+            // RestoreFromHandoff already resolved this (manifest handle, else the window we can
+            // see now for a predecessor whose registration raced with launch).
+            RegisterHandle(instance, instance.GameWindowHandle);
 
             // Proactively push the new manager HWND to the running D2BS script so it
             // redirects future WM_COPYDATA messages to this process's MessageWindow.
