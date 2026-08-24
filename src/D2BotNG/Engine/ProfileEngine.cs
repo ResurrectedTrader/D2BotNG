@@ -141,6 +141,58 @@ public class ProfileEngine
     /// of the manager. The sweep by name is belt-and-braces for an entry registered under a
     /// different handle (e.g. restored from a handoff manifest recording a drifted top-level).
     /// </summary>
+    /// <summary>
+    /// Re-points a profile's routing entry at the window its game actually owns, if the one we
+    /// registered has gone stale. Returns true when something was repaired.
+    /// </summary>
+    /// <remarks>
+    /// A wrong routing entry and a dead bot look identical from the watchdog's side: no
+    /// heartbeats arrive either way. The difference is that a wrong entry is ours to fix, and
+    /// killing a healthy game over it is the worst possible response — at fleet scale it is a
+    /// mass restart a minute after an update.
+    /// <para>
+    /// The case this exists for is adoption. A successor restores the routing entry from the
+    /// predecessor's manifest, so it inherits whatever the predecessor believed — and a
+    /// predecessor built before the handle was tracked on the instance reverse-looked it up out
+    /// of a map that leaked a dead row per game exit, returning an arbitrary one. Every update
+    /// from such a build hands its successor a handle that may name a window that no longer
+    /// exists, which is not something the successor can fix by being correct itself.
+    /// </para>
+    /// </remarks>
+    private bool RepairRoutingIfStale(ProfileInstance instance, Process process)
+    {
+        nint liveWindow;
+        try
+        {
+            liveWindow = process.GameWindow;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not read game window for {Name} while checking routing", instance.ProfileName);
+            return false;
+        }
+
+        // No game window means there is nothing to route to — that is a real fault, not a
+        // routing problem, so let the watchdog handle it.
+        if (liveWindow == 0) return false;
+
+        if (instance.GameWindowHandle == liveWindow
+            && _handleToProfile.TryGetValue(liveWindow, out var mapped)
+            && mapped == instance.ProfileName)
+        {
+            return false;
+        }
+
+        _logger.LogWarning(
+            "Profile {Name} went quiet while routed to window {Registered}, but its game owns {Live} — " +
+            "re-registering; messages from it were being discarded",
+            instance.ProfileName, instance.GameWindowHandle, liveWindow);
+
+        UnregisterHandles(instance);
+        RegisterHandle(instance, liveWindow);
+        return true;
+    }
+
     private void UnregisterHandles(ProfileInstance instance)
     {
         if (instance.GameWindowHandle != 0)
@@ -972,6 +1024,16 @@ public class ProfileEngine
                 }
 
                 var elapsed = (now - (instance.LastHeartbeat ?? instance.StartedAt!.Value)).TotalSeconds;
+                if (heartbeatEnabled && elapsed > heartbeatTimeout
+                    && RepairRoutingIfStale(instance, process))
+                {
+                    // We were listening on the wrong window, so the silence says nothing about
+                    // the bot. Give it another interval on the repaired route before counting a
+                    // miss, and re-push our handle in case the game is still aimed elsewhere.
+                    process.SendMessage((MessageType)_messageWindow.Handle, "Handle");
+                    elapsed = 0;
+                }
+
                 if (heartbeatEnabled && elapsed > heartbeatTimeout)
                 {
                     process.SendMessage((MessageType)_messageWindow.Handle, "Handle");
