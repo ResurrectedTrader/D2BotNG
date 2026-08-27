@@ -90,6 +90,19 @@ public class D2BSMessageHandler : BackgroundService
 
     private async Task HandleMessageAsync(D2BSMessage msg)
     {
+        // Checked before resolving the profile, which takes the repository lock and scans it.
+        // A bot keeps talking through the WM_CLOSE grace after we decide to stop or kill it, and
+        // the routing entry now outlives the process, so we still know exactly who it is. Most of
+        // what it says is worth keeping — see IgnoredWhileTearingDown for what isn't and why.
+        var sender = _profileEngine.GetInstanceByHandle(msg.SenderHandle);
+        if (sender is { TearingDown: true }
+            && IsIgnoredWhileTearingDown(msg.Message.Function, msg.Message.Arguments, sender))
+        {
+            _logger.LogDebug("Ignoring {Function} from {Profile} while its game is being killed",
+                msg.Message.Function ?? "?", sender.ProfileName);
+            return;
+        }
+
         var profile = await FindProfileByHandleAsync(msg.SenderHandle);
 
         _logger.LogDebug("D2BS command: {Command} from {Profile}", msg.Message, profile?.Name ?? "unknown");
@@ -167,7 +180,7 @@ public class D2BSMessageHandler : BackgroundService
                 break;
 
             case "requestGameInfo":
-                await HandleRequestGameInfo(profile);
+                await HandleRequestGameInfo(msg.SenderHandle, profile);
                 break;
 
             case "setProfile":
@@ -253,6 +266,49 @@ public class D2BSMessageHandler : BackgroundService
         }
     }
 
+    /// <summary>
+    /// Functions ignored while a profile's game is being killed.
+    /// </summary>
+    /// <remarks>
+    /// Two groups. Lifecycle commands would fight a teardown already in flight — restarting a
+    /// profile out from under a stop, which nothing downstream catches because Stopped -> Starting
+    /// is a legal transition. ("start" is handled separately: it names its target, and starting
+    /// some *other* profile is legitimate.) The rest are the high-frequency writes whose value
+    /// dies with the run: a counter the run about to be killed would have bumped, or a status the
+    /// teardown overwrites moments later. Each costs a rewrite of the whole profiles.json plus
+    /// every framework's d2bs.ini, or an EnumWindows sweep of the session to build a status
+    /// snapshot, so at 160 profiles keeping them would mean up to one full-file rewrite per
+    /// profile inside a single Stop All's shutdown grace.
+    /// <para>
+    /// Everything not listed still flows: the item log, item PNGs, console output, character
+    /// state, and CDKeyDisabled — a key Battle.net just disabled must still be held, or the next
+    /// profile to start picks it up. stopSchedule/startSchedule persist too and are deliberately
+    /// NOT listed: they are a script's explicit one-shot decision and the sanctioned way for it
+    /// to opt out, so honouring them matters more than the write, and they are rare.
+    /// </para>
+    /// <para>
+    /// Note this window is a strict subset of what was dropped before. Previously the routing
+    /// entry was removed before the kill, so every message from a dying game was discarded as
+    /// unattributable; these eight are what remains of that.
+    /// </para>
+    /// </remarks>
+    private static readonly HashSet<string> IgnoredWhileTearingDown =
+    [
+        "restartProfile", "stop",
+        "updateStatus", "updateRuns", "updateChickens", "updateDeaths", "setProfile", "setTag",
+    ];
+
+    private static bool IsIgnoredWhileTearingDown(string? function, string[] args, ProfileInstance sender)
+    {
+        if (function == null) return false;
+        if (IgnoredWhileTearingDown.Contains(function)) return true;
+
+        // "start" names its target. Starting another profile is legitimate even from a bot on its
+        // way out; starting *itself* is the same resurrection as "restartProfile", and legal —
+        // Error -> Starting is a valid transition — so it has to be caught here.
+        return function == "start" && args.Length > 0 && args[0] == sender.ProfileName;
+    }
+
     private bool HandleWinMsg(Profile profile, string[] args)
     {
         if (args.Length < 2) return false;
@@ -267,7 +323,7 @@ public class D2BSMessageHandler : BackgroundService
         return true;
     }
 
-    private async Task HandleRequestGameInfo(Profile profile)
+    private async Task HandleRequestGameInfo(nint senderHandle, Profile profile)
     {
         var instance = _profileEngine.GetInstance(profile.Name);
         if (instance == null) return;
@@ -285,7 +341,10 @@ public class D2BSMessageHandler : BackgroundService
             switchKeys = !string.IsNullOrEmpty(profile.KeyList) && ((await _keyListRepository.GetByKeyAsync(profile.KeyList))?.Keys.Count ?? 0) > 1 && profile.SwitchKeysOnRestart,
             rdBlocker = false,
         };
-        instance.Process?.SendMessage(MessageType.GameInfo, JsonSerializer.Serialize(gameInfo));
+        // Through the engine rather than the process directly, so a reply that never lands is
+        // attributed to the profile. The script blocks waiting for this — it carries the key and
+        // game name it needs to make a game.
+        _profileEngine.SendMessage(senderHandle, MessageType.GameInfo, JsonSerializer.Serialize(gameInfo));
     }
 
     private async Task<Profile?> FindProfileByHandleAsync(nint handle)

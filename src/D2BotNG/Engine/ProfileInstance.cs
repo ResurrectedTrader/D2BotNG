@@ -43,6 +43,34 @@ public class ProfileInstance : IDisposable
     /// </summary>
     public nint GameWindowHandle { get; set; }
 
+    private int _tearDownDepth;
+
+    /// <summary>
+    /// True from the moment we decide to kill this profile's game until the kill is finished.
+    /// Marks the window in which the game is still alive and still routed, but nothing it asks
+    /// for should be acted on.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately its own state rather than inferred from <see cref="RunState"/>. Error is not
+    /// only a teardown state — it is also crash backoff, a failed launch, and the state an
+    /// adopted profile can be restored into by a handoff, where the game is alive and no monitor
+    /// is watching. Treating those as teardown made a profile permanently deaf to the very
+    /// restart request that would have recovered it. It lives only in memory and cannot survive
+    /// a handoff. Set by the three paths that kill a game: a stop, a watchdog kill, and the
+    /// cleanup after a failed run.
+    /// <para>
+    /// A depth counter rather than a bool because two teardowns can overlap on one instance — a
+    /// user Stop landing while the watchdog is force-killing the same game. With a bool, whichever
+    /// finished first cleared it and left the other running unguarded for the rest of its grace.
+    /// </para>
+    /// </remarks>
+    public bool TearingDown => Volatile.Read(ref _tearDownDepth) > 0;
+
+    /// <summary>Marks the start of a teardown. Pair with <see cref="EndTeardown"/> in a finally.</summary>
+    public void BeginTeardown() => Interlocked.Increment(ref _tearDownDepth);
+
+    public void EndTeardown() => Interlocked.Decrement(ref _tearDownDepth);
+
     /// <summary>When the game window first became continuously unresponsive; null while responsive.</summary>
     public DateTime? UnresponsiveSince { get; set; }
 
