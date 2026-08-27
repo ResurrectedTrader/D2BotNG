@@ -12,6 +12,7 @@ import {
   EmptyState,
   Card,
   LoadingSpinner,
+  ConfirmationDialog,
   DeleteConfirmationDialog,
   Dropdown,
   type DropdownItem,
@@ -92,6 +93,16 @@ export function ProfilesPage() {
 
   // Multi-profile delete state
   const [deleteNames, setDeleteNames] = useState<string[] | null>(null);
+
+  // "Stop All" confirmation — only when nothing is selected, i.e. the button really
+  // does mean every profile. An explicit selection is already a deliberate act.
+  //
+  // Deliberately a flag rather than a captured list of names: the fleet keeps moving
+  // while the dialog is open (crash restarts, schedule starts, key rollovers), so a
+  // list frozen at click time would quietly leave behind anything that started in the
+  // meantime — a "Stop All" that doesn't. The live list is read on confirm; the count
+  // below is only for the wording.
+  const [confirmingStopAll, setConfirmingStopAll] = useState(false);
 
   const handleDeleteMultiple = useCallback((names: string[]) => {
     setDeleteNames(names);
@@ -191,7 +202,11 @@ export function ProfilesPage() {
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={() => actions.stop.mutate(stoppableNames)}
+                  onClick={() =>
+                    selectedProfiles.size === 0
+                      ? setConfirmingStopAll(true)
+                      : actions.stop.mutate(stoppableNames)
+                  }
                   disabled={
                     stoppableNames.length === 0 || actions.stop.isPending
                   }
@@ -309,6 +324,20 @@ export function ProfilesPage() {
         isPending={deleteProfile.isPending}
         onConfirm={confirmDeleteMultiple}
         onCancel={cancelDeleteMultiple}
+      />
+
+      {/* Bulk stop confirmation dialog */}
+      <ConfirmationDialog
+        open={confirmingStopAll}
+        title="Stop All"
+        description={`This will stop all ${stoppableNames.length} profiles that aren't already stopped.`}
+        message="Any game still running is asked to close, then killed if it doesn't. Anything in progress — a run, a hunt, a mule trip — is lost."
+        confirmLabel={`Stop ${stoppableNames.length}`}
+        onConfirm={() => {
+          actions.stop.mutate(stoppableNames);
+          setConfirmingStopAll(false);
+        }}
+        onCancel={() => setConfirmingStopAll(false)}
       />
     </div>
   );

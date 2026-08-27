@@ -203,7 +203,10 @@ public class ProcessManager : IDisposable
         // Force kill if still running
         if (!process.HasExited)
         {
-            _logger.LogWarning("Process {Pid} did not exit gracefully, killing", process.Id);
+            // Debug, not Warning: D2 routinely ignores WM_CLOSE, so this is the normal path for
+            // most stops rather than a fault. At fleet scale it was one line per profile on every
+            // Stop All — the same wall of yellow this change set out to remove.
+            _logger.LogDebug("Process {Pid} did not exit gracefully, killing", process.Id);
             process.Kill();
         }
     }
