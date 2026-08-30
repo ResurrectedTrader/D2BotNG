@@ -12,7 +12,10 @@
       rel="stylesheet"
     />
   </head>
-  <body class="h-full bg-zinc-950 text-zinc-100 antialiased">
+  <!-- The document itself never scrolls: this is a fixed app shell whose one scrollable region is
+       `main`. Stated here as well as sized in Layout, so a stray tall element can only overflow its
+       own panel rather than growing the page and giving the window a second scrollbar. -->
+  <body class="h-full overflow-hidden bg-zinc-950 text-zinc-100 antialiased">
     <div id="root" class="h-full"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

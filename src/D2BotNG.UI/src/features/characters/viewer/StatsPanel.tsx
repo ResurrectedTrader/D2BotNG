@@ -4,8 +4,8 @@
  * progress). Unknown stat ids fall into an "Other" group so nothing is dropped.
  */
 
-import type { Character } from "@/generated/characters_pb";
 import { STAT_LABELS } from "./stats";
+import { DIFFICULTY_NAMES, type StatValue } from "./contracts";
 
 const STAT_GROUPS: { label: string; ids: number[] }[] = [
   { label: "Attributes", ids: [0, 2, 3, 1] }, // Strength, Dexterity, Vitality, Energy
@@ -33,11 +33,6 @@ const MAX_RESIST_STAT: Record<number, number> = {
 };
 const RESIST_BASE_MAX = 75; // base resistance cap before any +max-resist bonus
 const RESIST_HARD_CAP = 95; // absolute ceiling no amount of +max resist can exceed
-const DIFFICULTY_LABEL: Record<number, string> = {
-  0: "Normal",
-  1: "Nightmare",
-  2: "Hell",
-};
 
 /** A resistance adjusted for the current difficulty's penalty, shown as "effective / cap".
  *  The effective value is NOT clamped, so an over-capped resist reads e.g. "111% / 75%" and
@@ -59,7 +54,7 @@ function resistDisplay(
         : "text-zinc-300";
   const penaltyNote =
     penalty > 0
-      ? `, ${DIFFICULTY_LABEL[difficulty] ?? "?"} penalty −${penalty}%`
+      ? `, ${DIFFICULTY_NAMES[difficulty] ?? "?"} penalty −${penalty}%`
       : "";
   const maxNote = maxBonus > 0 ? ` (+${maxBonus}% max)` : "";
   return {
@@ -69,13 +64,19 @@ function resistDisplay(
   };
 }
 
-export function StatsPanel({ character }: { character: Character }) {
-  if (character.stats.length === 0) {
+export function StatsPanel({
+  stats,
+  difficulty,
+}: {
+  stats: StatValue[];
+  difficulty: number;
+}) {
+  if (stats.length === 0) {
     return <p className="text-sm text-zinc-500">No stats reported.</p>;
   }
 
   const byId = new Map<number, bigint>();
-  for (const s of character.stats) byId.set(s.id, s.value);
+  for (const s of stats) byId.set(s.id, s.value);
 
   // Max-resist stats are consumed by the resistance display, not shown as their own rows.
   const known = new Set([
@@ -105,7 +106,7 @@ export function StatsPanel({ character }: { character: Character }) {
               const resist = RESIST_IDS.has(id)
                 ? resistDisplay(
                     Number(value),
-                    character.difficulty,
+                    difficulty,
                     Number(byId.get(MAX_RESIST_STAT[id]) ?? 0n),
                   )
                 : null;

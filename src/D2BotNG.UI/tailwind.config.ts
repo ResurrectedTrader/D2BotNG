@@ -12,14 +12,10 @@ export default {
           'gold-light': '#e6c75a',
           'gold-dark': '#967819',
         },
-        item: {
-          normal: '#ffffff',
-          magic: '#6969ff',
-          rare: '#ffff00',
-          set: '#00ff00',
-          unique: '#c9a227',
-          craft: '#ffa500',
-        },
+        // Item quality colours are deliberately NOT here. They are the GAME.s, given as ÿcN
+        // indices, and `D2_TEXT_COLORS` in features/items/item-utils is the one table that maps
+        // them — the same table every tooltip paints with. A second copy in the theme would drift
+        // from it and paint the same item two different colours.
         state: {
           stopped: '#888888',
           starting: '#ffca28',

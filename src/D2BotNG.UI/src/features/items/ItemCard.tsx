@@ -72,63 +72,69 @@ export const ItemCard = memo(function ItemCard({
   });
 
   return (
-    <div
-      className={clsx(
-        "flex min-w-0 items-center gap-3 rounded-lg bg-zinc-900 p-3 ring-1 ring-zinc-800 transition-colors hover:ring-zinc-700",
-        className,
-      )}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      onContextMenu={onContextMenu}
-    >
-      {/* Item image with tooltip */}
-      <ItemTooltip item={item} showSprite={false}>
-        <div className="flex-shrink-0 cursor-help">
-          <ItemImage item={item} size="lg" showSockets={isHovered} />
-        </div>
-      </ItemTooltip>
+    <>
+      <div
+        className={clsx(
+          "flex min-w-0 items-center gap-3 rounded-lg bg-zinc-900 p-3 ring-1 ring-zinc-800 transition-colors hover:ring-zinc-700",
+          className,
+        )}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        onContextMenu={onContextMenu}
+      >
+        {/* Item image with tooltip */}
+        <ItemTooltip item={item} showSprite={false}>
+          <div className="flex-shrink-0 cursor-help">
+            <ItemImage item={item} showSockets={isHovered} />
+          </div>
+        </ItemTooltip>
 
-      {/* Item details */}
-      <div className="min-w-0 flex-1">
-        {/* Item name */}
-        <div className="truncate font-medium text-zinc-100" title={item.name}>
-          {item.name}
+        {/* Item details */}
+        <div className="min-w-0 flex-1">
+          {/* Item name */}
+          <div className="truncate font-medium text-zinc-100" title={item.name}>
+            {item.name}
+          </div>
+
+          {/* Item header if present (like "Superior" or "Ethereal") */}
+          {item.header && (
+            <div className="mt-0.5 text-xs text-zinc-400">{item.header}</div>
+          )}
         </div>
 
-        {/* Item header if present (like "Superior" or "Ethereal") */}
-        {item.header && (
-          <div className="mt-0.5 text-xs text-zinc-400">{item.header}</div>
+        {/* Item badges */}
+        {(item.sockets.length > 0 || isEthereal(item)) && (
+          <div className="flex flex-shrink-0 flex-col items-center gap-1">
+            {/* Socket count indicator */}
+            {item.sockets.length > 0 && (
+              <div
+                className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-700 text-xs font-bold text-zinc-100"
+                title={
+                  item.sockets.length +
+                  " socket" +
+                  (item.sockets.length > 1 ? "s" : "")
+                }
+              >
+                {item.sockets.length}
+              </div>
+            )}
+
+            {/* Ethereal indicator */}
+            {isEthereal(item) && (
+              <div
+                className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-900/60 text-xs font-bold text-cyan-300"
+                title="Ethereal"
+              >
+                E
+              </div>
+            )}
+          </div>
         )}
       </div>
-
-      {/* Item badges */}
-      {(item.sockets.length > 0 || isEthereal(item)) && (
-        <div className="flex flex-shrink-0 flex-col items-center gap-1">
-          {/* Socket count indicator */}
-          {item.sockets.length > 0 && (
-            <div
-              className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-700 text-xs font-bold text-zinc-100"
-              title={
-                item.sockets.length +
-                " socket" +
-                (item.sockets.length > 1 ? "s" : "")
-              }
-            >
-              {item.sockets.length}
-            </div>
-          )}
-
-          {/* Ethereal indicator */}
-          {isEthereal(item) && (
-            <div
-              className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-900/60 text-xs font-bold text-cyan-300"
-              title="Ethereal"
-            >
-              E
-            </div>
-          )}
-        </div>
-      )}
+      {/* Siblings of the card, not children, even though both draw somewhere else entirely: React
+          synthesises `mouseenter`/`mouseleave` from the React tree, so a portal nested inside the
+          card counts as part of it and moving the pointer onto the open menu fires no leave. The
+          socket markers stayed overlaid on the sprite for as long as it was open. */}
       {contextMenu}
       {canRemove && (
         <DeleteConfirmationDialog
@@ -141,6 +147,6 @@ export const ItemCard = memo(function ItemCard({
           onCancel={() => setConfirmOpen(false)}
         />
       )}
-    </div>
+    </>
   );
 });

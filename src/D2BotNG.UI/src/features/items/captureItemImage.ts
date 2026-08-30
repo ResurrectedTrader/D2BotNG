@@ -16,7 +16,7 @@ import {
   renderItemToBitmap,
   renderItemWithSocketsToBitmap,
 } from "@/lib/rendering";
-import type { Item } from "@/generated/items_pb";
+import type { RenderableItem } from "./item-utils";
 import { ItemTooltipContent } from "./ItemTooltip";
 import { isEthereal } from "./item-utils";
 
@@ -28,7 +28,7 @@ const nextFrame = () =>
  * `useItemSprite` will look up later — this way the offscreen render finds
  * the bitmap on a microtask instead of re-decoding from DC6.
  */
-async function preloadSprite(item: Item): Promise<void> {
+async function preloadSprite(item: RenderableItem): Promise<void> {
   try {
     const ethereal = isEthereal(item);
     const socketsKey = item.sockets
@@ -92,7 +92,11 @@ async function waitForSpriteCanvas(
   }
 }
 
-export async function captureItemTooltipBlob(item: Item): Promise<Blob> {
+export async function captureItemTooltipBlob(
+  item: RenderableItem,
+  /** The held-Ctrl view, when that is what the reader was looking at. */
+  breakdown = false,
+): Promise<Blob> {
   await Promise.all([preloadSprite(item), preloadFont()]);
 
   const container = document.createElement("div");
@@ -107,7 +111,7 @@ export async function captureItemTooltipBlob(item: Item): Promise<Blob> {
   let root: Root | null = null;
   try {
     root = createRoot(container);
-    root.render(createElement(ItemTooltipContent, { item }));
+    root.render(createElement(ItemTooltipContent, { item, breakdown }));
 
     // Initial commit window: useItemSprite resolves its cached promise (microtask)
     // and React commits the canvas element on the next frame.

@@ -30,6 +30,12 @@ public class CharacterStateService : IHostedService, IDisposable
 
     private readonly object _lock = new();
     private readonly Dictionary<string, Character> _characters = new();
+
+    // Profiles that have reported since this manager started. Purely to gate the time-in-area
+    // accrual below: without it the gap between two SESSIONS would be credited to whatever area
+    // the character was last standing in. Deliberately NOT a field on Character — a stored flag
+    // would also have to mean "currently running", which nothing tells us when a profile stops.
+    private readonly HashSet<string> _reportedThisSession = [];
     private bool _dirty;
 
     private readonly CancellationTokenSource _cts = new();
@@ -57,7 +63,6 @@ public class CharacterStateService : IHostedService, IDisposable
                     // Clone: GetAllAsync hands back the repository's cached instances, so
                     // mutating them here would corrupt the repo's in-memory copy.
                     var character = c.Clone();
-                    character.Online = false;
                     // Drop the persisted area-entry time so "time in area" can't count
                     // from a previous session until the char actually reports in-game.
                     character.AreaEnteredAt = null;
@@ -114,7 +119,8 @@ public class CharacterStateService : IHostedService, IDisposable
 
             var previousArea = character.Area;
             var previousDifficulty = character.Difficulty;
-            var wasOnline = character.Online;
+            // Add returns true only the first time, so this is "we have seen this profile before".
+            var reportedBefore = !_reportedThisSession.Add(profile);
             var previousUpdatedAt = character.UpdatedAt;
             if (dto.Identity != null)
                 ApplyIdentity(character, dto.Identity);
@@ -190,9 +196,9 @@ public class CharacterStateService : IHostedService, IDisposable
                 : Timestamp.FromDateTime(DateTime.UtcNow);
             character.UpdatedAt = updatedAt;
             // Accumulate time spent in the area the character occupied over the interval since
-            // the last in-game update. Skip the first update of a session (wasOnline guards the
+            // the last in-game update. Skip the first update of a session (reportedBefore guards the
             // stale persisted clock), game transitions (lobby/loading time), and oversized gaps.
-            if (wasOnline && !gameChanged && previousUpdatedAt != null)
+            if (reportedBefore && !gameChanged && previousUpdatedAt != null)
             {
                 var deltaMs = (long)(updatedAt.ToDateTimeOffset() - previousUpdatedAt.ToDateTimeOffset())
                     .TotalMilliseconds;
@@ -205,7 +211,7 @@ public class CharacterStateService : IHostedService, IDisposable
             // load-time clear, the timestamp is only ever set from a real in-game entry.
             if (gameChanged || character.Area != previousArea)
                 character.AreaEnteredAt = updatedAt;
-            character.Online = true;
+
             _dirty = true;
             snapshot = character.Clone();
         }

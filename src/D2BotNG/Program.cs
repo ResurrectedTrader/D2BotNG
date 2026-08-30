@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using D2BotNG.Capture;
+using D2ItemToolkit;
 using D2BotNG.Data;
 using D2BotNG.Engine;
 using D2BotNG.Engine.Handoff;
@@ -436,8 +438,15 @@ internal static class Program
         // same instance can be resolved by the HandoffManager
         services.AddSingletonWithHandoff<DiscordService>();
 
-        // Character state service (live character snapshots from the bot engine)
+        // Character state service (live character snapshots from the bot engine, wire schema v1)
         services.AddSingleton<CharacterStateService>();
+
+        // Captured character state (wire schema v2) — a parallel stack with its own SQLite
+        // storage and its own endpoints; see CaptureEngine for why the two are kept apart.
+        // The tables ship embedded in the library, so this is always available and never fails.
+        services.AddSingleton(TooltipEngine.Embedded);
+        services.AddSingleton<CaptureStore>();
+        services.AddSingleton<CaptureEngine>();
 
         // Add hosted services
         services.AddHostedService<EngineHostedService>();
@@ -445,8 +454,12 @@ internal static class Program
         services.AddHostedService<UpdateCheckBackgroundService>();
         services.AddHostedService<GameDirectoryCleanupService>();
         services.AddHostedService<AnalyticsService>();
-        services.AddHostedService<D2BSMessageHandler>();
+        // Both consumers of the message channel start before the handler that drains it: hosted
+        // services start in registration order, and a snapshot pulled off the channel before its
+        // store is open is dropped. Harmless for an ordinary update, not for a keyframe.
         services.AddHostedService(sp => sp.GetRequiredService<CharacterStateService>());
+        services.AddHostedService(sp => sp.GetRequiredService<CaptureEngine>());
+        services.AddHostedService<D2BSMessageHandler>();
         services.AddHostedService(sp => sp.GetRequiredService<DiscordService>());
         services.AddHostedService(sp => sp.GetRequiredService<GameActionScheduler>());
 
@@ -491,6 +504,7 @@ internal static class Program
         app.MapGrpcService<ItemServiceImpl>().EnableGrpcWeb();
         app.MapGrpcService<LoggingServiceImpl>().EnableGrpcWeb();
         app.MapGrpcService<CharacterServiceImpl>().EnableGrpcWeb();
+        app.MapGrpcService<CaptureServiceImpl>().EnableGrpcWeb();
 
         // Serve static files - embedded resources by default, file system with --dev-ui flag
         var embeddedProvider = new EmbeddedResourceFileProvider(typeof(Program).Assembly);

@@ -1,3 +1,4 @@
+using D2BotNG.Capture;
 using D2BotNG.Core.Protos;
 using D2BotNG.Data;
 using D2BotNG.Engine;
@@ -19,6 +20,7 @@ public class EventServiceImpl : EventService.EventServiceBase
     private readonly MessageService _messageService;
     private readonly LoggerRegistry _loggerRegistry;
     private readonly CharacterStateService _characterStateService;
+    private readonly CaptureStore _captureStore;
 
     public EventServiceImpl(
         ILogger<EventServiceImpl> logger,
@@ -29,7 +31,8 @@ public class EventServiceImpl : EventService.EventServiceBase
         UpdateManager updateManager,
         MessageService messageService,
         LoggerRegistry loggerRegistry,
-        CharacterStateService characterStateService)
+        CharacterStateService characterStateService,
+        CaptureStore captureStore)
     {
         _logger = logger;
         _eventBroadcaster = eventBroadcaster;
@@ -40,6 +43,7 @@ public class EventServiceImpl : EventService.EventServiceBase
         _messageService = messageService;
         _loggerRegistry = loggerRegistry;
         _characterStateService = characterStateService;
+        _captureStore = captureStore;
     }
 
     public override async Task StreamEvents(Empty request, IServerStreamWriter<Event> responseStream, ServerCallContext context)
@@ -102,6 +106,28 @@ public class EventServiceImpl : EventService.EventServiceBase
         {
             Timestamp = now,
             CharactersSnapshot = _characterStateService.GetSnapshot()
+        }, ct);
+
+        // 1c. Wire schema v2 captures — SUMMARIES only. A profile fills exactly one stack, so this
+        // and the v1 snapshot above are normally disjoint. The captures themselves are fetched on
+        // demand: one carries every item's stat lists.
+        var capturesSnapshot = new CapturesSnapshot();
+        try
+        {
+            capturesSnapshot.Characters.AddRange(_captureStore.ListCharacters());
+        }
+        catch (Exception ex)
+        {
+            // The only snapshot in this method that is derived state, and the only one whose store
+            // is a file that can be locked, corrupt or mid-recreate. A throw here would abort the
+            // whole stream — costing profiles, keys, frameworks, schedules and console history, and
+            // then doing it again on every 5s reconnect. An empty capture list is the honest answer.
+            _logger.LogWarning(ex, "Capture summaries unavailable for this stream");
+        }
+        await responseStream.WriteAsync(new Event
+        {
+            Timestamp = now,
+            CapturesSnapshot = capturesSnapshot
         }, ct);
 
         // 2. KeyLists snapshot with usage

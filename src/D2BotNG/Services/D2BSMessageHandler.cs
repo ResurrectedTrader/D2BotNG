@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using D2BotNG.Capture;
 using D2BotNG.Core.Protos;
 using D2BotNG.Data;
 using D2BotNG.Engine;
@@ -31,6 +32,7 @@ public class D2BSMessageHandler : BackgroundService
     private readonly Paths _paths;
     private readonly SettingsRepository _settingsRepository;
     private readonly CharacterStateService _characterStateService;
+    private readonly CaptureEngine _captureEngine;
 
     /// <summary>
     /// Handles we've already warned about, so a 1Hz sender doesn't flood the log.
@@ -51,7 +53,8 @@ public class D2BSMessageHandler : BackgroundService
         ItemRenderer itemRenderer,
         Paths paths,
         SettingsRepository settingsRepository,
-        CharacterStateService characterStateService)
+        CharacterStateService characterStateService,
+        CaptureEngine captureEngine)
     {
         _logger = logger;
         _messageWindow = messageWindow;
@@ -67,6 +70,7 @@ public class D2BSMessageHandler : BackgroundService
         _paths = paths;
         _settingsRepository = settingsRepository;
         _characterStateService = characterStateService;
+        _captureEngine = captureEngine;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -379,10 +383,22 @@ public class D2BSMessageHandler : BackgroundService
         }
     }
 
+    /// <summary>
+    /// Routes a character snapshot to the stack that owns its wire schema. The two are separate
+    /// all the way down — engine, storage and endpoints — and a profile fills exactly one of
+    /// them, decided by the engine DLL it is running. They share only this message name, because
+    /// routing on the payload's own schemaVersion needs no change on the engine side.
+    /// </summary>
     private void HandleCharacterState(Profile profile, string json)
     {
         try
         {
+            if (CaptureEngine.PeekSchemaVersion(json) == CaptureEngine.SchemaVersion)
+            {
+                _captureEngine.Ingest(profile.Name, json);
+                return;
+            }
+
             var dto = JsonSerializer.Deserialize<CharacterStateDto>(json);
             if (dto == null) return;
             _characterStateService.Ingest(profile.Name, dto);

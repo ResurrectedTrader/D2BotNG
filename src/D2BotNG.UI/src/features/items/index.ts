@@ -1,29 +1,18 @@
 /**
- * Items feature barrel export
+ * What the rest of the app renders items with.
  *
- * Re-exports all items feature components and utilities.
+ * The feature's outward surface, not a listing of it: everything else here — the clipboard
+ * actions, the PNG capture, the card — is reached from inside the feature by relative import, so
+ * adding it to the barrel would only advertise internals as though they were the contract.
  */
 
-// Item display components
-export { ItemCard } from "./ItemCard";
-export type { ItemCardProps } from "./ItemCard";
-
-export { ItemImage } from "./ItemImage";
-export type { ItemImageProps } from "./ItemImage";
-
 export { ItemTooltip, ItemTooltipContent } from "./ItemTooltip";
-export type { ItemTooltipProps } from "./ItemTooltip";
+
+export { TooltipLine, useTooltipTextStyle } from "./TooltipText";
+
+export { CtrlBreakdownHint } from "./CtrlBreakdownHint";
 
 export { useItemContextMenu } from "./useItemContextMenu";
-export type { UseItemContextMenuOptions } from "./useItemContextMenu";
-
-export {
-  copyItemDescription,
-  copyItemImage,
-  saveItemImage,
-  getCleanItemDescription,
-} from "./itemActions";
-
-export { captureItemTooltipBlob } from "./captureItemImage";
 
 export { isEthereal } from "./item-utils";
+export type { RenderableItem } from "./item-utils";

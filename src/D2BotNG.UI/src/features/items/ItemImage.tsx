@@ -6,42 +6,22 @@
  */
 
 import { memo } from "react";
-import clsx from "clsx";
-import type { Item } from "@/generated/items_pb";
 import { ItemSprite } from "@/lib/rendering";
-import { isEthereal } from "./item-utils";
+import { isEthereal, type RenderableItem } from "./item-utils";
 
 export interface ItemImageProps {
   /** The item to display */
-  item: Item;
-  /** Additional CSS classes */
-  className?: string;
-  /** Size variant */
-  size?: "sm" | "md" | "lg";
+  item: RenderableItem;
   /** Whether to show socketed items (default: true) */
   showSockets?: boolean;
 }
 
-const sizeClasses = {
-  sm: "min-h-6 min-w-6",
-  md: "min-h-12 min-w-12",
-  lg: "min-h-16 min-w-16",
-};
-
 export const ItemImage = memo(function ItemImage({
   item,
-  className,
-  size = "md",
   showSockets = true,
 }: ItemImageProps) {
   return (
-    <div
-      className={clsx(
-        "flex items-center justify-center",
-        sizeClasses[size],
-        className,
-      )}
-    >
+    <div className="flex min-h-16 min-w-16 items-center justify-center">
       <ItemSprite
         code={item.code}
         colorShift={item.itemColor}

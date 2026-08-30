@@ -8,9 +8,14 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { create } from "@bufbuild/protobuf";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useVirtualScroll } from "@/hooks/useVirtualScroll";
 import { EmptyState, LoadingSpinner } from "@/components/ui";
 import { itemClient } from "@/lib/grpc-client";
-import { useCharacters, useEntitiesVersion } from "@/stores/event-store";
+import {
+  useCapturedSummaries,
+  useCharacters,
+  useEntitiesVersion,
+} from "@/stores/event-store";
 import {
   ListEntitiesRequestSchema,
   SearchItemsRequestSchema,
@@ -30,6 +35,7 @@ import {
 import clsx from "clsx";
 import { TabGroup, TabList, Tab, TabPanels, TabPanel } from "@headlessui/react";
 import { CharacterViewer } from "./viewer/CharacterViewer";
+import { ItemSearchTab } from "./search/ItemSearchTab";
 
 const PAGE_SIZE = 200;
 
@@ -284,37 +290,8 @@ function VirtualItemsGrid({
   onLoadMore,
 }: VirtualItemsGridProps) {
   const columns = useResponsiveColumns();
-  const parentRef = useRef<HTMLDivElement>(null);
-  const [scrollElement, setScrollElement] = useState<HTMLElement | null>(null);
-  const [scrollMargin, setScrollMargin] = useState(0);
-
-  useEffect(() => {
-    setScrollElement(document.querySelector("main"));
-  }, []);
-
-  useEffect(() => {
-    if (!parentRef.current || !scrollElement) return;
-    const measure = () => {
-      if (!parentRef.current || !scrollElement) return;
-      const parentRect = parentRef.current.getBoundingClientRect();
-      const scrollRect = scrollElement.getBoundingClientRect();
-      setScrollMargin(
-        parentRect.top - scrollRect.top + scrollElement.scrollTop,
-      );
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(scrollElement);
-    ro.observe(parentRef.current);
-    // Also observe the sticky header sibling: when filters wrap onto another
-    // line at narrow viewports, the header height changes but this component's
-    // own size doesn't, so we'd otherwise miss the layout shift.
-    const sibling = parentRef.current.previousElementSibling;
-    if (sibling instanceof HTMLElement) {
-      ro.observe(sibling);
-    }
-    return () => ro.disconnect();
-  }, [scrollElement]);
+  const { parentRef, scrollElement, scrollMargin } =
+    useVirtualScroll<HTMLDivElement>();
 
   const rowCount = Math.ceil(items.length / columns);
 
@@ -404,12 +381,22 @@ function ModeToggle({ label, value, onChange, activeColor }: ModeToggleProps) {
   );
 }
 
-export function CharactersPage() {
-  const characters = useCharacters();
+const PAGE_TAB_CLASS =
+  "px-4 py-2 text-sm font-medium text-zinc-400 outline-none transition-colors hover:text-zinc-200 data-[selected]:border-b-2 data-[selected]:border-d2-gold data-[selected]:text-zinc-100";
 
-  // With no live character state, the Character tab is just an empty state — so
-  // drop the tab chrome and show the mule-logged items browser as the whole page.
-  if (characters.length === 0) {
+export function CharactersPage() {
+  const streamed = useCharacters();
+  // v2 captures are pulled, not streamed, so they have to be counted separately — a manager
+  // running only v2 engines has an empty `useCharacters()` and a full capture store.
+  const captured = useCapturedSummaries();
+  const capturedProfiles = useMemo(
+    () => (captured ?? []).map((c) => c.profile),
+    [captured],
+  );
+
+  // With no character state of either kind, the Character tab is just an empty state — so drop
+  // the tab chrome and show the mule-logged items browser as the whole page.
+  if (streamed.length === 0 && capturedProfiles.length === 0) {
     return <MuleItemsBrowser />;
   }
 
@@ -418,17 +405,24 @@ export function CharactersPage() {
       <h1 className="text-lg font-bold text-zinc-100">Characters</h1>
       <TabGroup>
         <TabList className="flex gap-1 border-b border-zinc-700">
-          <Tab className="px-4 py-2 text-sm font-medium text-zinc-400 outline-none transition-colors hover:text-zinc-200 data-[selected]:border-b-2 data-[selected]:border-d2-gold data-[selected]:text-zinc-100">
-            Character
-          </Tab>
-          <Tab className="px-4 py-2 text-sm font-medium text-zinc-400 outline-none transition-colors hover:text-zinc-200 data-[selected]:border-b-2 data-[selected]:border-d2-gold data-[selected]:text-zinc-100">
-            Mule logged items
-          </Tab>
+          <Tab className={PAGE_TAB_CLASS}>Character</Tab>
+          {/* Search reads the v2 capture store, so it only exists once something has filled it.
+              A v1 character has no per-item stat lists behind it — its tooltip is a string the
+              game already rendered — so there would be nothing to search by stat. */}
+          {capturedProfiles.length > 0 && (
+            <Tab className={PAGE_TAB_CLASS}>Item search</Tab>
+          )}
+          <Tab className={PAGE_TAB_CLASS}>Mule logged items</Tab>
         </TabList>
         <TabPanels className="mt-4">
           <TabPanel>
             <CharacterViewer />
           </TabPanel>
+          {capturedProfiles.length > 0 && (
+            <TabPanel>
+              <ItemSearchTab profiles={capturedProfiles} />
+            </TabPanel>
+          )}
           <TabPanel>
             <MuleItemsBrowser />
           </TabPanel>

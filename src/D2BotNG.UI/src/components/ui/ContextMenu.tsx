@@ -74,7 +74,11 @@ function ContextMenuPortal({
       ref={menuRef}
       style={{ position: "fixed", left: position.x, top: position.y }}
       className={clsx(
-        "z-50 w-48 rounded-lg",
+        // Above the item tooltip (z-[60]), which is what opened this menu and which covers the
+        // cursor whenever it flipped below its trigger. The menu is the thing being clicked, so it
+        // wins; raising it here rather than lowering the tooltip, which has its own reason to sit
+        // above the grids it escapes.
+        "z-[70] w-48 rounded-lg",
         "bg-zinc-800 ring-1 ring-zinc-700 shadow-lg",
         "focus:outline-none",
       )}

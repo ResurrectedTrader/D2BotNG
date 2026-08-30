@@ -14,17 +14,17 @@
  * act), the contiguous index the sender's HasWaypoint(0..38) walks.
  */
 
-export interface Act<T> {
-  act: number;
-  entries: T[];
-}
-
 export interface NamedId {
   id: number;
   name: string;
 }
 
-export const QUEST_ACTS: Act<NamedId>[] = [
+export interface Act {
+  act: number;
+  entries: NamedId[];
+}
+
+export const QUEST_ACTS: Act[] = [
   {
     act: 1,
     entries: [
@@ -79,7 +79,7 @@ export const QUEST_ACTS: Act<NamedId>[] = [
   },
 ];
 
-export const WAYPOINT_ACTS: Act<NamedId>[] = [
+export const WAYPOINT_ACTS: Act[] = [
   {
     act: 1,
     entries: [

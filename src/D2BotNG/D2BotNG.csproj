@@ -61,6 +61,13 @@
     <PackageReference Include="Serilog.Sinks.Async" Version="2.1.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
 
+    <!-- Captured character state (data/ng/captures.db).
+         The bundle is pinned explicitly: Microsoft.Data.Sqlite 10.0.0 resolves
+         SQLitePCLRaw.lib.e_sqlite3 2.1.11, which carries a high-severity advisory
+         (GHSA-2m69-gcr7-jv3q). 3.0.5 supersedes it. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+
     <!-- Discord -->
     <PackageReference Include="Discord.Net" Version="3.18.0" />
 
@@ -171,5 +178,21 @@
     <Exec Command="jb inspectcode $(MSBuildThisFileDirectory)..\..\D2BotNG.sln --project=D2BotNG --properties:SkipUIBuild=true --output=$(BaseIntermediateOutputPath)inspect.sarif --format=Sarif --severity=WARNING" ContinueOnError="true" Condition="'$(_JbLocalExitCode)' != '0'" />
     <Message Text="ReSharper inspection report: $(BaseIntermediateOutputPath)inspect.sarif" Importance="high" Condition="Exists('$(BaseIntermediateOutputPath)inspect.sarif')" />
   </Target>
+
+  <!--
+    The game's data tables, and the lookups over them the capture cannot answer for itself: an
+    item's tier, its ItemTypes.txt categories and its equip requirements. It ships the tables as
+    embedded resources, so there is no install to locate and no "tables not loaded" state.
+
+    A package rather than the sibling checkout it started as. That was not only tidier: a
+    ProjectReference to a netstandard2.0 library needed SetPlatform="Platform=AnyCPU", because a
+    SOLUTION build passes Platform=x64 as a global property which propagates into project
+    references, and MSBuild then looked for the assembly under bin\x64\ where nothing had built.
+    A package has no platform to negotiate, and CI no longer needs a second repository cloned
+    beside this one.
+  -->
+  <ItemGroup>
+    <PackageReference Include="D2ItemToolkit" Version="0.4.1" />
+  </ItemGroup>
 
 </Project>

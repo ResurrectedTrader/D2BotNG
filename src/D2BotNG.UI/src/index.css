@@ -33,7 +33,21 @@
     background: theme("colors.zinc.600");
   }
 
-  [data-focus] {
+  /*
+   * HeadlessUI marks whichever element it has focused with `data-focus`; this paints our focus ring
+   * on it.
+   *
+   * Scoped to things that are actually operated, because HeadlessUI puts the attribute on
+   * CONTAINERS too. A TabPanel carries tabindex=0 so a keyboard can reach the panel's content, and
+   * under the unscoped rule clicking inside a tab and then pressing any key — the press is what
+   * flips the browser to focus-visible — drew a gold ring around the entire panel, as though a card
+   * the size of the page were a control.
+   */
+  a[data-focus],
+  button[data-focus],
+  input[data-focus],
+  [role="option"][data-focus],
+  [role="menuitem"][data-focus] {
     @apply outline-none ring-2 ring-d2-gold ring-offset-2 ring-offset-zinc-950;
   }
 }

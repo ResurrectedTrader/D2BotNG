@@ -6,9 +6,8 @@
  * the user hovers becomes the captured PNG.
  */
 
-import type { Item } from "@/generated/items_pb";
+import { stripD2ColorCodes, type RenderableItem } from "./item-utils";
 import { captureItemTooltipBlob } from "./captureItemImage";
-import { stripD2ColorCodes } from "./item-utils";
 
 /** Sanitize an item name for use as a download filename. */
 function sanitizeFilename(name: string): string {
@@ -26,9 +25,28 @@ function sanitizeFilename(name: string): string {
 
 /**
  * Strip color codes and the trailing "$..." metadata from the item description.
+ *
+ * `breakdown` copies the held-Ctrl view instead — the roll spans, the item level, the socket
+ * fillers as their own blocks. It is a separate source rather than a switch inside one, because the
+ * two are produced differently: the description is one string to be split back into lines, while
+ * the breakdown is already rows, each carrying its own colour runs. Joining those runs is all that
+ * is needed here; there is no "$" metadata and no escaped newline in them to undo.
  */
-export function getCleanItemDescription(item: Item): string {
-  const raw = item.description ?? "";
+export function getCleanItemDescription(
+  item: RenderableItem,
+  breakdown = false,
+): string {
+  if (breakdown && item.detail) {
+    return item.detail
+      .lines()
+      .map((line) => line.segments.map((s) => s.text).join(""))
+      .join("\n")
+      .trim();
+  }
+
+  // Rendered on demand for a source that carries no text of its own, exactly as the tooltip does —
+  // otherwise copying a captured item would put an empty string on the clipboard.
+  const raw = item.describe?.() ?? item.description ?? "";
   const beforeMeta = raw.split("$")[0];
   // Lines may use literal "\n" (escape sequence in JSON) or real newlines.
   const normalized = beforeMeta.includes(String.raw`\n`)
@@ -41,14 +59,22 @@ export function getCleanItemDescription(item: Item): string {
     .trim();
 }
 
-export async function copyItemDescription(item: Item): Promise<void> {
-  const text = getCleanItemDescription(item);
-  const lines = item.name ? `${item.name}\n${text}` : text;
+export async function copyItemDescription(
+  item: RenderableItem,
+  breakdown = false,
+): Promise<void> {
+  const text = getCleanItemDescription(item, breakdown);
+  // The breakdown opens with the item's own name line, so prefixing it would print the name twice
+  // — the same reason the tooltip drops its title when either full view is showing.
+  const lines = item.name && !breakdown ? `${item.name}\n${text}` : text;
   await navigator.clipboard.writeText(lines);
 }
 
-export async function copyItemImage(item: Item): Promise<void> {
-  const blob = await captureItemTooltipBlob(item);
+export async function copyItemImage(
+  item: RenderableItem,
+  breakdown = false,
+): Promise<void> {
+  const blob = await captureItemTooltipBlob(item, breakdown);
   if (typeof ClipboardItem === "undefined") {
     throw new Error("Clipboard image API not supported in this browser");
   }
@@ -68,8 +94,11 @@ interface SaveFilePickerWindow {
   }>;
 }
 
-export async function saveItemImage(item: Item): Promise<void> {
-  const blob = await captureItemTooltipBlob(item);
+export async function saveItemImage(
+  item: RenderableItem,
+  breakdown = false,
+): Promise<void> {
+  const blob = await captureItemTooltipBlob(item, breakdown);
   const filename = `${sanitizeFilename(item.name)}.png`;
 
   // Prefer the native Save As dialog where supported (Chromium / WebView2).

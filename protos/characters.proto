@@ -49,16 +49,22 @@ message Character {
 
   string game_id = 10;                            // current game session id
   google.protobuf.Timestamp updated_at = 11;      // last snapshot received
-  bool online = 12;                               // owning profile currently running
-  int32 area = 13;                                // current area id
-  int32 difficulty = 14;                          // current difficulty: 0 Normal, 1 Nightmare, 2 Hell
-  google.protobuf.Timestamp area_entered_at = 15; // manager-stamped time the current area was entered
-  int32 hand = 16;                                // active weapon set: 0 primary (I), 1 secondary (II)
-  uint32 char_flags = 17;                         // raw D2 character flags (hardcore 0x04, expansion 0x20)
-  repeated SkillLevel skills = 18;                // invested skills (hard + gear-bonus points)
-  DifficultyProgression progression = 19;         // quest/waypoint progression per difficulty
-  MonsterKills kills = 20;                        // lifetime kills (by class+rarity and by super-unique), per difficulty
-  AreaTime area_time = 21;                         // lifetime time spent per area (ms), per difficulty
+  int32 area = 12;                                // current area id
+  int32 difficulty = 13;                          // current difficulty: 0 Normal, 1 Nightmare, 2 Hell
+  google.protobuf.Timestamp area_entered_at = 14; // manager-stamped time the current area was entered
+  int32 hand = 15;                                // active weapon set: 0 primary (I), 1 secondary (II)
+  uint32 char_flags = 16;                         // raw D2 character flags (hardcore 0x04, expansion 0x20)
+  repeated SkillLevel skills = 17;                // invested skills (hard + gear-bonus points)
+  DifficultyProgression progression = 18;         // quest/waypoint progression per difficulty
+  MonsterKills kills = 19;                        // lifetime kills (by class+rarity and by super-unique), per difficulty
+  AreaTime area_time = 20;                        // lifetime time spent per area (ms), per difficulty
+
+  // There is deliberately no `online` field. A flag stored on the character can only say what
+  // was true at the last snapshot: nothing reports that a profile STOPPED, so it is wrong from
+  // the moment a bot shuts down until the manager restarts. CharacterViewer.tsx already derives
+  // liveness from the owning profile's run state, which streams start and stop over EventService
+  // and is keyed by the same profile name; `updated_at` is the freshness signal. The service
+  // tracks "has reported this session" privately, purely to gate time-in-area accrual.
 }
 
 // Quest/waypoint progression broken out by difficulty. The engine reports only the

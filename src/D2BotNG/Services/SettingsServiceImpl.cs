@@ -1,4 +1,5 @@
 using System.Net;
+using D2BotNG.Capture;
 using D2BotNG.Core.Protos;
 using D2BotNG.Data;
 using D2BotNG.Engine;
@@ -23,6 +24,7 @@ public class SettingsServiceImpl : SettingsService.SettingsServiceBase
     private readonly PatchRepository _patchRepository;
     private readonly ItemRepository _itemRepository;
     private readonly ProfileEngine _profileEngine;
+    private readonly CaptureStore _captureStore;
     private readonly EventBroadcaster _eventBroadcaster;
 
     public SettingsServiceImpl(
@@ -36,6 +38,7 @@ public class SettingsServiceImpl : SettingsService.SettingsServiceBase
         PatchRepository patchRepository,
         ItemRepository itemRepository,
         ProfileEngine profileEngine,
+        CaptureStore captureStore,
         EventBroadcaster eventBroadcaster)
     {
         _settingsRepository = settingsRepository;
@@ -48,6 +51,7 @@ public class SettingsServiceImpl : SettingsService.SettingsServiceBase
         _patchRepository = patchRepository;
         _itemRepository = itemRepository;
         _profileEngine = profileEngine;
+        _captureStore = captureStore;
         _eventBroadcaster = eventBroadcaster;
     }
 
@@ -92,9 +96,29 @@ public class SettingsServiceImpl : SettingsService.SettingsServiceBase
             await _profileEngine.BroadcastProxiesSnapshotAsync();
             await _profileEngine.BroadcastFrameworksSnapshotAsync();
             await BroadcastSchedulesSnapshotAsync();
+            BroadcastCapturesSnapshot();
         }
 
         return new Empty();
+    }
+
+    /// <summary>
+    /// The capture database lives under the data directory too, and CaptureEngine has just
+    /// reopened it at the new location. Without this the clients keep the old folder's summaries —
+    /// a snapshot only ever replaces them wholesale, and nothing else produces one outside the
+    /// stream-open path — so the selector lists characters that are no longer there and picking
+    /// one answers NotFound.
+    /// </summary>
+    private void BroadcastCapturesSnapshot()
+    {
+        var snapshot = new CapturesSnapshot();
+        snapshot.Characters.AddRange(_captureStore.ListCharacters());
+
+        _eventBroadcaster.Broadcast(new Event
+        {
+            Timestamp = Timestamp.FromDateTime(DateTime.UtcNow),
+            CapturesSnapshot = snapshot
+        });
     }
 
     private async Task BroadcastSchedulesSnapshotAsync()

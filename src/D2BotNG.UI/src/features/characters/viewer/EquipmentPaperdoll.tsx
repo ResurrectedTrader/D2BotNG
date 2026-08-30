@@ -1,7 +1,7 @@
 /**
  * EquipmentPaperdoll / MercPaperdoll - equipped items laid out by equip slot
- * (sent in item.x; y is always 0 for slot containers). v1 uses labeled slot
- * boxes (zero assets). Helm sits above the body armor (center column).
+ * (sent in item.x; y is always 0 for slot containers). Labeled slot boxes, zero
+ * assets. Helm sits above the body armor (center column).
  *
  * Expansion characters have a second weapon set. The game reports the *active*
  * set in equip locations 4/5 and the inactive one in 11/12; which set is active
@@ -11,11 +11,10 @@
  * marked); the selection is the user's and stays put as the active set flips live.
  */
 
-import { useState } from "react";
 import clsx from "clsx";
-import type { Container } from "@/generated/characters_pb";
-import type { Item } from "@/generated/items_pb";
-import { ItemImage, ItemTooltip, useItemContextMenu } from "@/features/items";
+import { ActiveDot, SegmentedControl } from "./CharacterChrome";
+import { ItemCell } from "./ItemCell";
+import type { DisplayContainer, DisplayItem } from "./contracts";
 
 interface SlotDef {
   slot: number; // D2 equip-location id, carried in item.x for slot containers
@@ -41,7 +40,7 @@ const SLOTS: SlotDef[] = [
 ];
 
 // Helm centered above the body armor; amulet upper-right above the off-hand.
-// The top-left cell is empty (the weapon-set toggle now lives in the panel title).
+// The top-left cell is empty; the weapon-set toggle sits in the panel title.
 const GRID_AREAS = `
   ".      helm   amulet"
   "weapon armor  offhand"
@@ -49,37 +48,52 @@ const GRID_AREAS = `
   "gloves .      boots"
 `;
 
-function Slot({
-  area,
-  label,
-  item,
+/**
+ * A slot layout filled from an equipped container.
+ *
+ * The character's paperdoll and the mercenary's are the same thing with a different set of slots
+ * and a different arrangement of them, so they are one component: everything that made them look
+ * like two — the lookup by equip location, the grid, the slot boxes — is identical.
+ */
+function Paperdoll({
+  slots,
+  areas,
+  columns,
+  container,
+  locationOf,
 }: {
-  area: string;
-  label: string;
-  item: Item | undefined;
+  slots: SlotDef[];
+  areas: string;
+  columns: number;
+  container: DisplayContainer | undefined;
+  /** Which equip location a slot reads, when it is not the slot's own. */
+  locationOf?: (def: SlotDef) => number;
 }) {
-  const [hovered, setHovered] = useState(false);
-  const { contextMenu, onContextMenu } = useItemContextMenu({ item });
+  const bySlot = new Map<number, DisplayItem>();
+  for (const item of container?.items ?? []) bySlot.set(item.x, item);
+
   return (
     <div
-      style={{ gridArea: area }}
-      className="flex min-h-[72px] items-center justify-center rounded bg-zinc-900/40 ring-1 ring-zinc-800"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      onContextMenu={item ? onContextMenu : undefined}
+      className="grid w-fit gap-2"
+      style={{
+        gridTemplateAreas: areas,
+        gridTemplateColumns: `repeat(${columns}, 4.5rem)`,
+      }}
     >
-      {item ? (
-        <ItemTooltip item={item} showSprite={false}>
-          <div>
-            <ItemImage item={item} size="lg" showSockets={hovered} />
-          </div>
-        </ItemTooltip>
-      ) : (
-        <span className="text-[10px] uppercase tracking-wide text-zinc-600">
-          {label}
-        </span>
-      )}
-      {item && contextMenu}
+      {slots.map((def) => (
+        <ItemCell
+          key={def.area}
+          item={bySlot.get(locationOf ? locationOf(def) : def.slot)}
+          className="flex min-h-[72px] items-center justify-center rounded bg-zinc-900/40 ring-1 ring-zinc-800"
+          style={{ gridArea: def.area }}
+          spriteClassName="min-h-16 min-w-16"
+          empty={
+            <span className="text-[10px] uppercase tracking-wide text-zinc-600">
+              {def.label}
+            </span>
+          }
+        />
+      ))}
     </div>
   );
 }
@@ -97,7 +111,7 @@ export function WeaponSetToggle({
   activeSet: 0 | 1;
 }) {
   return (
-    <div className="inline-flex gap-0.5 rounded-md bg-zinc-800/60 p-0.5 text-xs">
+    <SegmentedControl>
       {([0, 1] as const).map((set) => (
         <button
           key={set}
@@ -116,12 +130,10 @@ export function WeaponSetToggle({
           )}
         >
           {set === 0 ? "I" : "II"}
-          {set === activeSet && (
-            <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-green-500" />
-          )}
+          {set === activeSet && <ActiveDot />}
         </button>
       ))}
-    </div>
+    </SegmentedControl>
   );
 }
 
@@ -130,43 +142,27 @@ export function EquipmentPaperdoll({
   selectedSet,
   activeSet,
 }: {
-  equipped: Container | undefined;
+  equipped: DisplayContainer | undefined;
   selectedSet: 0 | 1;
   activeSet: 0 | 1;
 }) {
-  // The active set's weapons sit in 4/5; the inactive set's in 11/12.
+  // The active set's weapons sit in 4/5; the inactive set's in 11/12. Only the two hands move —
+  // everything else is worn regardless of which set is drawn.
   const selectedIsActive = selectedSet === activeSet;
-  const weaponSlot = selectedIsActive ? 4 : 11;
-  const offhandSlot = selectedIsActive ? 5 : 12;
-
-  const bySlot = new Map<number, Item>();
-  for (const item of equipped?.items ?? []) bySlot.set(item.x, item);
 
   return (
-    <div
-      className="grid w-fit gap-2"
-      style={{
-        gridTemplateAreas: GRID_AREAS,
-        gridTemplateColumns: "repeat(3, 4.5rem)",
+    <Paperdoll
+      slots={SLOTS}
+      areas={GRID_AREAS}
+      columns={3}
+      container={equipped}
+      locationOf={(def) => {
+        if (selectedIsActive) return def.slot;
+        if (def.area === "weapon") return 11;
+        if (def.area === "offhand") return 12;
+        return def.slot;
       }}
-    >
-      {SLOTS.map((def) => {
-        const slotId =
-          def.area === "weapon"
-            ? weaponSlot
-            : def.area === "offhand"
-              ? offhandSlot
-              : def.slot;
-        return (
-          <Slot
-            key={def.area}
-            area={def.area}
-            label={def.label}
-            item={bySlot.get(slotId)}
-          />
-        );
-      })}
-    </div>
+    />
   );
 }
 
@@ -182,26 +178,13 @@ const MERC_GRID_AREAS = `
   "weapon armor"
 `;
 
-export function MercPaperdoll({ merc }: { merc: Container }) {
-  const bySlot = new Map<number, Item>();
-  for (const item of merc.items) bySlot.set(item.x, item);
-
+export function MercPaperdoll({ merc }: { merc: DisplayContainer }) {
   return (
-    <div
-      className="grid w-fit gap-2"
-      style={{
-        gridTemplateAreas: MERC_GRID_AREAS,
-        gridTemplateColumns: "repeat(2, 4.5rem)",
-      }}
-    >
-      {MERC_SLOTS.map((def) => (
-        <Slot
-          key={def.area}
-          area={def.area}
-          label={def.label}
-          item={bySlot.get(def.slot)}
-        />
-      ))}
-    </div>
+    <Paperdoll
+      slots={MERC_SLOTS}
+      areas={MERC_GRID_AREAS}
+      columns={2}
+      container={merc}
+    />
   );
 }

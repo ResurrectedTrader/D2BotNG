@@ -32,6 +32,7 @@ import type { Proxy } from "@/generated/proxies_pb";
 import { FrameworkSchema } from "@/generated/frameworks_pb";
 import type { Framework } from "@/generated/frameworks_pb";
 import type { Character } from "@/generated/characters_pb";
+import type { CharacterSummary } from "@/generated/captures_pb";
 
 const MAX_MESSAGES = 10_000;
 
@@ -147,6 +148,14 @@ interface EventState {
   // Characters (Map by profile name) - live state from the bot engine
   characters: Map<string, Character>;
 
+  // Wire schema v2 captures, by profile. SUMMARIES only — the capture itself is fetched on
+  // demand, because one carries the full stat lists of every item the character owns.
+  captures: Map<string, CharacterSummary>;
+  // Bumped per profile whenever its capture changes, so a reader can refetch the one it is
+  // showing. A counter rather than the summary's timestamp: two snapshots can share a
+  // millisecond, and a missed refetch is invisible until someone notices stale gear.
+  captureRevisions: Map<string, number>;
+
   // Actions
   handleEvents: (events: Event[]) => void;
   clearMessages: (source: string) => void;
@@ -172,6 +181,8 @@ export const useEventStore = create<EventState>((set, get) => ({
   logLevels: [],
   serverInfo: null,
   characters: new Map(),
+  captures: new Map(),
+  captureRevisions: new Map(),
 
   setConnected: (connected) => set({ isConnected: connected }),
 
@@ -193,6 +204,8 @@ export const useEventStore = create<EventState>((set, get) => ({
     let logLevels = state.logLevels;
     let serverInfo = state.serverInfo;
     let characters = state.characters;
+    let captures = state.captures;
+    let captureRevisions = state.captureRevisions;
     let entitiesVersion = state.entitiesVersion;
     let hasReceivedInitialData = state.hasReceivedInitialData;
 
@@ -207,6 +220,8 @@ export const useEventStore = create<EventState>((set, get) => ({
     let logLevelsDirty = false;
     let serverInfoDirty = false;
     let charactersDirty = false;
+    let capturesDirty = false;
+    let revisionsDirty = false;
     let entitiesVersionDirty = false;
     let hasReceivedInitialDataDirty = false;
 
@@ -449,6 +464,38 @@ export const useEventStore = create<EventState>((set, get) => ({
           characters.set(event.event.value.profile, event.event.value);
           break;
         }
+
+        case "capturesSnapshot": {
+          const m = new Map<string, CharacterSummary>();
+          for (const c of event.event.value.characters) {
+            m.set(c.profile, c);
+          }
+          captures = m;
+          capturesDirty = true;
+          break;
+        }
+
+        case "captureChanged": {
+          const { profile, summary } = event.event.value;
+          if (summary) {
+            if (!capturesDirty) {
+              captures = new Map(captures);
+              capturesDirty = true;
+            }
+            captures.set(profile, summary);
+          }
+          // Bumped even when the summary is absent — the capture still changed, and a reader
+          // showing that character needs to refetch whether or not its metadata moved.
+          if (!revisionsDirty) {
+            captureRevisions = new Map(captureRevisions);
+            revisionsDirty = true;
+          }
+          captureRevisions.set(
+            profile,
+            (captureRevisions.get(profile) ?? 0) + 1,
+          );
+          break;
+        }
       }
     }
 
@@ -484,6 +531,8 @@ export const useEventStore = create<EventState>((set, get) => ({
     if (logLevelsDirty) update.logLevels = logLevels;
     if (serverInfoDirty) update.serverInfo = serverInfo;
     if (charactersDirty) update.characters = characters;
+    if (capturesDirty) update.captures = captures;
+    if (revisionsDirty) update.captureRevisions = captureRevisions;
     if (entitiesVersionDirty) update.entitiesVersion = entitiesVersion;
 
     if (Object.keys(update).length > 0) {
@@ -517,6 +566,8 @@ export const useEventStore = create<EventState>((set, get) => ({
       logLevels: [],
       serverInfo: null,
       characters: new Map(),
+      captures: new Map(),
+      captureRevisions: new Map(),
     }),
 }));
 
@@ -641,6 +692,26 @@ export function useServerInfo(): ServerInfo | null {
 export function useCharacters(): Character[] {
   return useEventStore(
     useShallow((state) => Array.from(state.characters.values())),
+  );
+}
+
+/** Summaries of every wire schema v2 capture. Enough to list and select; never the gear. */
+export function useCapturedSummaries(): CharacterSummary[] {
+  return useEventStore(
+    useShallow((state) => Array.from(state.captures.values())),
+  );
+}
+
+/**
+ * How many times this profile's capture has changed since the stream connected.
+ *
+ * A reader showing that character refetches when this moves. Zero for a profile that has never
+ * reported, which is indistinguishable from "connected and unchanged" — correct either way, since
+ * both mean there is nothing newer to fetch.
+ */
+export function useCaptureRevision(profile: string | null | undefined): number {
+  return useEventStore((state) =>
+    profile ? (state.captureRevisions.get(profile) ?? 0) : 0,
   );
 }
 

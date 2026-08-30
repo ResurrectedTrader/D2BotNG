@@ -24,6 +24,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\D2BotNG\D2BotNG.csproj" />
+    <!-- Declared directly, not relied on transitively: the capture tests use TooltipEngine
+         themselves. Keep the version in step with the app's. -->
+    <PackageReference Include="D2ItemToolkit" Version="0.4.1" />
   </ItemGroup>
 
 </Project>

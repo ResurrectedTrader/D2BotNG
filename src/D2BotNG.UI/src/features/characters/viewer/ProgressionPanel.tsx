@@ -7,19 +7,9 @@
 
 import { useState } from "react";
 import clsx from "clsx";
-import type { Character } from "@/generated/characters_pb";
-import {
-  QUEST_ACTS,
-  WAYPOINT_ACTS,
-  type Act,
-  type NamedId,
-} from "./progression";
-
-const DIFFICULTIES = [
-  { id: 0, name: "Normal" },
-  { id: 1, name: "Nightmare" },
-  { id: 2, name: "Hell" },
-] as const;
+import { QUEST_ACTS, WAYPOINT_ACTS, type Act } from "./progression";
+import { DifficultySelector } from "./CharacterChrome";
+import type { DifficultyProgress } from "./contracts";
 
 function ProgressionGroup({
   title,
@@ -28,7 +18,7 @@ function ProgressionGroup({
   dotClass,
 }: {
   title: string;
-  acts: Act<NamedId>[];
+  acts: Act[];
   owned: Set<number>;
   dotClass: string;
 }) {
@@ -77,57 +67,32 @@ function ProgressionGroup({
   );
 }
 
-export function ProgressionPanel({ character }: { character: Character }) {
-  const activeDifficulty = character.difficulty;
+export function ProgressionPanel({
+  progression,
+  activeDifficulty,
+}: {
+  /** Keyed by difficulty; a missing key means nothing has been reported for it. */
+  progression: Partial<Record<number, DifficultyProgress>>;
+  activeDifficulty: number;
+}) {
   // Default to the active difficulty; the user can switch to inspect the others.
   const [selectedDifficulty, setSelectedDifficulty] =
     useState(activeDifficulty);
 
-  const byDiff = character.progression;
-  const progFor = (id: number) =>
-    id === 1 ? byDiff?.nightmare : id === 2 ? byDiff?.hell : byDiff?.normal;
-
-  const prog = progFor(selectedDifficulty);
+  const prog = progression[selectedDifficulty];
   const completedQuests = new Set(prog?.quests ?? []);
   const ownedWaypoints = new Set(prog?.waypoints ?? []);
 
   return (
     <div className="space-y-4">
-      <div className="inline-flex gap-0.5 rounded-md bg-zinc-800/60 p-0.5 text-xs">
-        {DIFFICULTIES.map((d) => {
-          // Disable difficulties we've never received progression for (the active
-          // one stays enabled even before its first update arrives).
-          const enabled = d.id === activeDifficulty || !!progFor(d.id);
-          return (
-            <button
-              key={d.id}
-              type="button"
-              disabled={!enabled}
-              onClick={() => setSelectedDifficulty(d.id)}
-              title={
-                d.id === activeDifficulty
-                  ? "Last seen difficulty"
-                  : enabled
-                    ? undefined
-                    : "No data"
-              }
-              className={clsx(
-                "relative rounded px-3 py-1 font-medium",
-                !enabled
-                  ? "cursor-not-allowed text-zinc-600"
-                  : selectedDifficulty === d.id
-                    ? "bg-zinc-700 text-zinc-100"
-                    : "text-zinc-400 hover:text-zinc-200",
-              )}
-            >
-              {d.name}
-              {d.id === activeDifficulty && (
-                <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-green-500" />
-              )}
-            </button>
-          );
-        })}
-      </div>
+      <DifficultySelector
+        selected={selectedDifficulty}
+        onSelect={setSelectedDifficulty}
+        activeDifficulty={activeDifficulty}
+        // Anything reported at all counts: the panel shows the full quest and waypoint sets, so a
+        // difficulty with a record has something to say even when nothing in it is done.
+        hasData={(id) => !!progression[id]}
+      />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <ProgressionGroup

@@ -21,6 +21,7 @@ import { SettingsService, FileService } from "../generated/settings_pb";
 import { UpdateService } from "../generated/updates_pb";
 import { LoggingService } from "../generated/logging_pb";
 import { CharacterService } from "../generated/characters_pb";
+import { CaptureService } from "../generated/captures_pb";
 
 /** LocalStorage key for dev backend URL override */
 const DEV_BACKEND_URL_KEY = "d2bot-dev-backend-url";
@@ -178,6 +179,16 @@ export const eventClient = createClient(EventService, transport);
  * - Search items with filters
  */
 export const itemClient = createClient(ItemService, commandTransport);
+
+/**
+ * Capture service client — characterState wire schema v2.
+ *
+ * The only client in here that is PULLED rather than streamed, and deliberately: one captured
+ * character carries the full stat lists of every item it owns, which is far too much to push down
+ * the event stream on every change. Everything else in the UI reads from the event store; this is
+ * the one place React Query issues real queries rather than mutations.
+ */
+export const captureClient = createClient(CaptureService, commandTransport);
 
 /**
  * Logging configuration client

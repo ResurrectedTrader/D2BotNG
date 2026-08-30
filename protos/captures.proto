@@ -1,0 +1,751 @@
+syntax = "proto3";
+
+package d2bot.captures;
+
+option csharp_namespace = "D2BotNG.Core.Protos.Captures";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+// Live character state captured from the bot engine, wire schema v2.
+//
+// A parallel stack to the one in characters.proto, sharing no engine, storage or endpoint with
+// it: v1 sends presentation the engine already resolved, v2 sends the raw engine state those
+// answers come from, so merging them would mean fabricating on one side or discarding on the
+// other. v2's items are decomposed into SQLite, which is the point — v1 items carry no stats.
+//
+// **These messages ARE the wire format.** The engine's JSON parses straight into them, so there
+// is no hand-written DTO layer: field names match the producer's keys (json_name pins the few
+// that would not line up) and SQL reads rebuild these same messages.
+// There is deliberately no ListCharacters here. The summaries a selector needs ride the EVENT
+// stream instead — a CapturesSnapshot on connect and a CaptureChanged per change — because a
+// selector has to stay live as bots report, which a pull cannot do without polling.
+service CaptureService {
+  // One character, whole: both wearers with every container, item, stat list and socket filler.
+  rpc GetCharacter(ProfileRequest) returns (Character);
+
+  // Items matching stat/quality/code filters, across one or all characters.
+  rpc SearchItems(SearchItemsRequest) returns (SearchItemsResponse);
+
+  // Clear accumulated analytics for one character.
+  rpc ResetKills(ProfileRequest) returns (google.protobuf.Empty);
+  rpc ResetAreaTime(ProfileRequest) returns (google.protobuf.Empty);
+}
+
+// ---------------------------------------------------------------------------
+// The capture — parsed directly from the engine's JSON, stored, and served
+// ---------------------------------------------------------------------------
+
+// A captured D2UnitStrc — the engine's own view of a unit, copied field for field with no
+// interpretation. Mirrors the d2bsng producer's document (characterState schema v2,
+// src/frontends/js/components/characterstate/UnitJson.cpp) and, for the fields they share,
+// D2Tooltip's UnitRecord, so the same message can be handed to the tooltip engine.
+//
+// An item and a wearer are the same struct in the game, so both parse into this one message:
+// the item block and the wearer block are mutually exclusive, selected by unit_type. A socket
+// filler is another whole unit nested in `sockets`, where its POSITION is the socket index.
+message Unit {
+  int32 unit_type = 1;  // 0 player, 1 monster (merc), 4 item
+  int32 class_id = 2;   // items.txt row for an item; character class / monstats row for a wearer
+
+  // ---- item block (zero on a wearer) ----
+
+  // items.txt szCode, trailing space padding stripped. This is the BASE code, not a resolved
+  // inventory graphic: set/unique art (file_index), exceptional/elite collapsing to the
+  // normal-tier code, and the varinvgfx variant (gfx_index) are all consumer-side.
+  string code = 3;
+  int32 quality = 4;       // 1 inferior, 2 normal, 3 superior, 4 magic, 5 set, 6 rare, 7 unique, 8 crafted, 9 tempered
+  uint32 item_flags = 5;   // dwFlags: identified 0x10, socketed 0x800, ethereal 0x400000, runeword 0x4000000
+  int32 format = 6;        // wItemFormat; 0 = a classic item
+  // dwFileIndex, overloaded by quality: a lowqualityitems row, a uniqueitems row, a setitems
+  // row, a monstats row for a body part, or a character class for an ear. -1 = none (the
+  // client does not carry it until the item is identified).
+  int32 file_index = 7;
+  int32 rare_prefix = 8;
+  int32 rare_suffix = 9;
+  int32 auto_affix = 10;  // wAutoAffix: an inherent affix a few items carry; usually 0
+  // 3 slots each (D2's wMagicPrefix[3]/wMagicSuffix[3]), 1-based indices into the CONCATENATED
+  // affix arrays; 0 = empty slot, kept so a consumer can index by slot. On a runeword
+  // magic_prefix[0] is not an affix index at all but a runes.txt locale string id.
+  repeated int32 magic_prefix = 11;
+  repeated int32 magic_suffix = 12;
+  int32 ear_level = 13;
+  string player_name = 14;  // ear owner / personalisation
+  // bInvGfxIdx, 0-based. Which of the random inventory graphics this instance rolled — only
+  // meaningful for item types with a non-zero itemtypes.txt VarInvGfx (rings, amulets, jewels,
+  // charms), where the sprite is `code` + the 1-based index: rin1..rin5.
+  int32 gfx_index = 15;
+
+  // ---- wearer block (zero on an item) ----
+
+  uint32 flags_ex = 16;  // dwFlagEx; the expansion bit selects the classic/expansion tooltip rules
+  // Character / mercenary name. `optional` for PRESENCE, not because the name is optional: the
+  // whole wearer block rides one fingerprint, so the manager needs to know whether the block
+  // ARRIVED before it overwrites stored values with defaults (class id 0 is a real class). The
+  // producer can legitimately send an empty name — Unit::Name() returns {} while pPlayerData is
+  // null, and for a merc while the client has not resolved one — so testing the VALUE would
+  // discard a document that really was sent, losing area, hand, flags_ex, class and skills with
+  // it. proto3 JSON sets the has-bit on key presence regardless of value, which makes this exact.
+  optional string name = 17;
+  repeated Skill skills = 18;
+  int32 area = 19;       // player only: current area id
+  int32 hand = 20;       // player only: active weapon set (0 primary/I, 1 secondary/II)
+
+  // A wearer's MERGED stat values (GetStat off FullStats), so they already carry gear
+  // contributions — unlike stats_lists below, which are the raw per-source arrays. The producer
+  // adds these alongside the unit document for a player or mercenary, never for an item.
+  repeated Stat stats = 21;
+
+  // A wearer's owned containers. Present only for a wearer, and each one only when its contents
+  // changed.
+  Containers containers = 22;
+
+  // ---- item block continued ----
+
+  // The item's statlist chain, flattened. Absent on a structural capture (the producer omits it
+  // from its fingerprint pass, since durability and quantity tick in place). Items only: a
+  // wearer's stats arrive already merged in `stats` above.
+  repeated StatList stats_lists = 23;
+  // Socket fillers in socket-ordinal order — contiguous from 0, so array position is the socket
+  // index; the item's total socket count is stat 194.
+  repeated Unit sockets = 24;
+
+  // ---- item placement and presentation, sent on top of the D2Tooltip capture ----
+
+  // There is deliberately NO description here. The game's own tooltip string used to ride along —
+  // the producer set the ItemDesc globals, called LoadItemDesc and read D2Win's buffer — and it is
+  // gone because it costs a game-thread hop per item to obtain something the tooltip library can
+  // derive from the fields already in this message. It was also not a stable answer: the game
+  // discards a worn set piece's socket fillers on some recalcs and not others, so the same equipped
+  // helm was captured at both `All Resistances +15` and `+30`. Consumers render instead.
+  string title = 25;        // the game's item name line
+  uint32 gid = 26;          // game-session unit id; unique only within one game_id
+  int32 location = 27;      // 0 ground, 1 equip, 2 belt, 3 inventory, 4 store, 5 trade, 6 cube, 7 stash
+  int32 x = 28;             // grid column; equip-location id for slot containers (equipped/merc)
+  int32 y = 29;             // grid row (0 for slot containers)
+  // Inventory footprint in cells. The producer spells these `w`/`h`; json_name keeps the wire
+  // key while the field stays readable in C# and TypeScript.
+  int32 width = 30 [json_name = "w"];
+  int32 height = 31 [json_name = "h"];
+
+  // dwItemLevel — what the item rolled at, which decides which affixes could have appeared on it.
+  // The tooltip library needs it to narrow the roll ranges of the affixes whose span depends on
+  // it; without it those come back in ItemRollRanges.itemLevelDependent instead of as bounds.
+  int32 item_level = 32;
+}
+
+// One leaf stat array off a unit's statlist chain. `flags` and `state_no` are the game's own
+// provenance fields, copied verbatim: they say whether the array is the unit's base stats, an
+// item mod, a set tier (states 165-170) or a runeword (171), and whether it currently
+// contributes. Neither is interpreted here.
+message StatList {
+  int32 state_no = 1;
+  uint32 flags = 2;  // STATLIST_* bitmask
+  repeated Stat stats = 3;
+}
+
+// One stat, off an item's statlist or off a wearer's merged set — the producer spells both the
+// same way, so one message reads both.
+//
+// The two differ only in what the number means. On a statlist it is RAW — pre nValShift, pre op
+// resolution — which is what keeps a capture stable across wearers; shift and resolve at display
+// time. On a wearer it is the MERGED value, gear already folded in, and `layer` is always 0.
+//
+// int64 rather than int32 because of the wearer case: the producer zero-extends unsigned stats,
+// and experience (stat 13) at clvl 99 is about 3.52 billion — past int32, inside uint32. An
+// int32 field would not merely truncate it, it would fail the parse and drop the whole snapshot.
+// Statlist values are genuinely int32 in the game, so the wider field costs them nothing.
+message Stat {
+  int32 id = 1;     // ItemStatCost.txt row
+  int64 value = 2;
+  int32 layer = 3;  // sub-index (skill id, class, ...); omitted from the wire when zero, and on a wearer
+}
+
+// A wearer's skill. `level` is the BONUSED level the tooltip engine wants (the one thing a stat
+// capture cannot reach); the gear contribution is level - hard_points. The producer spells the
+// keys `skill`/`hard`/`level`.
+message Skill {
+  int32 skill_id = 1 [json_name = "skill"];
+  int32 hard_points = 2 [json_name = "hard"];  // points the player invested
+  int32 level = 3;                             // bonused level
+}
+
+// The containers a wearer owns. An unset field means "unchanged"; a mercenary fills only
+// `equipped`.
+//
+// Named fields rather than a keyed map: the producer's set is fixed and compile-time asserted
+// (BUCKET_COUNT == CONTAINER_COUNT in CharacterState.cpp), so the keys were never open-ended,
+// and the two containers that behave differently stop being string-keyed special cases.
+message Containers {
+  Container equipped = 1;   // slot set: each item's x is its equip-location, y = 0
+  Container inventory = 2;
+  Container cube = 3;
+  // Each item's x is a LINEAR slot index, not a grid column, and slot 0 is the bottom-left in
+  // game — the manager decomposes and vertically flips it on the way into storage.
+  Container belt = 4;
+  // The stash is NOT a container: it holds no items and has no grid of its own, only pages.
+  Stash stash = 5;
+}
+
+// One place a wearer keeps items: a grid (inventory, cube, belt) or a slot set (equipped, which
+// has no dimensions and carries the equip-location in each item's x, with y = 0). Which
+// container this is comes from the field it hangs off in Containers, so it carries no name.
+message Container {
+  int32 width = 1;   // grid width in cells; 0 for a slot container
+  int32 height = 2;  // grid height in cells
+  repeated Unit items = 3;
+}
+
+// A multi-page store. Structurally NOT a Container — it holds no items and has no grid of its
+// own; those belong to its pages.
+//
+// One limitation, since storage keys a stash row BY page: a stash with zero pages cannot round
+// trip. It stores no rows, and a read then finds none and leaves this field unset — which the
+// contract defines as "unchanged". The producer always sends at least the personal tab, so this
+// is unreachable rather than merely unlikely.
+message Stash {
+  repeated StashPage pages = 1;
+}
+
+// One page of a multi-page store. `index` and `name` are the producer's own keys.
+message StashPage {
+  int32 index = 1;
+  string name = 2;   // display name, e.g. "Personal"
+  int32 width = 3;
+  int32 height = 4;
+  repeated Unit items = 5;
+}
+
+// ---------------------------------------------------------------------------
+// The wire snapshot
+// ---------------------------------------------------------------------------
+
+// One "characterState" WM_COPYDATA payload, schema v2.
+//
+// Sections are partial: each is independently fingerprinted by the producer and present only
+// when it moved, so an absent section means UNCHANGED, never empty. A keyframe (sent on every
+// game-create) carries all of them plus a fresh game_id.
+//
+// One caveat the proto cannot express: the producer distinguishes an absent `merc` (unchanged)
+// from an explicit `merc: null` (dismissed), and proto3 JSON maps both to an unset field. The
+// manager therefore reads dismissal off `keyframe` instead — see the `merc` field below.
+message Snapshot {
+  int32 schema_version = 1;  // 2 for everything this stack handles
+  string game_id = 2;        // changes on every game-create; bounds item gid validity
+  bool keyframe = 3;
+  int64 updated_at = 4;      // game-side assembly time (Unix epoch ms)
+
+  Identity identity = 5;
+  Progression progression = 6;  // the ACTIVE difficulty only; identity.difficulty tags which
+  Unit player = 7;  // a wearer: unit document + merged stats + containers
+
+  // Same wearer shape as the player.
+  //
+  // The producer emits this on EVERY keyframe — the object, or null when there is no merc — and
+  // omits it otherwise. proto3 JSON collapses that null to an unset field, indistinguishable
+  // from an absent key, and `optional` would not help: a message field already has explicit
+  // presence, so the distinction is lost in the JSON MAPPING rather than in the presence model
+  // (proto3 JSON defines null as "the default value", and a message's default is unset). See
+  // MercPresenceTests. The manager therefore reads dismissal off `keyframe` instead: unset on a
+  // keyframe means there is no merc, unset otherwise means unchanged.
+  Unit merc = 8;
+  Kills kills = 9;               // DELTA since the last send, not a running total
+}
+
+// Account-level facts. Carries no character identity: name, class, level and area all ride the
+// player wearer, and level is stat 12.
+message Identity {
+  string account = 1;
+  string realm = 2;
+  int32 difficulty = 3;   // 0 Normal, 1 Nightmare, 2 Hell
+  uint32 char_flags = 4;  // .d2s status byte: hardcore 0x04, expansion 0x20
+  bool ladder = 5;        // a separate BnetData flag, not in char_flags
+}
+
+// Kills since the engine's last send — it clears its own tally on send, so these are added to
+// the stored lifetime counts. The two buckets are disjoint: a super-unique is counted only under
+// by_super_unique, never also under its class.
+message Kills {
+  repeated Kill by_class = 1;
+  repeated Kill by_super_unique = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Stored / served
+// ---------------------------------------------------------------------------
+
+message ProfileRequest {
+  string profile = 1;  // owning profile name
+}
+
+// Enough to populate a character selector, and nothing more — no stats, no skills, no gear.
+// A distinct message rather than a half-filled Character: an unset field on this one means the
+// value is genuinely absent, not "the endpoint you called does not send it". `level` is the one
+// denormalisation, so a selector rendering "Sorc — 90" need not pull an entire capture for it.
+message CharacterSummary {
+  string profile = 1;  // KEY: owning profile name
+  Identity identity = 2;
+
+  string name = 3;      // character name
+  int32 class_id = 4;   // D2 class id (0 Amazon, 1 Sorceress, ... 6 Assassin)
+  int32 level = 5;
+
+  google.protobuf.Timestamp updated_at = 6;  // last snapshot received; the freshness signal
+}
+
+// A captured character: the manager's own facts, wrapped around the wearers themselves.
+//
+// It restates nothing the wearers already carry — name, class, flags_ex, area, hand, stats,
+// skills and gear are all `Unit` fields, so `player` IS the character, and a merc is a wearer
+// too. What is left is what the game does not report: which profile owns it, which account and
+// difficulty it was seen on, and the totals the manager accumulates across sessions. Nothing
+// derived is stored either (level is stat 12; hardcore/expansion are char_flags bits).
+message Character {
+  string profile = 1;  // KEY: owning profile name
+
+  Identity identity = 2;  // account, realm, difficulty, char_flags, ladder
+
+  // The player, loaded whole: merged stats, skills and every container. Only GetCharacter
+  // returns this message, and it never half-fills it — a selector that wants rows without
+  // inventories calls ListCharacters and gets CharacterSummary instead.
+  Unit player = 3;
+  Unit merc = 4;  // the mercenary, absent when dismissed; loaded the same way
+
+  string game_id = 5;
+  google.protobuf.Timestamp updated_at = 6;       // last snapshot received (game-side assembly time)
+  google.protobuf.Timestamp area_entered_at = 7;  // manager-stamped time the current area was entered
+
+  // There is deliberately no `online` field; `updated_at` is the freshness signal and liveness
+  // comes from the owning profile's run state. See characters.proto, where one was removed.
+
+  repeated Progression progression = 8;  // one entry per difficulty seen
+  repeated Kill kills = 9;               // lifetime totals, accumulated from per-send deltas
+  repeated AreaTime area_time = 10;      // lifetime time per area (ms)
+}
+
+// Quest/waypoint progression for one difficulty. Doubles as the wire section, where the engine
+// reports only the difficulty it is currently in (leaving `difficulty` at 0 for the manager to
+// fill from identity) — which is why entries for the others persist from when they were played.
+message Progression {
+  int32 difficulty = 1;
+  repeated int32 quests = 2;     // completed quest ids
+  repeated int32 waypoints = 3;  // active waypoint ids
+}
+
+// One kill bucket. Doubles as the wire entry, where only id/spec/count are sent and the manager
+// fills difficulty and super_unique from context. Regular monsters are counted by (class id,
+// SpecType rarity) and super-uniques by SuperUniques.txt index.
+message Kill {
+  int32 difficulty = 1;
+  bool super_unique = 2;  // true: id is a SuperUniques.txt index and spec is 0
+  int32 id = 3;
+  // SpecType bitfield. Champions (2) also carry the boss/unique bit (4), so 6 is a champion,
+  // 4 alone a unique, 8 a minion, 0 normal.
+  int32 spec = 4;
+  int64 count = 5;
+}
+
+message AreaTime {
+  int32 difficulty = 1;
+  int32 area = 2;
+  int64 milliseconds = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+// Which wearer owns a container.
+enum Owner {
+  OWNER_PLAYER = 0;
+  OWNER_MERC = 1;
+}
+
+// A base item's tier. Values match ResurrectedTrade's ItemClass and the order the game's own
+// columns imply (code, then ubercode, then ultracode), so they are semantic rather than
+// arbitrary. Orthogonal to `quality` — tier is a property of the BASE item, quality of the roll.
+enum Tier {
+  TIER_NORMAL = 0;
+  TIER_EXCEPTIONAL = 1;
+  TIER_ELITE = 2;
+}
+
+// Search runs across every stored item, of every character, in every container. Only top-level
+// items match — a socket filler is never a result in its own right, though its stats can count
+// towards its host (see SocketScope).
+//
+// NOTE on the value space: stats are stored RAW — pre nValShift, pre op resolution. Stat ids
+// 6-11 (hp/mana/stamina) are 8.8 fixed point, so "life >= 20" is min_value = 20 << 8. The CLIENT
+// owns that shifting, per stat id, exactly as it owns every other piece of D2 vocabulary here.
+//
+// A match means "has a source of at least this", never "totals at least this". One stat id can
+// appear on several of an item's stat lists, and deciding which currently contribute is the
+// tooltip engine's job; StatListScope narrows which sources count, but nothing sums them.
+//
+// A request the server cannot answer LITERALLY is rejected with InvalidArgument rather than
+// normalised — a repaired filter usually matches MORE than was asked for, which a caller reading
+// results cannot detect. Field comments below say which values are refused.
+message SearchItemsRequest {
+  // ---- identity. AND-ed with each other and with the stat conditions; each repeated field ORs
+  // within itself, and empty means "no filter".
+
+  // Which characters to search, by owning profile name. Empty = every character. Repeated because
+  // the question a reader asks of a bot farm is usually about a SET of mules rather than one or
+  // all of them, and narrowing to one at a time cannot express it.
+  repeated string profiles = 1;
+  //
+  // No `codes` field: a base item is named by its items.txt ROW below rather than by its code,
+  // which is the same axis said twice — and the row is what a capture stores, so the code would
+  // have to be resolved back into one anyway.
+
+  // A BASE ITEM: one items.txt row, e.g. Long Sword. The engine sends this as `Unit.class_id`,
+  // so it is the one axis answerable from a capture alone. "class" is D2 bot vocabulary for an
+  // items.txt row (kolbot's classid, the game's dwClassId), not a table of its own.
+  repeated int32 class_ids = 3;
+
+  // A CATEGORY: ItemTypes.txt rows, e.g. sword / helm / armor. Distinct from class_ids because
+  // it is a different table — a base item points at up to two of these (D2ItemsTxt.wType[2]),
+  // and each one points at up to two PARENTS (D2ItemTypesTxt.nEquiv1/nEquiv2). Two parents makes
+  // the categories a DAG, not a tree, and the second edge is load-bearing rather than exotic:
+  // shield is under both armor and secondary, claw under both melee weapon and assassin item.
+  // Chains run 3-5 deep — sword -> melee weapon -> weapon.
+  //
+  // A match is against an item's whole ANCESTOR SET, which is what lets one row mean "any
+  // polearm" and another "all armour". Note the item itself only stores the LEAF (wType[0] is
+  // `swor`, never `weap`), so comparing the stored value directly would make every interior row
+  // — Weapon, Melee Weapon, Any Armor — match nothing at all. ResurrectedTrade does exactly that
+  // and its broad categories are quietly dead; the closure below is what avoids inheriting it.
+  //
+  // Resolved from the game's data tables at INGEST and stored on the item, along with `tiers` and
+  // the `required_*` bounds below. The tables are the ones embedded in D2ItemToolkit, registered
+  // unconditionally at startup — there is no install to find and so no "tables missing" state to
+  // answer for. A row number this table does not define is a caller error like any other and is
+  // rejected with InvalidArgument, since an unknown row expands to no descendants and would
+  // otherwise answer "no such items" to a filter naming no category at all.
+  //
+  // Ingest, not query time: it is the only point that knows which profile the snapshot came from
+  // and therefore which framework's tables apply. A search with no profile filter spans every
+  // framework at once, and the item table has no framework column to disambiguate with.
+  //
+  // Resolved in the MANAGER, not sent by the engine. wType[0]/wType[1] per item would cost two
+  // ints on every item of every container resend and STILL need ItemTypes.txt, because the
+  // equivalence closure lives in the table rather than on the item.
+  repeated int32 item_types = 4;
+
+  // A TIER: normal / exceptional / elite. Not a quality — an elite Colossus Blade can be magic,
+  // rare or unique, and the two axes are independent. Each tier is a SEPARATE items.txt row with
+  // its own code (`crs` / `7cr`), so a capture already distinguishes them; what it cannot do is
+  // say WHICH tier a row is, since that comes from comparing the row's own code against the
+  // normcode/ubercode/ultracode it carries. Same table dependency as item_types above.
+  repeated Tier tiers = 5;
+
+  repeated int32 qualities = 6;  // 4 magic, 5 set, 6 rare, 7 unique, 8 crafted...
+  // A specific unique or set item. file_index alone is ambiguous — the game overloads it per
+  // quality — and several uniques share one base code, so "the SoJ" is (quality 7, its row)
+  // rather than code 'rin'. Unidentified items carry -1 and never match.
+  repeated SpecificItem specific_items = 7;
+
+  // A specific RUNEWORD, as a runes.txt row. The capture already carries this: on a runeword the
+  // game reuses magic_prefix[0] to hold the runeword's string id instead of an affix index, and
+  // the producer sends the array verbatim. No game tables needed, unlike item_types and tiers.
+  //
+  // Because that slot is OVERLOADED, this filter also requires the runeword flag (0x4000000) —
+  // otherwise a magic item whose prefix index happens to equal a runeword's string id would
+  // match. That is part of what the field means, not a normalisation of the request, so it is
+  // applied rather than demanded of the caller; item_flags_all stays free for other bits.
+  repeated int32 runewords = 8;
+
+  repeated int32 gfx_indexes = 9;  // which random inventory graphic this instance rolled
+  // dwFlags bits: identified 0x10, socketed 0x800, ethereal 0x400000, runeword 0x4000000.
+  optional uint32 item_flags_all = 10;    // bits that must be set
+  optional uint32 item_flags_none = 11;  // bits that must be clear
+
+  // ---- where it sits. "Not the ones I am wearing" is a real operator filter: equipped items
+  // are not mule candidates.
+  //
+  // There is no WEARER filter, and that is a deliberate removal rather than a gap. A mercenary
+  // owns exactly one container — the one it wears — so a wearer was only ever a distinction
+  // WITHIN `equipped`, and as a request-level field it AND-ed with this list: "the merc's gear or
+  // my stash" was inexpressible, while "the merc's gear and my stash" silently returned merc gear
+  // alone. One list saying where to look answers the question the caller actually has, and
+  // `ItemMatch.owner` still says which wearer a result belongs to.
+  // Naming them is the only control over where an item sits. There is deliberately no exclusion
+  // list beside it: with five closed values, "not worn" is the other four, and two fields able to
+  // contradict each other ("stash, but not stash") is a shape a caller can write and the store can
+  // only reject.
+  repeated string containers = 12;  // equipped | inventory | cube | belt | stash; empty = all
+
+  // ---- stats. Every condition and every group must hold. A bare condition is the common case;
+  // a group exists only for counting (OR, at-least-N) and negation.
+  repeated StatCondition conditions = 14;
+  repeated StatConditionGroup groups = 15;
+
+  // ---- what a character could actually wear. Resolved at ingest, so same table dependency as
+  // item_types and tiers; whether a character MEETS a requirement is this bound, per query.
+  //
+  // There is no CLASS restriction filter here, and deliberately so: class is a property of the
+  // item TYPE (D2ItemTypesTxt.nClass), not of the item, so "only what my Amazon can use" is an
+  // item_types filter naming that class's subtree — already expressible.
+  //
+  // required_level is the one value with a CHARACTER dimension. It is the highest requirement the
+  // item imposes across its base and every rolled affix, and an affix carries two of them: a
+  // general level requirement and a class-specific one that applies to characters of its class
+  // (an amulet with +1 Amazon Skills asks differently of an Amazon than of a Sorceress).
+  //
+  // A stored column cannot hold both, and the item does not belong to a character anyway — it
+  // may sit on a mule of any class and is searched across every profile at once — so this takes
+  // the CONSERVATIVE maximum of the two. An item is therefore never claimed usable at a level
+  // where it is not, and may occasionally be claimed unusable a level or two before it becomes
+  // so, for the affixes where the two values differ. Missing an item beats being told to go and
+  // fetch one that cannot be equipped.
+  Int32Range required_level = 16;
+  Int32Range required_strength = 17;
+  Int32Range required_dexterity = 18;
+
+  // The item's own level, as the game rolled it — not a requirement, and not the character's.
+  // What decides which affixes could have appeared, so it is the crafting and rerolling filter.
+  // 13 was `owner`; the highest number moves into the hole so the set stays contiguous.
+  Int32Range item_level = 13;
+
+  // Negative values are rejected, as is a limit above the server's page ceiling: clamping it
+  // would silently drop every item past the ceiling from a page the caller believes is whole.
+  int32 offset = 19;
+  int32 limit = 20;  // 0 = server default
+
+  Ordering ordering = 21;  // absent = the store's own grouping order
+}
+
+// How to order the results.
+//
+// Absent = by character, then container, then position on the grid — how someone reading a page of
+// a mule's contents expects to see it.
+//
+// Whatever is chosen, the position tiebreakers are appended to it rather than replaced. An OFFSET
+// page over a key that is not unique can repeat a row on one page and skip it on the next, and no
+// key offered here is unique: two items can share a required level, a quality, even a stat value.
+message Ordering {
+  oneof by {
+    ItemColumn column = 1;
+    StatOrder stat = 2;
+  }
+
+  // Ascending unless set. Independent of where UNKNOWNS go: an item the sort key is absent from
+  // sorts LAST in both directions, because "does not have this modifier" is never the best match
+  // and an ascending sort that led with them would bury every real answer.
+  bool descending = 3;
+}
+
+// A column stored on the item itself.
+enum ItemColumn {
+  ITEM_COLUMN_REQUIRED_LEVEL = 0;
+  ITEM_COLUMN_REQUIRED_STRENGTH = 1;
+  ITEM_COLUMN_REQUIRED_DEXTERITY = 2;
+  ITEM_COLUMN_QUALITY = 3;
+  ITEM_COLUMN_TIER = 4;
+  ITEM_COLUMN_ITEM_LEVEL = 5;
+  // The HIGH end of each damage line the tooltip draws, resolved at ingest — one per KIND, because
+  // the game draws them as separate lines with separate rules and they are not interchangeable: a
+  // two-handed weapon has no one-hand line at all, and a throwing weapon has a throw line beside
+  // its own. Ordering by one is asking about that line, so a weapon that does not draw it is
+  // absent (and sorts last) rather than being folded in at some other line's number.
+  //
+  // The high end alone, because that is the number weapons are compared on. The store keeps BOTH
+  // ends — a damage line is a range, and half of one answers no question a filter would ask — so
+  // adding a damage range to this request later needs no re-ingest, only a field.
+  //
+  // Not the same question as ordering by stat 21/22. Those are the item's own damage stats, which
+  // is one KIND's pair — a two-hander's damage lives at 23/24 and would be missed entirely — and
+  // the drawn line is the game's arithmetic over them rather than the raw values.
+  //
+  // A throwing potion's line is stored as THROW: the game labels it with the same string (3467),
+  // and it is the only line such an item draws.
+  ITEM_COLUMN_DAMAGE_ONE_HAND_MAX = 6;
+  ITEM_COLUMN_DAMAGE_TWO_HAND_MAX = 7;
+  ITEM_COLUMN_DAMAGE_THROW_MAX = 8;
+}
+
+// Order by a stat the item carries.
+//
+// The value used is the item's BEST single source — a MAX, never a sum — because that is what the
+// filter matched on. A condition means "has a source of at least N" (see the note on the request),
+// so ranking by a total would put an item above the one the filter actually selected it for.
+//
+// `sockets` and `lists` are here for the same reason rather than being inherited from any
+// condition: an ordering scoped more widely than the filter beside it would sort on stats the
+// caller deliberately excluded, and there is no single condition to inherit from anyway once a
+// request carries several.
+// A layer is stated exactly, never as a range: a condition bounds one because a packed layer holds
+// a skill level, but an ORDER over a span of layers ranks by which skill an item happens to carry
+// rather than by anything the reader asked for. Layer 0 is a real layer (the Amazon, and her Bow
+// tab) and an unlayered stat's rows are stored at 0, so absent means "any" and 0 means that one.
+message StatOrder {
+  repeated int32 stat_ids = 1;  // at least one; OR-ed, so they must share a value scale
+
+  optional int32 layer = 2;
+
+  optional SocketScope sockets = 3;  // absent as in StatCondition
+  StatListScope lists = 4;
+  // Ranking by the MERGED surface ranks by the total rather than by the best single source, which
+  // is what a reader comparing two items means. Same exclusions as StatCondition.surface, and the
+  // same refusal when combined with `lists` or SOCKET_SCOPE_FILLERS_ONLY.
+  StatSurface surface = 5;
+}
+
+message SpecificItem {
+  int32 quality = 1;
+  int32 file_index = 2;
+}
+
+// An inclusive bound, either end open. An inverted range is rejected rather than answered empty,
+// as everywhere else in this request.
+message Int32Range {
+  optional int32 min = 1;
+  optional int32 max = 2;
+}
+
+// Whose stat rows can satisfy a condition. The match is always the top-level item; this only
+// decides which rows count towards it — a topaz's magic find sits on the filler, not the helm.
+enum SocketScope {
+  SOCKET_SCOPE_HOST_ONLY = 0;     // the item's own stat lists
+  SOCKET_SCOPE_WITH_FILLERS = 1;  // host plus everything socketed into it
+  SOCKET_SCOPE_FILLERS_ONLY = 2;  // only socketed units — "has a gem or rune granting X"
+}
+
+// Which of an item's stat lists a condition may look at, by the game's own provenance fields.
+//
+// This is the axis a flat stat table cannot express, and it is not decoration: in real captures
+// an item's BASE stats and its AFFIX stats are two lists that BOTH carry state_no 0, separated
+// only by STATLIST_MAGIC — so "base defence only" is unreachable without it.
+//
+// Which way round that bit runs is the trap. 0x40 is the bit the game sets on a unit's GRANTED
+// mods; the base array is not "0x40 absent" by accident but marked in its own right, with
+// STATLIST_EXTENDED (0x80000000). On a Tal Rasha's Crest the 0x40 list holds the set's +45
+// defence and its resists, while the 0x80000000 list holds the base 76 defence and the socket
+// count.
+//
+//   flags_all  = 0x40  ->  granted stats only, base excluded   (STATLIST_MAGIC)
+//   flags_none = 0x40  ->  base item stats only
+//   exclude_states = [165..170]  ->  ignore set bonuses altogether
+//
+// exclude_states filters on the state NUMBER alone — what kind of source a list is — and says
+// nothing about whether that source currently contributes. A partial set's unearned tiers are
+// present in the capture exactly as its earned ones are; separating them is a matter of the
+// STATLIST_* bits in `flags`, and no combination of these fields does it for you.
+//
+// exclude rather than include for states, because a runeword's mods live on their own list
+// (171) and DO contribute — an include-list built for "just the normal stats" would silently
+// drop them. Absent = every list, so the common case says nothing.
+message StatListScope {
+  repeated int32 exclude_states = 1;
+  optional uint32 flags_all = 2;
+  optional uint32 flags_none = 3;
+}
+
+// One condition: some stat row in scope satisfies it.
+//
+// stat_ids OR within a condition and share its bounds, so they must share a value scale — the
+// known fan-outs do (all four resists ride one value, all four attributes another). Two ids that
+// scale differently belong in a min_matches = 1 group as separate conditions.
+//
+// Layers are the stat's sub-index: the class for class-skills, the skill id for +skill, and for
+// chance-to-cast and charges a PACKED skill and level, with the level in the low bits. That
+// packing is why layer_max exists: "skill X at any level" is the contiguous range
+// [skill << shift, (skill << shift) | mask], which stays inside the (stat_id, layer, value)
+// index — an AND-mask would express the same thing but could not use it.
+message StatCondition {
+  repeated int32 stat_ids = 1;  // at least one; a condition naming none is rejected
+
+  optional int32 layer = 2;      // exact sub-index; absent = any
+  // When set, the layer clause becomes layer..layer_max inclusive. It bounds `layer` rather than
+  // standing alone, so setting it without one — or below one — is rejected.
+  optional int32 layer_max = 3;
+
+  // Bounds in the RAW value space. An absent bound is open; max below min is rejected.
+  //
+  // int32, unlike Stat.value: only a WEARER's merged stats need the wider field (experience
+  // overflows int32), and those are not searchable — search runs over item statlists, whose
+  // values are genuinely int32 in the game. Keeping it narrow keeps the generated TypeScript on
+  // `number` instead of `bigint`, which every caller of this field would otherwise have to carry.
+  optional int32 min_value = 4;
+  optional int32 max_value = 5;
+
+  // Absent is NOT the enum.s zero here. On the merged surface HOST_ONLY means "the item without
+  // what is socketed into it", so a caller who simply did not think about sockets would silently
+  // get the narrower total; absent therefore means fillers COUNT. On the raw surface absent reads
+  // as HOST_ONLY, which is the same thing one granularity down: the item.s own sources.
+  optional SocketScope sockets = 6;
+  StatListScope lists = 7;  // absent = any list
+  StatSurface surface = 8;
+}
+
+// Which of an item's two stat surfaces a condition reads.
+//
+// RAW is the statlist rows exactly as captured, and a condition over them means "some SOURCE
+// satisfies this". That is the right question for provenance — "which of my items has a gem
+// granting magic find" — and the wrong one for magnitude: a Tal Rasha's Crest with an Um rune has
+// two sources of All Resistances 15 and no source of 30, so `min_value = 30` finds nothing on an
+// item whose tooltip says 30. Defence is the same shape without any socket involved, since an
+// item's base and its affixes are separate rows.
+//
+// MERGED is what those add up to, resolved the way the game resolves them and stored at ingest by
+// D2ItemToolkit: base plus the item's own nodes plus what its fillers grant, with op 13 applied so
+// Defence is the number drawn rather than the pre-percent base.
+//
+// RAW stays the default so that nothing already expressible changes meaning. Redefining a raw
+// condition to mean the total would alter every existing query silently — "all resistances at most
+// 20" matches that Crest through its 15 row, and would stop. Two surfaces, named per condition, is
+// what a caller can reason about.
+//
+// Three things MERGED cannot answer, all deliberate, all recorded in the schema:
+//
+//   * PACKED encodings — charges, the by-time triples — are absent, because a packed word is not
+//     a quantity and can be neither summed nor compared. Ask RAW for those.
+//   * Earned SET TIER bonuses are excluded, since a tier exists only while the wearer holds the
+//     other pieces; indexing it would make an item's stats change when it is muled.
+//   * A worn set piece's socket fillers ARE counted even though the game sometimes discards them
+//     (ITEM_RecalcAllEquippedItems rebuilds the list without re-applying them). Otherwise an item
+//     would drop out of a search because something equipped it — and the game's own answer is not
+//     stable enough to index anyway: the mods return on a re-socket or re-equip and go on the next
+//     recalc, so one session captured the same equipped helm at All Resistances +15 and at +30.
+//
+// Combining MERGED with `lists` or with SOCKET_SCOPE_FILLERS_ONLY is REJECTED rather than ignored:
+// both select among SOURCES, and a total has none to select among, so honouring the request
+// literally is impossible and quietly dropping it would answer a different question.
+//
+// The other two socket scopes DO mean something here, because the merged surface stores two totals
+// per stat: HOST_ONLY reads the item's own — "30 all resistances of its own" excludes a helm that
+// only reaches 30 with a rune in it — and WITH_FILLERS (the absent default) reads the one the
+// fillers are folded into. That is the same distinction they draw on the raw surface, one
+// granularity down, so it is the same field rather than a second one.
+enum StatSurface {
+  STAT_SURFACE_RAW = 0;
+  STAT_SURFACE_MERGED = 1;
+}
+
+// Conditions of which at least min_matches must hold, optionally negated. Covers OR
+// (min_matches = 1), "at least 2 of these 4", and NOT. Plain AND needs no group — put the
+// conditions directly on the request.
+//
+// There is deliberately no max_matches: an item matching NOTHING never appears in the counting
+// query, so an upper bound could never see the very set the caller meant to include. `negate`
+// with min_matches expresses that intent correctly.
+message StatConditionGroup {
+  repeated StatCondition conditions = 1;  // at least one; an empty group is rejected
+  // Absent = all of them. Present must be 1..conditions: out of range is rejected rather than
+  // clamped, because clamping moves the OTHER side of the complement when `negate` is set.
+  optional int32 min_matches = 2;
+  bool negate = 3;
+}
+
+message SearchItemsResponse {
+  repeated ItemMatch results = 1;
+  int32 total = 2;  // total matches before pagination
+}
+
+message ItemMatch {
+  string profile = 1;
+  Owner owner = 2;
+  string container = 3;  // container name the item sits in
+  int32 page = 4;        // stash page, 0 otherwise
+  Unit item = 5;         // the whole captured item, socket fillers nested
+}

@@ -16,6 +16,7 @@ import "logging.proto";
 import "proxies.proto";
 import "frameworks.proto";
 import "characters.proto";
+import "captures.proto";
 
 // Message color codes (values match reference implementation)
 enum MessageColor {
@@ -77,7 +78,34 @@ message Event {
 
     // Server facts
     ServerInfo server_info = 15;
+
+    // Wire schema v2 captures. The SUMMARY is streamed; the capture itself is not — see below.
+    CapturesSnapshot captures_snapshot = 16;
+    CaptureChanged capture_changed = 17;
   }
+}
+
+// Every captured character, as the list needs them.
+//
+// Summaries rather than captures, and that is the whole design: a v2 capture carries every item's
+// whole stat list chain, which is why it is fetched on demand rather than pushed. Streaming the
+// real thing on every snapshot would move megabytes per profile per game, times however many
+// profiles a manager runs.
+message CapturesSnapshot {
+  repeated d2bot.captures.CharacterSummary characters = 1;
+}
+
+// One profile's capture changed. Just the name — the client refetches the character if it happens
+// to be showing it, and ignores this otherwise.
+//
+// This is what replaces polling. The heavy payload still moves only for the character on screen,
+// but it moves when something actually happened rather than on a timer, so an idle manager is
+// silent and a busy one is current.
+message CaptureChanged {
+  string profile = 1;
+  // The summary too, so the list stays live without a second round trip. A capture always has one
+  // — it is derived from the same row — so this is never a partial stand-in for the character.
+  d2bot.captures.CharacterSummary summary = 2;
 }
 
 // Facts about the running server that are fixed at build time, so the UI can't infer them

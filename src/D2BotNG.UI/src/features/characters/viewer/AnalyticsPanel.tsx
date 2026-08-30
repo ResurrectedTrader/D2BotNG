@@ -6,26 +6,13 @@
  * tables; the manager accumulates both from the engine's per-game reports.
  */
 
-import { useState } from "react";
-import clsx from "clsx";
-import type {
-  Character,
-  MonsterKills,
-  DifficultyKills,
-  AreaTime,
-} from "@/generated/characters_pb";
+import { useCallback, useMemo, useState } from "react";
 import { ConfirmationDialog } from "@/components/ui";
-import { useResetKills } from "@/hooks/useResetKills";
-import { useResetAreaTime } from "@/hooks/useResetAreaTime";
-import { MONSTER_NAMES } from "./data/monsterNames";
+import { DifficultySelector, formatDuration } from "./CharacterChrome";
+import type { AreaDuration, KillCount } from "./contracts";
+import { useGameNames, type GameNames } from "./gameNames";
 import { SUPER_UNIQUE_NAMES } from "./data/superUniqueNames";
 import { AREA_NAMES } from "./data/areaNames";
-
-const DIFFICULTIES = [
-  { id: 0, name: "Normal" },
-  { id: 1, name: "Nightmare" },
-  { id: 2, name: "Hell" },
-] as const;
 
 // SpecType bitfield (engine SPECTYPE_* in Unit.cpp). A champion also carries the boss
 // (unique) bit, so a value can be 6 = champion+boss. Classify each kill into ONE rarity
@@ -47,16 +34,8 @@ function rarityOf(spec: number): (typeof RARITY_ORDER)[number] {
   return "Normal";
 }
 
-/** ms -> compact "1h 23m" / "4m 12s" / "9s". */
-function formatMs(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
-  const s = totalSeconds % 60;
-  const m = Math.floor(totalSeconds / 60) % 60;
-  const h = Math.floor(totalSeconds / 3600);
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
-}
+/** Area time is stored in milliseconds; the viewer's duration format takes seconds. */
+const formatMs = (ms: number) => formatDuration(Math.floor(ms / 1000));
 
 type KillRow = {
   id: number;
@@ -66,98 +45,97 @@ type KillRow = {
 };
 type AreaRow = { id: number; name: string; ms: number };
 
-function killsForDifficulty(
-  kills: MonsterKills | undefined,
-  difficulty: number,
-): DifficultyKills | undefined {
-  if (!kills) return undefined;
-  return difficulty === 1
-    ? kills.nightmare
-    : difficulty === 2
-      ? kills.hell
-      : kills.normal;
-}
-
-function areaForDifficulty(
-  areaTime: AreaTime | undefined,
-  difficulty: number,
-): Record<number, bigint> | undefined {
-  if (!areaTime) return undefined;
-  return difficulty === 1
-    ? areaTime.nightmare
-    : difficulty === 2
-      ? areaTime.hell
-      : areaTime.normal;
-}
-
-function areaRows(map: Record<number, bigint> | undefined): AreaRow[] {
-  if (!map) return [];
-  return Object.entries(map)
-    .flatMap(([id, ms]): AreaRow[] => {
-      const nid = Number(id);
-      const name = AREA_NAMES[nid];
-      const m = Number(ms);
-      return name && m > 0 ? [{ id: nid, name, ms: m }] : []; // skip ids we can't name
-    })
+function areaRows(areaTime: AreaDuration[], difficulty: number): AreaRow[] {
+  const byArea = new Map<number, number>();
+  for (const a of areaTime) {
+    if (a.difficulty !== difficulty) continue;
+    if (!AREA_NAMES[a.area]) continue; // skip ids we can't name
+    byArea.set(a.area, (byArea.get(a.area) ?? 0) + Number(a.milliseconds));
+  }
+  return [...byArea]
+    .filter(([, ms]) => ms > 0)
+    .map(([id, ms]) => ({ id, name: AREA_NAMES[id], ms }))
     .sort((a, b) => b.ms - a.ms);
 }
 
-function classRows(dk: DifficultyKills | undefined): KillRow[] {
-  if (!dk) return [];
-  return Object.entries(dk.byClass)
-    .flatMap(([id, cls]): KillRow[] => {
-      const nid = Number(id);
-      const name = MONSTER_NAMES[nid];
-      if (!name) return []; // skip classes we can't name (internal dummies)
-      // Aggregate the class total plus a by-rarity breakdown (SpecType is a bitfield).
-      let count = 0,
-        uniq = 0,
-        champ = 0,
-        minion = 0;
-      for (const [s, c] of Object.entries(cls.bySpec)) {
-        const n = Number(c);
-        count += n;
-        const rarity = rarityOf(Number(s)); // one bucket per kill (champion != unique)
-        if (rarity === "Champion") champ += n;
-        else if (rarity === "Unique") uniq += n;
-        else if (rarity === "Minion") minion += n;
-      }
-      return count > 0
-        ? [{ id: nid, name, count, breakdown: { uniq, champ, minion } }]
-        : [];
-    })
+function classRows(
+  kills: KillCount[],
+  difficulty: number,
+  names: GameNames,
+): KillRow[] {
+  const byClass = new Map<number, KillRow>();
+  for (const k of kills) {
+    if (k.difficulty !== difficulty || k.superUnique) continue;
+    const name = names.monster(k.id);
+    if (!name) continue; // skip classes we can't name (internal dummies)
+    const row = byClass.get(k.id) ?? {
+      id: k.id,
+      name,
+      count: 0,
+      breakdown: { uniq: 0, champ: 0, minion: 0 },
+    };
+    // Aggregate the class total plus a by-rarity breakdown (SpecType is a bitfield).
+    const n = Number(k.count);
+    row.count += n;
+    const rarity = rarityOf(k.spec); // one bucket per kill (champion != unique)
+    if (rarity === "Champion") row.breakdown!.champ += n;
+    else if (rarity === "Unique") row.breakdown!.uniq += n;
+    else if (rarity === "Minion") row.breakdown!.minion += n;
+    byClass.set(k.id, row);
+  }
+  return [...byClass.values()]
+    .filter((r) => r.count > 0)
     .sort((a, b) => b.count - a.count);
 }
 
-function superRows(dk: DifficultyKills | undefined): KillRow[] {
-  if (!dk) return [];
-  return Object.entries(dk.bySuperUnique)
-    .flatMap(([id, count]): KillRow[] => {
-      const nid = Number(id);
-      const name = SUPER_UNIQUE_NAMES[nid];
-      const c = Number(count);
-      return name && c > 0 ? [{ id: nid, name, count: c }] : []; // skip unnamed
-    })
+function superRows(kills: KillCount[], difficulty: number): KillRow[] {
+  const bySuper = new Map<number, number>();
+  for (const k of kills) {
+    if (k.difficulty !== difficulty || !k.superUnique) continue;
+    if (!SUPER_UNIQUE_NAMES[k.id]) continue; // skip unnamed
+    bySuper.set(k.id, (bySuper.get(k.id) ?? 0) + Number(k.count));
+  }
+  return [...bySuper]
+    .filter(([, count]) => count > 0)
+    .map(([id, count]) => ({ id, name: SUPER_UNIQUE_NAMES[id], count }))
     .sort((a, b) => b.count - a.count);
 }
 
 /** Total kills per rarity (normal/champion/unique/minion) across all named classes. */
 function rarityRows(
-  dk: DifficultyKills | undefined,
+  kills: KillCount[],
+  difficulty: number,
+  names: GameNames,
 ): { name: string; count: number }[] {
-  if (!dk) return [];
   const totals: Record<string, number> = {};
-  for (const [id, cls] of Object.entries(dk.byClass)) {
-    if (!MONSTER_NAMES[Number(id)]) continue; // skip unnamed, consistent with the list
-    for (const [spec, count] of Object.entries(cls.bySpec)) {
-      const r = rarityOf(Number(spec));
-      totals[r] = (totals[r] ?? 0) + Number(count);
-    }
+  for (const k of kills) {
+    if (k.difficulty !== difficulty || k.superUnique) continue;
+    if (!names.monster(k.id)) continue; // skip unnamed, consistent with the list
+    const r = rarityOf(k.spec);
+    totals[r] = (totals[r] ?? 0) + Number(k.count);
   }
   return RARITY_ORDER.filter((r) => (totals[r] ?? 0) > 0).map((r) => ({
     name: r,
     count: totals[r],
   }));
+}
+
+/**
+ * Which difficulties hold anything, as a set.
+ *
+ * Answered once per list rather than per question, because the questions are many — the selector
+ * asks for each of the three difficulties and the two reset buttons ask again — and each answer is
+ * a walk over the character's whole lifetime history. A `.some` short-circuits only where there IS
+ * something to find, so the EMPTY difficulty, the one whose answer is least interesting, is the one
+ * that scans every row.
+ */
+function difficultiesWithData<T extends { difficulty: number }>(
+  rows: T[],
+  nonEmpty: (row: T) => boolean,
+): Set<number> {
+  const out = new Set<number>();
+  for (const row of rows) if (nonEmpty(row)) out.add(row.difficulty);
+  return out;
 }
 
 /** Section heading with an inline total and an optional right-aligned reset button. */
@@ -250,52 +228,101 @@ function KillList({ title, rows }: { title: string; rows: KillRow[] }) {
   );
 }
 
-export function AnalyticsPanel({ character }: { character: Character }) {
-  const activeDifficulty = character.difficulty;
+/**
+ * The two resets are a mutation each stack owns: v1 clears through CharacterService, v2 through
+ * CaptureService. Passed in rather than called here, since the panel has no business knowing
+ * which stack it is showing.
+ */
+export interface AnalyticsResets {
+  /**
+   * Settle when the reset has finished — the dialog stays up, showing pending, until it does.
+   * A rejection is swallowed here because the mutation already reports its own failure; this
+   * only decides when to close.
+   */
+  onReset: () => Promise<unknown>;
+  isPending: boolean;
+}
+
+/** Run a reset, then close its dialog either way. */
+function settle(reset: AnalyticsResets, close: () => void) {
+  void reset
+    .onReset()
+    .catch(() => {})
+    .finally(close);
+}
+
+export function AnalyticsPanel({
+  displayName,
+  activeDifficulty,
+  kills,
+  areaTime,
+  killsReset,
+  areaTimeReset,
+}: {
+  displayName: string;
+  activeDifficulty: number;
+  kills: KillCount[];
+  areaTime: AreaDuration[];
+  killsReset: AnalyticsResets;
+  areaTimeReset: AnalyticsResets;
+}) {
   // Default to the active difficulty; keyed by profile in the parent to re-default per char.
   const [selectedDifficulty, setSelectedDifficulty] =
     useState(activeDifficulty);
   const [killsConfirmOpen, setKillsConfirmOpen] = useState(false);
   const [areaConfirmOpen, setAreaConfirmOpen] = useState(false);
-  const resetKills = useResetKills();
-  const resetAreaTime = useResetAreaTime();
+  const names = useGameNames();
 
-  const kills = character.kills;
-  const areaTime = character.areaTime;
+  const killsPresent = useMemo(
+    () => difficultiesWithData(kills, (k) => k.count > 0n),
+    [kills],
+  );
+  const areaPresent = useMemo(
+    () => difficultiesWithData(areaTime, (a) => a.milliseconds > 0n),
+    [areaTime],
+  );
+  // Stable, because it is a prop of the selector rather than something read here.
+  const hasData = useCallback(
+    (difficulty: number) =>
+      killsPresent.has(difficulty) || areaPresent.has(difficulty),
+    [killsPresent, areaPresent],
+  );
 
-  const killsHasData = (difficulty: number) => {
-    const dk = killsForDifficulty(kills, difficulty);
-    return (
-      !!dk &&
-      (Object.keys(dk.byClass).length > 0 ||
-        Object.keys(dk.bySuperUnique).length > 0)
-    );
-  };
-  const areaHasData = (difficulty: number) => {
-    const m = areaForDifficulty(areaTime, difficulty);
-    return !!m && Object.keys(m).length > 0;
-  };
-  const hasData = (difficulty: number) =>
-    killsHasData(difficulty) || areaHasData(difficulty);
+  const anyKills = killsPresent.size > 0;
+  const anyArea = areaPresent.size > 0;
 
-  const anyKills = killsHasData(0) || killsHasData(1) || killsHasData(2);
-  const anyArea = areaHasData(0) || areaHasData(1) || areaHasData(2);
-
-  const dk = killsForDifficulty(kills, selectedDifficulty);
-  const monsters = classRows(dk);
-  const superUniques = superRows(dk);
-  const rarity = rarityRows(dk);
-  const areas = areaRows(areaForDifficulty(areaTime, selectedDifficulty));
+  // A live v2 character re-fetches its whole capture every time anything about it changes — gold
+  // and experience churn constantly — so every one of these aggregations would otherwise be run
+  // again over the character's entire lifetime kill and area history several times a minute, for
+  // a panel whose contents did not move.
+  const monsters = useMemo(
+    () => classRows(kills, selectedDifficulty, names),
+    [kills, selectedDifficulty, names],
+  );
+  const superUniques = useMemo(
+    () => superRows(kills, selectedDifficulty),
+    [kills, selectedDifficulty],
+  );
+  const rarity = useMemo(
+    () => rarityRows(kills, selectedDifficulty, names),
+    [kills, selectedDifficulty, names],
+  );
+  const areas = useMemo(
+    () => areaRows(areaTime, selectedDifficulty),
+    [areaTime, selectedDifficulty],
+  );
 
   const totalAreaMs = areas.reduce((sum, r) => sum + r.ms, 0);
-  // Grand total across all difficulties, summed the same way as each difficulty's
-  // section total (named areas only) so it equals the sum of the per-difficulty
-  // "Time in Area" totals.
-  const totalPlayedMs = DIFFICULTIES.reduce(
-    (sum, d) =>
-      sum +
-      areaRows(areaForDifficulty(areaTime, d.id)).reduce((s, r) => s + r.ms, 0),
-    0,
+  // Grand total across all difficulties. Counted with the same "named areas only" rule each
+  // difficulty's section total uses, so it equals the sum of the per-difficulty "Time in Area"
+  // totals rather than quietly exceeding them by whatever could not be named.
+  const totalPlayedMs = useMemo(
+    () =>
+      areaTime.reduce(
+        (sum, a) => (AREA_NAMES[a.area] ? sum + Number(a.milliseconds) : sum),
+        0,
+      ),
+    [areaTime],
   );
   const totalKills =
     monsters.reduce((sum, r) => sum + r.count, 0) +
@@ -304,40 +331,12 @@ export function AnalyticsPanel({ character }: { character: Character }) {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="inline-flex gap-0.5 rounded-md bg-zinc-800/60 p-0.5 text-xs">
-          {DIFFICULTIES.map((d) => {
-            // Disable difficulties with no data (the active one stays selectable).
-            const enabled = d.id === activeDifficulty || hasData(d.id);
-            return (
-              <button
-                key={d.id}
-                type="button"
-                disabled={!enabled}
-                onClick={() => setSelectedDifficulty(d.id)}
-                title={
-                  d.id === activeDifficulty
-                    ? "Last seen difficulty"
-                    : enabled
-                      ? undefined
-                      : "No data"
-                }
-                className={clsx(
-                  "relative rounded px-3 py-1 font-medium",
-                  !enabled
-                    ? "cursor-not-allowed text-zinc-600"
-                    : selectedDifficulty === d.id
-                      ? "bg-zinc-700 text-zinc-100"
-                      : "text-zinc-400 hover:text-zinc-200",
-                )}
-              >
-                {d.name}
-                {d.id === activeDifficulty && (
-                  <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-green-500" />
-                )}
-              </button>
-            );
-          })}
-        </div>
+        <DifficultySelector
+          selected={selectedDifficulty}
+          onSelect={setSelectedDifficulty}
+          activeDifficulty={activeDifficulty}
+          hasData={hasData}
+        />
         {totalPlayedMs > 0 && (
           <span
             className="text-xs text-zinc-400"
@@ -417,34 +416,22 @@ export function AnalyticsPanel({ character }: { character: Character }) {
       <ConfirmationDialog
         open={areaConfirmOpen}
         title="Reset area stats"
-        description={`Clear all recorded time-in-area for "${
-          character.charName || character.profile
-        }"?`}
+        description={`Clear all recorded time-in-area for "${displayName}"?`}
         message="This clears time-in-area for every difficulty and cannot be undone."
         confirmLabel="Reset"
-        isPending={resetAreaTime.isPending}
-        onConfirm={() =>
-          resetAreaTime.mutate(character.profile, {
-            onSettled: () => setAreaConfirmOpen(false),
-          })
-        }
+        isPending={areaTimeReset.isPending}
+        onConfirm={() => settle(areaTimeReset, () => setAreaConfirmOpen(false))}
         onCancel={() => setAreaConfirmOpen(false)}
       />
 
       <ConfirmationDialog
         open={killsConfirmOpen}
         title="Reset kills"
-        description={`Clear all recorded kills for "${
-          character.charName || character.profile
-        }"?`}
+        description={`Clear all recorded kills for "${displayName}"?`}
         message="This clears the lifetime kill counts for every difficulty and cannot be undone."
         confirmLabel="Reset"
-        isPending={resetKills.isPending}
-        onConfirm={() =>
-          resetKills.mutate(character.profile, {
-            onSettled: () => setKillsConfirmOpen(false),
-          })
-        }
+        isPending={killsReset.isPending}
+        onConfirm={() => settle(killsReset, () => setKillsConfirmOpen(false))}
         onCancel={() => setKillsConfirmOpen(false)}
       />
     </div>

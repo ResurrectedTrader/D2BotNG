@@ -1,6 +1,7 @@
 /**
  * Skill-tree tabs per character class: skill ids grouped by their in-game skill
- * page (tab), in tab display order. Ids are the raw D2 skill ids (see data/skillNames.ts).
+ * page (tab), in tab display order. Ids are the raw D2 skill ids; `gameNames` turns one into a
+ * name from the game's own tables.
  * Used to group a character's invested skills the way the in-game skill screen does.
  */
 

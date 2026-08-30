@@ -1,205 +1,56 @@
 /**
- * CharacterViewer - the "Character" tab. Selects a live character (from the
- * event stream) and renders, under sub-tabs, its equipment/items, stats &
- * skills, and quest/waypoint progression. Online status is derived live from the
- * owning profile's run state (keyed by profile name) rather than the persisted
- * flag, so the dot is always accurate even for stopped/offline characters.
+ * CharacterViewer — the "Character" tab.
+ *
+ * There are two views because there are two stacks: `StreamedCharacterView` for wire schema v1
+ * (pushed on the event stream) and `CapturedCharacterView` for v2 (pulled from the capture store).
+ * See `contracts.ts` for why neither converts into the other. This shell owns what genuinely is
+ * common — the character list, the selection, and liveness — and renders whichever view the
+ * selected character's schema calls for.
+ *
+ * Online status is derived live from the owning profile's run state (keyed by profile name)
+ * rather than from anything the character sent, so the dot is accurate even for a stopped profile.
+ * Neither message carries an `online` field for exactly that reason.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { TabGroup, TabList, Tab, TabPanels, TabPanel } from "@headlessui/react";
-import { ChevronUpDownIcon, UserIcon } from "@heroicons/react/24/outline";
-import { Card, CardContent, EmptyState } from "@/components/ui";
+import { UserIcon, ChevronUpDownIcon } from "@heroicons/react/24/outline";
+import { EmptyState } from "@/components/ui";
 import { isActive } from "@/features/profiles/profile-states";
-import { useCharacters, useProfiles } from "@/stores/event-store";
-import type { Character, Container } from "@/generated/characters_pb";
-import { StatsPanel } from "./StatsPanel";
-import { SkillsPanel } from "./SkillsPanel";
 import {
-  EquipmentPaperdoll,
-  MercPaperdoll,
-  WeaponSetToggle,
-} from "./EquipmentPaperdoll";
-import { ContainerGrid } from "./ContainerGrid";
-import { ProgressionPanel } from "./ProgressionPanel";
-import { AnalyticsPanel } from "./AnalyticsPanel";
-import { AREA_NAMES } from "./data/areaNames";
-
-const TAB_CLASS =
-  "rounded-md px-3 py-1.5 text-sm font-medium text-zinc-400 outline-none transition-colors hover:text-zinc-200 data-[selected]:bg-zinc-700 data-[selected]:text-zinc-100";
-
-const CLASS_NAMES: Record<number, string> = {
-  0: "Amazon",
-  1: "Sorceress",
-  2: "Necromancer",
-  3: "Paladin",
-  4: "Barbarian",
-  5: "Druid",
-  6: "Assassin",
-};
-
-const DIFFICULTY_NAMES: Record<number, string> = {
-  0: "Normal",
-  1: "Nightmare",
-  2: "Hell",
-};
-
-function findContainer(
-  character: Character,
-  id: string,
-): Container | undefined {
-  return character.containers.find((c) => c.id === id);
-}
-
-function formatLastSeen(character: Character, online: boolean): string {
-  if (online) return "Online";
-  const seconds = character.updatedAt?.seconds;
-  if (seconds === undefined) return "Offline";
-  const when = new Date(Number(seconds) * 1000);
-  return `Last seen ${when.toLocaleString()}`;
-}
-
-function formatDuration(totalSeconds: number): string {
-  const s = totalSeconds % 60;
-  const m = Math.floor(totalSeconds / 60) % 60;
-  const h = Math.floor(totalSeconds / 3600);
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
-}
+  useCapturedSummaries,
+  useCharacters,
+  useProfiles,
+} from "@/stores/event-store";
+import { useCapturedCharacter } from "@/hooks/useCaptures";
+import { useToolkit } from "@/hooks/useToolkit";
+import { StreamedCharacterView } from "./StreamedCharacterView";
+import { CapturedCharacterView } from "./CapturedCharacterView";
 
 /**
- * Live "time in current area" — ticks every second, isolated in its own
- * component so it doesn't re-render the whole viewer (grids etc.). Only rendered
- * while the character is online (a frozen counter would be misleading offline).
+ * A row in the picker. Deliberately the little that both stacks agree on: enough to search,
+ * label and choose, and nothing that would need either schema interpreted to fill in.
  */
-function AreaTimer({ since }: { since?: { seconds: bigint } }) {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((n) => n + 1), 1000);
-    return () => clearInterval(id);
-  }, []);
-  if (!since) return null;
-  const elapsed = Math.floor(Date.now() / 1000 - Number(since.seconds));
-  if (elapsed < 0) return null;
-  return <span className="text-zinc-600"> · {formatDuration(elapsed)}</span>;
-}
-
-/** Compact panel heading (replaces the heavy CardHeader to save vertical space).
- *  Optional right-aligned slot holds panel-level controls (e.g. the weapon set). */
-function PanelTitle({
-  children,
-  right,
-}: {
-  children: string;
-  right?: ReactNode;
-}) {
-  return (
-    <div className="mb-2 flex items-center justify-between gap-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
-        {children}
-      </h3>
-      {right}
-    </div>
-  );
-}
-
-/** Equipment panel: the paperdoll, plus (for expansion chars) the weapon-set
- *  toggle right-aligned in its title. Owns the user's set selection — key this by
- *  profile so it re-defaults to the active set per character but stays put as the
- *  active set flips live. */
-function EquipmentCard({
-  equipped,
-  expansion,
-  activeSet,
-}: {
-  equipped: Container | undefined;
-  expansion: boolean;
-  activeSet: 0 | 1;
-}) {
-  const [selectedSet, setSelectedSet] = useState<0 | 1>(activeSet);
-  return (
-    <Card>
-      <CardContent>
-        <PanelTitle
-          right={
-            expansion ? (
-              <WeaponSetToggle
-                selectedSet={selectedSet}
-                onSelect={setSelectedSet}
-                activeSet={activeSet}
-              />
-            ) : undefined
-          }
-        >
-          Equipment
-        </PanelTitle>
-        <EquipmentPaperdoll
-          equipped={equipped}
-          selectedSet={selectedSet}
-          activeSet={activeSet}
-        />
-      </CardContent>
-    </Card>
-  );
-}
-
-function ModeBadges({ character }: { character: Character }) {
-  const mode = character.mode;
-  if (!mode) return null;
-  return (
-    <div className="flex gap-1">
-      {mode.hardcore && (
-        <span className="rounded bg-red-900/50 px-1 py-0.5 text-[10px] font-medium text-red-300">
-          HC
-        </span>
-      )}
-      {mode.ladder && (
-        <span className="rounded bg-green-900/50 px-1 py-0.5 text-[10px] font-medium text-green-300">
-          Ladder
-        </span>
-      )}
-      {!mode.expansion && (
-        <span className="rounded bg-blue-900/50 px-1 py-0.5 text-[10px] font-medium text-blue-300">
-          Classic
-        </span>
-      )}
-    </div>
-  );
-}
-
-/** A labeled storage grid for the consolidated Items panel. */
-function LabeledGrid({
-  label,
-  container,
-}: {
-  label: string;
-  container: Container;
-}) {
-  return (
-    <div className="shrink-0">
-      <div className="mb-1 whitespace-nowrap text-xs font-medium text-zinc-500">
-        {label}
-      </div>
-      <ContainerGrid container={container} />
-    </div>
-  );
+interface ListEntry {
+  profile: string;
+  charName: string;
+  account: string;
+  realm: string;
+  schema: 1 | 2;
 }
 
 /**
- * The character name, doubling as the character selector: clicking it opens a
- * searchable dropdown of all known characters. Embedded in the header line so it
- * doesn't cost a separate row.
+ * The character name, doubling as the character selector: clicking it opens a searchable dropdown
+ * of all known characters. Embedded in the header line so it doesn't cost a separate row.
  */
 function CharacterSelector({
-  characters,
+  entries,
   selected,
   onSelect,
   isOnline,
 }: {
-  characters: Character[];
-  selected: Character;
+  entries: ListEntry[];
+  selected: ListEntry;
   onSelect: (profile: string) => void;
   isOnline: (profile: string) => boolean;
 }) {
@@ -222,13 +73,13 @@ function CharacterSelector({
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return characters;
-    return characters.filter((c) =>
+    if (!q) return entries;
+    return entries.filter((c) =>
       [c.charName, c.profile, c.account, c.realm].some((s) =>
         s.toLowerCase().includes(q),
       ),
     );
-  }, [characters, search]);
+  }, [entries, search]);
 
   function handleSelect(profile: string) {
     onSelect(profile);
@@ -289,6 +140,10 @@ function CharacterSelector({
                 <span className="flex-1 truncate">
                   {c.charName || c.profile}
                 </span>
+                {/* Both stacks, not just v2: the badge is only informative if its absence means
+                    something, and a list where most rows are unmarked reads as "these are normal
+                    and that one is odd" rather than as two kinds. */}
+                <SchemaBadge schema={c.schema} />
                 {(c.account || c.realm) && (
                   <span className="truncate text-xs text-zinc-500">
                     {[c.account, c.realm].filter(Boolean).join(" · ")}
@@ -308,12 +163,80 @@ function CharacterSelector({
   );
 }
 
+/** Which stack this character came from. Worth surfacing because it explains what the view can
+ *  show: only a v2 capture carries per-item stat lists, so a v1 character has no searchable item
+ *  detail behind it. */
+function SchemaBadge({ schema }: { schema: 1 | 2 }) {
+  return (
+    <span
+      className={clsx(
+        "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+        schema === 2
+          ? "bg-d2-gold/15 text-d2-gold"
+          : "bg-zinc-700/60 text-zinc-400",
+      )}
+      title={
+        schema === 2
+          ? "Wire schema v2 capture — full item detail, pulled on demand"
+          : "Wire schema v1 — streamed live, presentation resolved by the game engine"
+      }
+    >
+      {schema === 2 ? "v2" : "v1"}
+    </span>
+  );
+}
+
+/**
+ * Nothing to show: no character, of either schema, has ever reported.
+ *
+ * It is also the v1 fallback for a selection the stream lookup cannot resolve — a state that does
+ * not arise, since the list and the lookup are both built from the same render's `streamed`. That
+ * branch stays because it is what narrows the selected character to a non-optional one.
+ */
+function NoCharacters() {
+  return (
+    <EmptyState
+      icon={UserIcon}
+      title="No live characters yet"
+      description="Character state appears here once a running profile reports it. Start a profile to begin tracking."
+    />
+  );
+}
+
 export function CharacterViewer() {
-  const characters = useCharacters();
+  const streamed = useCharacters();
   const profiles = useProfiles();
 
-  // Online is derived from the owning profile's run state (keyed by name), so it
-  // tracks start/stop live and never goes stale on a persisted character.
+  // A profile fills exactly one stack — decided by the engine DLL it runs — so the two lists are
+  // normally disjoint. Where they do overlap (a profile that changed engines) v2 wins: it is the
+  // richer capture and the one still being written.
+  const capturedSummaries = useCapturedSummaries();
+
+  const entries = useMemo<ListEntry[]>(() => {
+    const captured = (capturedSummaries ?? []).map<ListEntry>((s) => ({
+      profile: s.profile,
+      charName: s.name,
+      account: s.identity?.account ?? "",
+      realm: s.identity?.realm ?? "",
+      schema: 2,
+    }));
+    const capturedProfiles = new Set(captured.map((c) => c.profile));
+    return [
+      ...captured,
+      ...streamed
+        .filter((c) => !capturedProfiles.has(c.profile))
+        .map<ListEntry>((c) => ({
+          profile: c.profile,
+          charName: c.charName,
+          account: c.account,
+          realm: c.realm,
+          schema: 1,
+        })),
+    ];
+  }, [streamed, capturedSummaries]);
+
+  // Online is derived from the owning profile's run state (keyed by name), so it tracks
+  // start/stop live and never goes stale on a persisted character.
   const onlineProfiles = useMemo(
     () =>
       new Set(
@@ -325,197 +248,112 @@ export function CharacterViewer() {
   );
   const isOnline = (profile: string) => onlineProfiles.has(profile);
 
-  // Online characters first (stable within each group, so the natural order is
-  // otherwise preserved). Drives both the selector dropdown order and the
-  // default selection below.
-  const sortedCharacters = useMemo(
+  // Online characters first (stable within each group, so the natural order is otherwise
+  // preserved). Drives both the dropdown order and the default selection below.
+  const sorted = useMemo(
     () =>
-      [...characters].sort(
+      [...entries].sort(
         (a, b) =>
           (onlineProfiles.has(a.profile) ? 0 : 1) -
           (onlineProfiles.has(b.profile) ? 0 : 1),
       ),
-    [characters, onlineProfiles],
+    [entries, onlineProfiles],
   );
 
   const [selectedProfile, setSelectedProfile] = useState<string | null>(null);
   const selected = useMemo(() => {
-    if (sortedCharacters.length === 0) return undefined;
-    return (
-      sortedCharacters.find((c) => c.profile === selectedProfile) ??
-      sortedCharacters[0]
-    );
-  }, [sortedCharacters, selectedProfile]);
+    if (sorted.length === 0) return undefined;
+    return sorted.find((c) => c.profile === selectedProfile) ?? sorted[0];
+  }, [sorted, selectedProfile]);
 
-  // On entering the view, default to the first online character (falling back to
-  // the first character when none are online). We commit that pick to state once
-  // — rather than leaving the selection implicit — so it stays put as profiles
-  // start/stop and the list re-sorts underneath; the user's later picks win.
+  // A v2 entry is only a summary. The whole capture is a separate pull and the tables it needs to
+  // resolve sprites are a lazy chunk, so both arrive after the list does — and only for v2, so
+  // selecting a v1 character costs neither request.
+  const isCaptured = selected?.schema === 2;
+  const { data: capturedDetail } = useCapturedCharacter(
+    isCaptured ? selected.profile : null,
+  );
+  const engine = useToolkit(!!isCaptured);
+
+  // On entering the view, default to the first online character (falling back to the first
+  // character when none are online). We commit that pick to state once — rather than leaving the
+  // selection implicit — so it stays put as profiles start/stop and the list re-sorts underneath;
+  // the user's later picks win.
+  //
+  // The same commit covers a selection that stops existing — a v1 character can drop out of the
+  // stream. `selected` falls back to the first entry for the render, and without writing that back
+  // the state would go on naming the vanished one, so the view would jump back to it if it ever
+  // returned.
   useEffect(() => {
-    if (selectedProfile !== null || sortedCharacters.length === 0) return;
-    setSelectedProfile(sortedCharacters[0].profile);
-  }, [selectedProfile, sortedCharacters]);
+    if (sorted.length === 0) return;
+    const stillThere = sorted.some((c) => c.profile === selectedProfile);
+    if (selectedProfile !== null && stillThere) return;
+    setSelectedProfile(sorted[0].profile);
+  }, [selectedProfile, sorted]);
+
+  const streamedSelected = useMemo(
+    () =>
+      selected && !isCaptured
+        ? streamed.find((c) => c.profile === selected.profile)
+        : undefined,
+    [selected, isCaptured, streamed],
+  );
 
   if (!selected) {
+    return <NoCharacters />;
+  }
+
+  const selector = (
+    <CharacterSelector
+      entries={sorted}
+      selected={selected}
+      onSelect={setSelectedProfile}
+      isOnline={isOnline}
+    />
+  );
+  const online = isOnline(selected.profile);
+
+  // Neither view below is keyed on the profile. The tab strip lives inside them, so remounting one
+  // per switch would throw a reader on Progression or Analytics back to Inventory; the panels that
+  // genuinely have to re-default per character carry keys of their own instead.
+  if (isCaptured) {
+    // The list knows this character exists before the capture arrives — it is a separate pull, and
+    // the cache is keyed per profile, so EVERY switch to a v2 character passes through here.
+    // Rendering the chrome against a half-filled message would show a level 0 nobody, so the body
+    // waits for the pull; the picker does not, or the reader would lose the only way back out.
+    if (!capturedDetail) {
+      return (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            {selector}
+          </div>
+          <EmptyState
+            icon={UserIcon}
+            title={`Loading ${selected.charName || selected.profile}`}
+            description="Reading the character's capture."
+          />
+        </div>
+      );
+    }
     return (
-      <EmptyState
-        icon={UserIcon}
-        title="No live characters yet"
-        description="Character state appears here once a running profile reports it. Start a profile to begin tracking."
+      <CapturedCharacterView
+        captured={capturedDetail}
+        engine={engine}
+        online={online}
+        selector={selector}
       />
     );
   }
 
-  const online = isOnline(selected.profile);
-  const expansion = selected.mode?.expansion ?? false;
-  // Active weapon set from the snapshot's top-level `hand` (0 primary / 1 secondary).
-  // The WeaponSwitch char flag is lobby-only, so `hand` is the live in-game source.
-  const activeSet: 0 | 1 = selected.hand === 1 ? 1 : 0;
-  const areaName = AREA_NAMES[selected.area];
-  const equipped = findContainer(selected, "equipped");
-  const merc = findContainer(selected, "merc");
-  const inventory = findContainer(selected, "inventory");
-  const cube = findContainer(selected, "cube");
-  const belt = findContainer(selected, "belt");
-  const stashPages = selected.containers
-    .filter((c) => c.id === "stash")
-    .sort((a, b) => a.page - b.page);
+  if (!streamedSelected) {
+    return <NoCharacters />;
+  }
 
   return (
-    <div className="space-y-4">
-      {/* Header — the character name doubles as the selector */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <CharacterSelector
-          characters={sortedCharacters}
-          selected={selected}
-          onSelect={setSelectedProfile}
-          isOnline={isOnline}
-        />
-        <span className="text-sm text-zinc-400">
-          Level {selected.level}
-          {CLASS_NAMES[selected.charClass]
-            ? ` ${CLASS_NAMES[selected.charClass]}`
-            : ""}
-        </span>
-        {DIFFICULTY_NAMES[selected.difficulty] && (
-          <span className="text-xs text-zinc-500">
-            {DIFFICULTY_NAMES[selected.difficulty]}
-          </span>
-        )}
-        {areaName && (
-          <span className="text-xs text-zinc-400">
-            {areaName}
-            {/* The timer only renders when areaEnteredAt is set; the backend clears
-                it on load and stamps it only on a real game/area entry, so it never
-                counts from a stale, previous-session value. */}
-            {online && <AreaTimer since={selected.areaEnteredAt} />}
-          </span>
-        )}
-        <ModeBadges character={selected} />
-        {(selected.account || selected.realm) && (
-          <span className="text-xs text-zinc-500">
-            {[selected.account, selected.realm].filter(Boolean).join(" · ")}
-          </span>
-        )}
-        <span className="ml-auto text-xs text-zinc-500">
-          {formatLastSeen(selected, online)}
-        </span>
-      </div>
-
-      <TabGroup>
-        <TabList className="inline-flex flex-wrap gap-1 rounded-lg bg-zinc-800/60 p-1">
-          <Tab className={TAB_CLASS}>Inventory</Tab>
-          <Tab className={TAB_CLASS}>Stats &amp; Skills</Tab>
-          <Tab className={TAB_CLASS}>Progression</Tab>
-          <Tab className={TAB_CLASS}>Analytics</Tab>
-        </TabList>
-        <TabPanels className="mt-4">
-          {/* Inventory: equipment + merc paperdolls, then all stored items in one full-width panel.
-              Kept mounted so the weapon-set toggle selection survives tab switches. */}
-          <TabPanel unmount={false}>
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-start justify-center gap-4">
-                <EquipmentCard
-                  key={selected.profile}
-                  equipped={equipped}
-                  expansion={expansion}
-                  activeSet={activeSet}
-                />
-                {merc && merc.items.length > 0 && (
-                  <Card>
-                    <CardContent>
-                      <PanelTitle>Mercenary</PanelTitle>
-                      <MercPaperdoll merc={merc} />
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
-
-              <Card>
-                <CardContent>
-                  <PanelTitle>Items</PanelTitle>
-                  <div className="flex flex-wrap items-start justify-center gap-x-8 gap-y-6">
-                    {inventory && (
-                      <LabeledGrid label="Inventory" container={inventory} />
-                    )}
-                    {cube && (
-                      <LabeledGrid label="Horadric Cube" container={cube} />
-                    )}
-                    {belt && <LabeledGrid label="Belt" container={belt} />}
-                    {stashPages.map((page) => (
-                      <LabeledGrid
-                        key={page.page}
-                        label={
-                          stashPages.length > 1
-                            ? page.name || `Stash ${page.page + 1}`
-                            : "Stash"
-                        }
-                        container={page}
-                      />
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </TabPanel>
-
-          {/* Stats + skills */}
-          <TabPanel>
-            <div className="space-y-4">
-              <Card>
-                <CardContent>
-                  <PanelTitle>Stats</PanelTitle>
-                  <StatsPanel character={selected} />
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent>
-                  <PanelTitle>Skills</PanelTitle>
-                  <SkillsPanel character={selected} />
-                </CardContent>
-              </Card>
-            </div>
-          </TabPanel>
-
-          {/* Progression: quests + waypoints, per difficulty (defaults to current) */}
-          <TabPanel>
-            <Card>
-              <CardContent>
-                <ProgressionPanel key={selected.profile} character={selected} />
-              </CardContent>
-            </Card>
-          </TabPanel>
-
-          {/* Analytics: time-in-area + monster/super-unique kills, per difficulty */}
-          <TabPanel>
-            <Card>
-              <CardContent>
-                <AnalyticsPanel key={selected.profile} character={selected} />
-              </CardContent>
-            </Card>
-          </TabPanel>
-        </TabPanels>
-      </TabGroup>
-    </div>
+    <StreamedCharacterView
+      character={streamedSelected}
+      online={online}
+      selector={selector}
+    />
   );
 }

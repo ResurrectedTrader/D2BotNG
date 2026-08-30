@@ -8,14 +8,21 @@ namespace D2BotNG.Data;
 /// </summary>
 public class Paths
 {
-    private readonly SettingsRepository _settingsRepository;
     public string BasePath { get; private set; }
 
     public Paths(SettingsRepository settingsRepository)
     {
-        _settingsRepository = settingsRepository;
         BasePath = ResolveBasePath(settingsRepository.Current);
-        _settingsRepository.SettingsChanged += (_, settings) => BasePath = ResolveBasePath(settings);
+        settingsRepository.SettingsChanged += (_, settings) => BasePath = ResolveBasePath(settings);
+    }
+
+    /// <summary>
+    /// A fixed base path, for callers that are not settings-driven — a test pointing a store at
+    /// a temp directory, rather than the running manager's data folder.
+    /// </summary>
+    public Paths(string basePath)
+    {
+        BasePath = basePath;
     }
 
     private static string ResolveBasePath(Settings settings) =>
