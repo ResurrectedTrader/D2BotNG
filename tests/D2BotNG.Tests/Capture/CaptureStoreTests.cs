@@ -306,8 +306,10 @@ public class CaptureStoreTests : IDisposable
         // reaches 30 with a rune in it — while its own 15 still matches at 15.
         StatCondition Own(int min) => new()
         {
-            StatIds = { 39 }, MinValue = min,
-            Surface = StatSurface.Merged, Sockets = SocketScope.HostOnly,
+            StatIds = { 39 },
+            MinValue = min,
+            Surface = StatSurface.Merged,
+            Sockets = SocketScope.HostOnly,
         };
         Assert.Equal(0, _store.SearchItems(
             new SearchItemsRequest { Conditions = { Own(30) } }).Total);
@@ -381,7 +383,9 @@ public class CaptureStoreTests : IDisposable
 
         StatCondition Merged(params int[] statIds) => new()
         {
-            StatIds = { statIds }, MinValue = 1, Surface = StatSurface.Merged,
+            StatIds = { statIds },
+            MinValue = 1,
+            Surface = StatSurface.Merged,
         };
 
         var atLeastTwo = new SearchItemsRequest

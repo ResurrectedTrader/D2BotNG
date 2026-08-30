@@ -157,9 +157,14 @@
   <!--
     Auto-format C# code before compilation.
     Enable with: dotnet build -p:RunFormat=true
+
+    The SOLUTION, not this project, because that is what CI verifies: the Format C# job runs
+    `dotnet format` over D2BotNG.sln in verify mode, which covers the test project too. Formatting
+    only this one left the tests unformatted however often this was run, and the first anyone knew
+    of it was that job failing.
   -->
   <Target Name="FormatCode" BeforeTargets="BeforeBuild" Condition="'$(RunFormat)' == 'true'" Outputs=".format-always-run">
-    <Exec Command="dotnet format $(MSBuildProjectFullPath) --verbosity quiet --no-restore" ContinueOnError="true" />
+    <Exec Command="dotnet format $(MSBuildThisFileDirectory)..\..\D2BotNG.sln --verbosity quiet --no-restore" ContinueOnError="true" />
   </Target>
 
   <!--
