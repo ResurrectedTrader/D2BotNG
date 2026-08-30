@@ -89,7 +89,10 @@ public static class Extensions
         var windows = proc.TopLevelWindows;
         if (windows.Count == 0)
         {
-            Logger.Warning("SendMessage: no top-level windows found for PID {Pid}", proc.Id);
+            // Debug: this is the already-exited process case, not a fault — a launched game
+            // always has a window. Keeping the routing entry alive through teardown means a
+            // queued reply to a game that has since died lands here routinely.
+            Logger.Debug("SendMessage: no top-level windows found for PID {Pid}", proc.Id);
             return false;
         }
 
@@ -101,6 +104,24 @@ public static class Extensions
         {
             if (SendCopyData(hwnd, messageType, data)) anySucceeded = true;
         }
+
+        // Note what this return actually means. SendMessageTimeout reports whether the *send*
+        // completed; the window's own answer goes to lpdwResult, which SendCopyData discards. A
+        // window with no D2BS hook runs DefWindowProc, returns promptly, and counts as a success.
+        // So "true" means "some window of this process pumped the message", NOT "D2BS took it" —
+        // and a false is a hung or vanished window, not an unhooked one.
+        //
+        // Not logged as a fault at any level, even in aggregate: the states that produce it are a
+        // game mid-launch and a game being torn down, both routine, and at fleet scale warning on
+        // them filled the console during exactly the restart burst a user is already worried
+        // about. Callers that can attribute it to a profile report it instead — see
+        // ProfileEngine.SendAndReport and the handoff adoption path.
+        if (!anySucceeded)
+        {
+            Logger.Debug("No window of PID {Pid} pumped {MessageType} ({Count} tried)",
+                proc.Id, messageType, windows.Count);
+        }
+
         return anySucceeded;
     }
 
@@ -137,7 +158,11 @@ public static class Extensions
 
                 if (result == 0)
                 {
-                    Logger.Warning("Failed to send WM_COPYDATA to {Hwnd}", hwnd);
+                    // Debug, not Warning: this means the window didn't pump within the timeout,
+                    // which for a broadcast across every top-level window a game owns is routine
+                    // — some are transient, and a game mid-launch or mid-teardown pumps none.
+                    // The aggregate in SendMessage is where a real failure is judged.
+                    Logger.Debug("Window {Hwnd} did not pump WM_COPYDATA within the timeout", hwnd);
                     return false;
                 }
 

@@ -38,7 +38,7 @@ public class ProfileEngine
     /// In this mode, <see cref="StopAllAsync"/> skips game termination so the children
     /// survive the predecessor's shutdown and stay assigned to the now-successor-owned job.
     /// </summary>
-    private bool _handoffInProgress;
+    private volatile bool _handoffInProgress;
 
     /// <summary>
     /// Cached from settings; passed to each launched game as -noanalytics. Volatile like
@@ -144,6 +144,58 @@ public class ProfileEngine
     }
 
     /// <summary>
+    /// Re-points a profile's routing entry at the window its game actually owns, if the one we
+    /// registered has gone stale. Returns true when something was repaired.
+    /// </summary>
+    /// <remarks>
+    /// A wrong routing entry and a dead bot look identical from the watchdog's side: no
+    /// heartbeats arrive either way. The difference is that a wrong entry is ours to fix, and
+    /// killing a healthy game over it is the worst possible response — at fleet scale it is a
+    /// mass restart a minute after an update.
+    /// <para>
+    /// The case this exists for is adoption. A successor restores the routing entry from the
+    /// predecessor's manifest, so it inherits whatever the predecessor believed — and a
+    /// predecessor built before the handle was tracked on the instance reverse-looked it up out
+    /// of a map that leaked a dead row per game exit, returning an arbitrary one. Every update
+    /// from such a build hands its successor a handle that may name a window that no longer
+    /// exists, which is not something the successor can fix by being correct itself.
+    /// </para>
+    /// </remarks>
+    private bool RepairRoutingIfStale(ProfileInstance instance, Process process)
+    {
+        nint liveWindow;
+        try
+        {
+            liveWindow = process.GameWindow;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not read game window for {Name} while checking routing", instance.ProfileName);
+            return false;
+        }
+
+        // No game window means there is nothing to route to — that is a real fault, not a
+        // routing problem, so let the watchdog handle it.
+        if (liveWindow == 0) return false;
+
+        if (instance.GameWindowHandle == liveWindow
+            && _handleToProfile.TryGetValue(liveWindow, out var mapped)
+            && mapped == instance.ProfileName)
+        {
+            return false;
+        }
+
+        _logger.LogWarning(
+            "Profile {Name} went quiet while routed to window {Registered}, but its game owns {Live} — " +
+            "re-registering; messages from it were being discarded",
+            instance.ProfileName, instance.GameWindowHandle, liveWindow);
+
+        UnregisterHandles(instance);
+        RegisterHandle(instance, liveWindow);
+        return true;
+    }
+
+    /// <summary>
     /// Removes every routing entry for a profile. Uses the stored handle rather than re-reading
     /// <c>Process.GameWindow</c>: that enumerates windows owned by the pid, so once the process
     /// has exited it returns 0 and the removal silently no-ops, leaking the entry for the life
@@ -242,19 +294,50 @@ public class ProfileEngine
 
         _logger.LogDebug("Stopping profile {Name} (caller: {Caller})", profileName, caller);
 
-        await NotifyProfileStateChangedAsync(profileName);
-
-        instance.CancelRun();
-
-        // Unregister handle before terminating
-        UnregisterHandles(instance);
-
-        if (instance.Process != null)
+        // Marked as soon as the decision is made, not just around the kill: the notify below
+        // builds a state snapshot via Process.GameWindow, an EnumWindows sweep of the whole
+        // session, and at fleet scale 160 of those are long enough for a dying bot's messages to
+        // slip past the guard.
+        instance.BeginTeardown();
+        try
         {
-            await _processManager.TerminateAsync(
-                instance.Process,
-                TimeSpan.FromSeconds(5),
-                cancellationToken);
+            await NotifyProfileStateChangedAsync(profileName);
+
+            instance.CancelRun();
+
+            try
+            {
+                if (instance.Process != null)
+                {
+                    await _processManager.TerminateAsync(
+                        instance.Process,
+                        TimeSpan.FromSeconds(5),
+                        cancellationToken);
+                }
+            }
+            catch (Exception ex)
+            {
+                // TerminateAsync can throw (access denied, or a concurrent SetGameProcess
+                // disposing the object mid-kill). Reaching Stopped matters more than the kill
+                // succeeding: Stopping only ever transitions to Stopped, so letting this escape
+                // would strand the profile in a state nothing can leave, holding its key, with
+                // the routing row leaked and every later message from that handle ignored.
+                _logger.LogError(ex, "Failed to terminate the game for {Name}; stopping anyway",
+                    profileName);
+            }
+
+            // Drop the routing entry only once the game is gone. Doing it first left the bot
+            // talking for the whole WM_CLOSE grace with nowhere to route to, so an ordinary Stop
+            // All produced a burst of "unknown window handle" warnings about messages we had
+            // stopped listening for on purpose.
+            UnregisterHandles(instance);
+        }
+        finally
+        {
+            // Paired here rather than inside UnregisterHandles: that is called from five places,
+            // only three of which are teardowns, so clearing it there let an unrelated caller (a
+            // routing repair, or the other of two overlapping teardowns) drop the guard early.
+            instance.EndTeardown();
         }
 
         await instance.TransitionToAsync(RunState.Stopped);
@@ -334,12 +417,49 @@ public class ProfileEngine
     public bool SendMessage(string profileName, MessageType messageType, string message)
     {
         if (!_instances.TryGetValue(profileName, out var instance)) return false;
-        return instance.Process?.SendMessage(messageType, message) ?? false;
+        // Always reported: this overload only ever carries a user or operator action.
+        return SendAndReport(instance, messageType, message, suppressWhileTearingDown: false);
     }
 
     public bool SendMessage(nint handle, MessageType messageType, string message)
     {
-        return GetInstanceByHandle(handle)?.Process?.SendMessage(messageType, message) ?? false;
+        var instance = GetInstanceByHandle(handle);
+        // Suppressed during teardown: this overload carries replies to a bot, and a bot on its way
+        // out routinely asks for one it will never read.
+        return instance != null && SendAndReport(instance, messageType, message, suppressWhileTearingDown: true);
+    }
+
+    /// <summary>
+    /// Sends to a profile's game and reports a total delivery failure, naming the profile.
+    /// </summary>
+    /// <remarks>
+    /// These two overloads carry the messages a *user or script action* turns into — Trigger Mule,
+    /// Discord /mule, a legacy emit, a reply to a script that is blocked waiting for it. Every one
+    /// of their callers discards the bool and reports success regardless, so without this a mule
+    /// that never arrived left no evidence anywhere. The per-window failures underneath are Debug
+    /// on purpose (see Extensions.SendMessage); this is the aggregate, and it is a real fault.
+    /// </remarks>
+    /// <param name="instance">The profile whose game should receive the message.</param>
+    /// <param name="messageType">WM_COPYDATA dwData value.</param>
+    /// <param name="message">Payload.</param>
+    /// <param name="suppressWhileTearingDown">
+    /// Set only for bot replies. A dying bot's parting "retrieve"/"getProfile" is answered into a
+    /// window that is already going away, and warning per message would put back the Stop All
+    /// console wall this change removes. Never set for a user action: Trigger Mule and /mule both
+    /// report success regardless of the result, so this warning is their only evidence.
+    /// </param>
+    private bool SendAndReport(
+        ProfileInstance instance, MessageType messageType, string message, bool suppressWhileTearingDown)
+    {
+        if (instance.Process?.SendMessage(messageType, message) == true) return true;
+
+        if (!(suppressWhileTearingDown && instance.TearingDown))
+        {
+            _logger.LogWarning("Profile {Name} did not accept {MessageType} — its game may be gone or unresponsive",
+                instance.ProfileName, messageType);
+        }
+
+        return false;
     }
 
     #region Key Management
@@ -645,6 +765,11 @@ public class ProfileEngine
         // one that started and later failed. Only the former consumes the retry budget.
         var launchFailed = false;
 
+        // The process THIS run launched, so the catch below can tell it apart from whatever
+        // instance.Process happens to hold by then — a later run can have replaced (and disposed)
+        // it, and killing that one would take down a game this run never owned.
+        Process? launched = null;
+
         try
         {
             var profile = await _profileRepository.GetByKeyAsync(profileName);
@@ -786,6 +911,7 @@ public class ProfileEngine
                 throw;
             }
 
+            launched = gameProcess;
             instance.SetGameProcess(gameProcess);
 
             // Register handle for message routing
@@ -815,8 +941,64 @@ public class ProfileEngine
         {
             _logger.LogError(ex, "Error running profile {Name}", profileName);
 
+            // Kill the game before recovering. Every step after the launch runs with a live
+            // process, so abandoning it here and letting HandleCrashAsync start a fresh one
+            // leaves an orphan holding this profile's CD key and window with no manager
+            // attached — invisible in the UI, and it survives until something kills the job.
+            //
+            // Only the process THIS run launched, and only if it is still the instance's current
+            // one. A later run can have replaced and disposed it in the meantime, and killing
+            // that would take down a healthy game this run never owned.
+            //
+            // Not during a handoff, for the same reason StopAllAsync bails — a game the successor
+            // is about to adopt must survive. QuiesceForHandoff cancels every run token, so a
+            // monitor normally leaves via the OperationCanceledException catch above and never
+            // reaches here; this covers the other exceptions, which cancellation does not
+            // preempt. Note the flag is only set once the successor signals Adopted, so it does
+            // not cover the earlier part of a handoff — that gap is pre-existing and shared with
+            // the watchdog, which has no such guard at all.
+            if (!_handoffInProgress && launched is { } orphan && ReferenceEquals(instance.Process, orphan))
+            {
+                // Guarded like the other two teardowns. This kill can block for the full WM_CLOSE
+                // grace with the routing entry still live and the state still Running — long
+                // enough for the dying bot's restartProfile to start a fresh game, which the
+                // UnregisterHandles below would then strip of its routing while SetErrorAsync and
+                // HandleCrashAsync launched a second one on top of it.
+                instance.BeginTeardown();
+                try
+                {
+                    // No HasExited pre-check: TerminateAsync already starts with one, wrapped
+                    // against the InvalidOperationException a disposed or never-started Process
+                    // throws. Checking here instead put that throw inside our catch and reported
+                    // an already-dead game — the common case after a failed run — as a warning.
+                    await _processManager.TerminateAsync(
+                        orphan, TimeSpan.FromSeconds(5), cancellationToken);
+                }
+                catch (Exception terminateEx)
+                {
+                    _logger.LogWarning(terminateEx,
+                        "Could not terminate the game for {Name} after a run error; it may be orphaned",
+                        profileName);
+                }
+                finally
+                {
+                    instance.EndTeardown();
+                }
+            }
+
             // Clean up handle mapping
             UnregisterHandles(instance);
+
+            // Someone may have stopped the profile while we were killing its game — the terminate
+            // above can hold this for the full WM_CLOSE grace. SetErrorAsync assigns State
+            // directly, bypassing IsValidTransition, so without this it would drag a completed
+            // stop back out of Stopped and HandleCrashAsync would bill the user a crash for it.
+            // Mirrors the guard in KillUnresponsiveAndRecoverAsync.
+            if (instance.State == RunState.Stopped)
+            {
+                _logger.LogDebug("Profile {Name} was stopped while its failed run was cleaned up", profileName);
+                return;
+            }
 
             await instance.SetErrorAsync(ex.Message);
             await NotifyProfileStateChangedAsync(profileName);
@@ -928,6 +1110,11 @@ public class ProfileEngine
             // while still retrying enough for a D2BS window that wasn't ready at launch.
             if (!instance.LastHeartbeat.HasValue && handleResends < maxHandleResends)
             {
+                // Not reported when it fails: delivery here means a window pumped the message,
+                // not that D2BS took it (see Extensions.SendMessage), so this cannot distinguish
+                // "the DLL never hooked" — the case worth telling a user about — from a game that
+                // is simply still loading. The heartbeat watchdog is what notices a bot that
+                // never reports in.
                 process.SendMessage((MessageType)_messageWindow.Handle, "Handle");
                 handleResends++;
             }
@@ -983,6 +1170,16 @@ public class ProfileEngine
                 }
 
                 var elapsed = (now - (instance.LastHeartbeat ?? instance.StartedAt!.Value)).TotalSeconds;
+                if (heartbeatEnabled && elapsed > heartbeatTimeout
+                    && RepairRoutingIfStale(instance, process))
+                {
+                    // We were listening on the wrong window, so the silence says nothing about
+                    // the bot. Give it another interval on the repaired route before counting a
+                    // miss, and re-push our handle in case the game is still aimed elsewhere.
+                    process.SendMessage((MessageType)_messageWindow.Handle, "Handle");
+                    elapsed = 0;
+                }
+
                 if (heartbeatEnabled && elapsed > heartbeatTimeout)
                 {
                     process.SendMessage((MessageType)_messageWindow.Handle, "Handle");
@@ -1054,16 +1251,53 @@ public class ProfileEngine
         ProfileInstance instance, Process process, string reason, CancellationToken cancellationToken)
     {
         _logger.LogWarning("Profile {Name} {Reason}, treating as crash", instance.ProfileName, reason);
-        UnregisterHandles(instance);
 
-        // Kill the unresponsive process. Pass the cancellation token so that if the user
-        // clicks Stop while we're waiting out the WM_CLOSE grace period, the wait aborts
-        // and we force-kill immediately instead of sitting through up to 5s of sleep.
-        await _processManager.TerminateAsync(process, TimeSpan.FromSeconds(5), cancellationToken);
-
-        // Treat as crash — restart instead of stopping.
+        // Marked before the kill, not after, and deliberately without touching RunState: the
+        // routing entry now outlives the process, so the dying bot's last messages are
+        // dispatched, and this is what tells D2BSMessageHandler to ignore the lifecycle ones
+        // among them. Leaving the state at Running through the kill also keeps the UI's Start
+        // button rejected (Running -> Starting is illegal, Error -> Starting is not), so a
+        // second game cannot be launched on top of the one we are killing.
         instance.MissedHeartbeats = 0;
         instance.UnresponsiveSince = null;
+
+        instance.BeginTeardown();
+        try
+        {
+            // Kill the unresponsive process. Pass the cancellation token so that if the user
+            // clicks Stop while we're waiting out the WM_CLOSE grace period, the wait aborts
+            // and we force-kill immediately instead of sitting through up to 5s of sleep.
+            await _processManager.TerminateAsync(process, TimeSpan.FromSeconds(5), cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // Same reasoning as StopProfileAsync: recovery matters more than the kill. Letting
+            // this escape skips the unregister and the restart below, leaving a live, routed,
+            // unmonitored game that no longer recovers on its own.
+            _logger.LogError(ex, "Failed to kill the unresponsive game for {Name}; recovering anyway",
+                instance.ProfileName);
+        }
+        finally
+        {
+            instance.EndTeardown();
+        }
+
+        // Unregister after the kill, as StopProfileAsync does. We concluded this game was hung,
+        // but if it manages to say anything on the way out it is still telling us something true
+        // — an item it just found, a run it finished, a console line — and there is no reason to
+        // discard that.
+        UnregisterHandles(instance);
+
+        // Someone else may have finished stopping this profile while we were killing it. Bail
+        // rather than call SetErrorAsync, which assigns State directly and would otherwise drag
+        // a completed stop back out of Stopped into Error with nothing left to restart it.
+        if (instance.State == RunState.Stopped)
+        {
+            _logger.LogDebug("Profile {Name} was stopped while being killed; skipping crash recovery",
+                instance.ProfileName);
+            return;
+        }
+
         await instance.SetErrorAsync(reason);
         await NotifyProfileStateChangedAsync(instance.ProfileName);
         await HandleCrashAsync(instance, cancellationToken);

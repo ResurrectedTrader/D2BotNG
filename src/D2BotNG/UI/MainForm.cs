@@ -2,6 +2,7 @@ using System.Text.Json;
 using D2BotNG.Core.Protos;
 using D2BotNG.Data;
 using D2BotNG.Engine;
+using D2BotNG.Logging;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 using static D2BotNG.Windows.NativeMethods;
@@ -12,13 +13,16 @@ namespace D2BotNG.UI;
 
 public class MainForm : Form
 {
+    private static readonly Serilog.ILogger Logger = TrackingLoggerFactory.ForContext(typeof(MainForm));
+
     // ReSharper disable InconsistentNaming — Win32 API constants
     private const int WM_SYSCOMMAND = 0x112;
     private const int SC_MINIMIZE = 0xF020;
     private const int WM_EXITSIZEMOVE = 0x232;
     // ReSharper restore InconsistentNaming
 
-    private readonly WebView2 _webView;
+    // Not readonly: a failed initialization is retried on a fresh control (see RecreateWebView).
+    private WebView2 _webView;
     private readonly NotifyIcon _trayIcon;
     private readonly ContextMenuStrip _trayMenu;
     private readonly string _serverUrl;
@@ -110,41 +114,125 @@ public class MainForm : Form
 
     private async void OnFormLoad(object? sender, EventArgs e)
     {
+        // Retried rather than fatal. One WebView2 user data folder is served by one browser
+        // process, and a client whose browser process goes away mid-initialization gets
+        // RPC_E_DISCONNECTED (0x80010108). Handoff creates exactly that window: the successor
+        // builds its environment while the predecessor is still unwinding and releasing its own.
+        // Failing once used to leave a permanently blank window over a perfectly healthy server.
+        const int maxAttempts = 4;
+
+        while (true)
+        {
+            for (var attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    await InitializeWebViewAsync();
+                    return;
+                }
+                catch (Exception ex) when (attempt < maxAttempts)
+                {
+                    Logger.Warning(ex,
+                        "WebView2 initialization attempt {Attempt}/{Max} failed, retrying", attempt, maxAttempts);
+
+                    // Linear backoff: the predecessor's browser process needs long enough to
+                    // finish exiting so our next attempt spawns a fresh one instead of
+                    // attaching to the corpse.
+                    await Task.Delay(TimeSpan.FromMilliseconds(750 * attempt));
+                    RecreateWebView();
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error(ex, "WebView2 initialization failed after {Max} attempts", maxAttempts);
+
+                    var choice = MessageBox.Show(
+                        $"Failed to initialize WebView2: {ex.Message}\n\n" +
+                        "The bot manager itself is still running and your profiles are unaffected — " +
+                        "this is only the window.\n\n" +
+                        "Retry, or Cancel to keep running without the UI (the web interface is still " +
+                        $"available at {_serverUrl}).",
+                        "Error",
+                        MessageBoxButtons.RetryCancel,
+                        MessageBoxIcon.Error);
+
+                    if (choice != DialogResult.Retry) return;
+                    RecreateWebView();
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Replaces the WebView2 control with a fresh one before an initialization retry.
+    /// </summary>
+    /// <remarks>
+    /// A control remembers the environment handed to its first
+    /// <c>EnsureCoreWebView2Async</c> call and rejects a different one afterwards. Since a retry
+    /// exists precisely to get away from an environment whose browser process died, the control
+    /// has to go with it — otherwise the second attempt fails on the stale binding rather than
+    /// on whatever we were retrying.
+    /// </remarks>
+    private void RecreateWebView()
+    {
         try
         {
-            // Place WebView2's user data (cache, cookies, IndexedDB, crash dumps) under
-            // %LOCALAPPDATA%\D2BotNG\WebView2 instead of next to the exe (which is the
-            // default and litters the install directory with a *.exe.WebView2 folder).
-            var userDataFolder = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "D2BotNG",
-                "WebView2");
-            Directory.CreateDirectory(userDataFolder);
-            var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
-            await _webView.EnsureCoreWebView2Async(env);
-
-            // Configure WebView2
-            _webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
-            _webView.CoreWebView2.Settings.AreDevToolsEnabled = true;
-
-            // Listen for messages from web app
-            _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
-
-            // Navigate to server
-            _webView.CoreWebView2.Navigate(_serverUrl);
-
-            // Bring window to front after WebView2 init
-            Activate();
-            BringToFront();
+            Controls.Remove(_webView);
+            _webView.Dispose();
         }
         catch (Exception ex)
         {
-            MessageBox.Show(
-                $"Failed to initialize WebView2: {ex.Message}\n\nPlease ensure WebView2 Runtime is installed.",
-                "Error",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
+            Logger.Warning(ex, "Failed to dispose WebView2 control before retry");
         }
+
+        _webView = new WebView2 { Dock = DockStyle.Fill };
+        Controls.Add(_webView);
+    }
+
+    private async Task InitializeWebViewAsync()
+    {
+        var env = await CoreWebView2Environment.CreateAsync(null, ResolveUserDataFolder());
+        await _webView.EnsureCoreWebView2Async(env);
+
+        // Configure WebView2
+        _webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
+        _webView.CoreWebView2.Settings.AreDevToolsEnabled = true;
+
+        // Listen for messages from web app
+        _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+
+        // Navigate to server
+        _webView.CoreWebView2.Navigate(_serverUrl);
+
+        // Bring window to front after WebView2 init
+        Activate();
+        BringToFront();
+    }
+
+    /// <summary>
+    /// Where WebView2 keeps its cache, cookies, IndexedDB and crash dumps.
+    /// </summary>
+    /// <remarks>
+    /// Under %LOCALAPPDATA%\D2BotNG rather than next to the exe, which is the default and
+    /// litters the install directory with a *.exe.WebView2 folder.
+    /// <para>
+    /// Partitioned by server port so that several managers running side by side on one machine
+    /// don't share a browser process. They used to: one folder means one browser process serving
+    /// every instance, so whichever one owned it could take the others' windows down with it
+    /// when it exited. The port is the right key because two managers cannot run concurrently on
+    /// the same one — they'd fail to bind. A predecessor and its successor DO share a port, and
+    /// deliberately share the folder with it; that overlap is what the retry above covers.
+    /// </para>
+    /// </remarks>
+    private string ResolveUserDataFolder()
+    {
+        var port = new Uri(_serverUrl).Port;
+        var folder = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "D2BotNG",
+            "WebView2",
+            port.ToString());
+        Directory.CreateDirectory(folder);
+        return folder;
     }
 
     private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
