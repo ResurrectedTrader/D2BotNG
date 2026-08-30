@@ -315,3 +315,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "v${{ needs.prepare-release.outputs.version }}" --notes-file notes.md --title "v${{ needs.prepare-release.outputs.version }}" D2BotNG-standalone.exe D2BotNG-framework.exe
+      - name: Announce on Discord
+        # The release is already published by the time this runs, so a Discord
+        # outage must not fail the workflow - the message is not worth a retry.
+        # A missing secret (forks, or before the secret is set) skips silently.
+        continue-on-error: true
+        shell: bash
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+        run: |
+          [ -n "$DISCORD_WEBHOOK" ] || { echo "No DISCORD_RELEASE_WEBHOOK secret; skipping."; exit 0; }
+          v="v${{ needs.prepare-release.outputs.version }}"
+          repo_url="${{ github.server_url }}/${{ github.repository }}"
+          dl="${repo_url}/releases/download/${v}"
+          # Discord caps an embed description at 4096 chars. Truncate the notes
+          # well short of that to leave room for the download line, then run the
+          # cut through iconv so a byte-wise chop cannot leave a half-written
+          # UTF-8 sequence that jq would reject.
+          {
+            head -c 3500 notes.md | iconv -c -f UTF-8 -t UTF-8
+            printf '\n\n**Download:** [standalone](%s/D2BotNG-standalone.exe) (bundles the .NET runtime) or [framework-dependent](%s/D2BotNG-framework.exe) (needs .NET 10)\n' "$dl" "$dl"
+          } > body.md
+          # -Rs slurps the file as one JSON string, so no escaping by hand.
+          jq -Rs --arg t "D2BotNG $v" --arg u "${repo_url}/releases/tag/${v}" '{
+            username: "D2BotNG",
+            embeds: [{ title: $t, url: $u, description: ., color: 5793266 }]
+          }' body.md > payload.json
+          curl -sSf -H "Content-Type: application/json" -d @payload.json "$DISCORD_WEBHOOK"
