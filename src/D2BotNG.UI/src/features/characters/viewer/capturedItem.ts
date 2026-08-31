@@ -81,8 +81,19 @@ function toHdAppearance(unit: Unit, engine: TooltipEngine): HdAppearance {
   return { gfxIndex: unit.gfxIndex, colorName };
 }
 
-/** The item's socket count, or 0 for one that has none. */
+/**
+ * The item's socket count, or 0 for one that has none.
+ *
+ * Gated on the SOCKETED flag rather than taken from the stat alone, because the stat alone is not
+ * the game's own answer. Two of Tal Rasha's set pieces — the Horadric Crest and the Guardianship —
+ * carry `item_numsockets = 1` with the flag clear and nothing socketed into them, and reading the
+ * stat by itself drew an empty socket on a helm and an armour that plainly have none. Across a live
+ * store the flag never disagrees with reality: 11 items set it and every one has the stat, 175
+ * clear it and not one has a filler.
+ */
 function socketCount(unit: Unit): number {
+  if ((unit.itemFlags & SOCKETED_FLAG) === 0) return 0;
+
   let count = 0;
   for (const list of unit.statsLists) {
     for (const stat of list.stats) {
