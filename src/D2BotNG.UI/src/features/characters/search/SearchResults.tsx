@@ -205,6 +205,7 @@ const ResultRow = memo(function ResultRow({
             invTrans={item.invTrans}
             ethereal={isEthereal(item)}
             sockets={item.sockets}
+            hd={item.hd}
             alt={item.name}
           />
         </div>

@@ -49,11 +49,12 @@ public class DiscordWebhookService
 
         var settings = _settingsRepository.Current;
         var itemFont = settings.Display?.ItemFont ?? ItemFont.Exocet;
+        var spriteStyle = settings.Display?.SpriteStyle ?? SpriteStyle.Classic;
 
         byte[] png;
         try
         {
-            png = _itemRenderer.RenderItemTooltip(item, itemFont);
+            png = _itemRenderer.RenderItemTooltip(item, itemFont, spriteStyle: spriteStyle);
         }
         catch (Exception ex)
         {

@@ -15,6 +15,7 @@ import {
   colorForIndex,
   parseD2ColoredText,
   type ColoredTextSegment,
+  type HdAppearance,
 } from "@/features/items/item-utils";
 import { toToolkitUnit } from "./toolkitUnit";
 import type { DisplayContainer, DisplayItem } from "./contracts";
@@ -48,6 +49,37 @@ const STAT_NUM_SOCKETS = 194;
  * followed the same convention.
  */
 const EMPTY_SOCKET_CODE = "gemsocket";
+
+/** `dwQualityNo` for the two qualities whose row carries an inventory transform. */
+const QUALITY_SET = 5;
+const QUALITY_UNIQUE = 7;
+
+/**
+ * What the D2R art needs beyond the item code: which graphic it rolled, and what to tint it.
+ *
+ * The colour is the `invtransform` NAME — "lred", "dgld" — off the item's own uniqueitems or
+ * setitems row, which is the same column the classic path resolves through colors.txt into a
+ * palette index. D2R indexes it by name instead, so this reads the raw cell rather than the
+ * resolved shift; there is no converting one into the other.
+ *
+ * `file_index` selects that row and is overloaded by quality, so only these two qualities can name
+ * one. Everything else draws in its own colours, which is what the game does too.
+ */
+function toHdAppearance(unit: Unit, engine: TooltipEngine): HdAppearance {
+  const table =
+    unit.quality === QUALITY_UNIQUE
+      ? engine.data.uniqueItems
+      : unit.quality === QUALITY_SET
+        ? engine.data.setItems
+        : null;
+
+  const colorName =
+    table && unit.fileIndex >= 0 && unit.fileIndex < table.rowCount
+      ? table.getString(unit.fileIndex, "invtransform") || null
+      : null;
+
+  return { gfxIndex: unit.gfxIndex, colorName };
+}
 
 /** The item's socket count, or 0 for one that has none. */
 function socketCount(unit: Unit): number {
@@ -374,6 +406,7 @@ export function toDisplayItem(
     describe,
     itemColor: appearance.color,
     invTrans: appearance.invTrans,
+    hd: toHdAppearance(unit, engine),
     ethereal: (unit.itemFlags & ETHEREAL_FLAG) !== 0,
     detail: toDetail(unit, engine, viewers),
     sockets: socketsOf(unit, engine, viewers),

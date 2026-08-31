@@ -27,6 +27,7 @@ public class ItemRenderer
 
     private readonly ILogger<ItemRenderer> _logger;
     private readonly PaletteManager _paletteManager;
+    private readonly HdSpriteSource _hdSprites;
     private readonly ConcurrentDictionary<string, byte[]> _dc6Cache = new();
     private readonly byte[] _fallbackDc6;
     private readonly PrivateFontCollection _fontCollection = new();
@@ -42,10 +43,11 @@ public class ItemRenderer
         { ItemFont.System, "Segoe UI" }
     };
 
-    public ItemRenderer(ILogger<ItemRenderer> logger, PaletteManager paletteManager)
+    public ItemRenderer(ILogger<ItemRenderer> logger, PaletteManager paletteManager, HdSpriteSource hdSprites)
     {
         _logger = logger;
         _paletteManager = paletteManager;
+        _hdSprites = hdSprites;
         _fallbackDc6 = LoadDc6Resource("box");
         LoadFont();
     }
@@ -105,9 +107,9 @@ public class ItemRenderer
     /// Renders an item to a PNG image
     /// </summary>
     [UsedImplicitly]
-    public byte[] RenderItem(Item item)
+    public byte[] RenderItem(Item item, SpriteStyle spriteStyle = SpriteStyle.Classic)
     {
-        using var bitmap = RenderItemBitmap(item);
+        using var bitmap = RenderItemBitmap(item, background: null, spriteStyle);
         return BitmapToPng(bitmap);
     }
 
@@ -115,7 +117,7 @@ public class ItemRenderer
     /// Renders an item with its sockets to a PNG image
     /// </summary>
     [UsedImplicitly]
-    public byte[] RenderItemWithSockets(Item item)
+    public byte[] RenderItemWithSockets(Item item, SpriteStyle spriteStyle = SpriteStyle.Classic)
     {
         // First render the base item to get dimensions
         var frame = GetItemFrame(item.Code);
@@ -131,7 +133,7 @@ public class ItemRenderer
         graphics.Clear(Color.Transparent);
 
         // Render base item centered
-        using var itemBitmap = RenderItemBitmap(item, Color.Transparent);
+        using var itemBitmap = RenderItemBitmap(item, Color.Transparent, spriteStyle);
         int itemX = (width - itemBitmap.Width) / 2;
         int itemY = (height - itemBitmap.Height) / 2;
         graphics.DrawImage(itemBitmap, itemX, itemY);
@@ -139,7 +141,7 @@ public class ItemRenderer
         // Render sockets if present
         if (item.Sockets.Count > 0)
         {
-            RenderSockets(graphics, item, gridSize, itemX);
+            RenderSockets(graphics, item, gridSize, itemX, spriteStyle);
         }
 
         return BitmapToPng(bitmap);
@@ -148,7 +150,8 @@ public class ItemRenderer
     /// <summary>
     /// Renders a full item tooltip with background and text
     /// </summary>
-    public byte[] RenderItemTooltip(Item item, ItemFont itemFont = ItemFont.Exocet, bool showHeader = false)
+    public byte[] RenderItemTooltip(Item item, ItemFont itemFont = ItemFont.Exocet, bool showHeader = false,
+        SpriteStyle spriteStyle = SpriteStyle.Classic)
     {
         // Get item frame for dimensions
         var frame = GetItemFrame(item.Code);
@@ -199,14 +202,14 @@ public class ItemRenderer
         }
 
         // Render item image (offset by header height)
-        using var itemBitmap = RenderItemBitmap(item);
+        using var itemBitmap = RenderItemBitmap(item, background: null, spriteStyle);
         int itemX = (totalWidth - itemBitmap.Width) / 2;
         graphics.DrawImage(itemBitmap, itemX, 5 + headerHeight);
 
         // Render sockets (offset by header height)
         if (item.Sockets.Count > 0)
         {
-            RenderSocketsOnTooltip(graphics, item, gridSize, itemX, headerHeight);
+            RenderSocketsOnTooltip(graphics, item, gridSize, itemX, headerHeight, spriteStyle);
         }
 
         // Render text (offset by header height)
@@ -234,12 +237,24 @@ public class ItemRenderer
         return (int)graphics.MeasureString(header, font).Width;
     }
 
-    private Bitmap RenderItemBitmap(Item item, Color? background = null)
+    private Bitmap RenderItemBitmap(Item item, Color? background = null,
+        SpriteStyle spriteStyle = SpriteStyle.Classic)
     {
+        bool isEthereal = item.Description.Contains("Ethereal") || item.Description.Contains(":eth");
+
+        // The one switch between the two artworks. Everything below and around it — the canvas, the
+        // centring, the socket layout — is shared, because none of it depends on where the pixels
+        // came from: both are drawn at 30 pixels to an inventory cell.
+        if (spriteStyle == SpriteStyle.D2R)
+        {
+            var hd = _hdSprites.Render(item.Code, HdSpriteSource.ColorNameForShift(item.ItemColor),
+                gfxIndex: 0);
+            if (hd != null) return ApplyBackdrop(hd, background, isEthereal);
+        }
+
         var frame = GetItemFrame(item.Code);
         int shiftColor = item.ItemColor;
-        bool isEthereal = item.Description.Contains("Ethereal") || item.Description.Contains(":eth");
-        bool isSocket = item.Code == "gemsocket";
+        bool isSocket = item.Code == HdSpriteSource.EmptySocketCode;
 
         int alpha = isEthereal ? 127 : (isSocket ? 100 : 255);
         var bgColor = background ?? Color.Blue;
@@ -295,6 +310,46 @@ public class ItemRenderer
         return bitmap;
     }
 
+    /// <summary>
+    /// The two things the classic path applies while decoding, done after the fact for D2R art:
+    /// the ethereal wash, and the tinted backdrop behind an item drawn on a solid background.
+    /// </summary>
+    private static Bitmap ApplyBackdrop(Bitmap sprite, Color? background, bool isEthereal)
+    {
+        var bgColor = background ?? Color.Blue;
+        if (bgColor == Color.Transparent && !isEthereal) return sprite;
+
+        try
+        {
+            var output = new Bitmap(sprite.Width, sprite.Height, PixelFormat.Format32bppArgb);
+            for (int y = 0; y < sprite.Height; y++)
+            {
+                for (int x = 0; x < sprite.Width; x++)
+                {
+                    var pixel = sprite.GetPixel(x, y);
+                    if (pixel.A == 0)
+                    {
+                        output.SetPixel(x, y, bgColor == Color.Transparent
+                            ? Color.Transparent
+                            : Color.FromArgb(20, bgColor));
+                    }
+                    else
+                    {
+                        output.SetPixel(x, y, isEthereal
+                            ? Color.FromArgb(pixel.A / 2, pixel.R, pixel.G, pixel.B)
+                            : pixel);
+                    }
+                }
+            }
+
+            return output;
+        }
+        finally
+        {
+            sprite.Dispose();
+        }
+    }
+
     private Dc6Frame GetItemFrame(string code)
     {
         var dc6Data = GetDc6Data(code);
@@ -343,7 +398,8 @@ public class ItemRenderer
         _ => 226
     };
 
-    private void RenderSockets(Graphics graphics, Item item, (int X, int Y) gridSize, int baseX)
+    private void RenderSockets(Graphics graphics, Item item, (int X, int Y) gridSize, int baseX,
+        SpriteStyle spriteStyle = SpriteStyle.Classic)
     {
         const int offsetY = -1;
 
@@ -354,11 +410,11 @@ public class ItemRenderer
         int y4 = y3 + SocketSpacing * 2 + 1;
 
         var positions = CalculateSocketPositions(item.Sockets.Count, gridSize, x1, SocketSpacing, offsetY, y1, y2, y3, y4);
-        DrawSockets(graphics, item, positions);
+        DrawSockets(graphics, item, positions, spriteStyle);
     }
 
     private void RenderSocketsOnTooltip(Graphics graphics, Item item, (int X, int Y) gridSize, int itemX,
-        int headerOffset = 0)
+        int headerOffset = 0, SpriteStyle spriteStyle = SpriteStyle.Classic)
     {
         const int offsetY = -1;
 
@@ -369,10 +425,11 @@ public class ItemRenderer
         int y4 = 92 + headerOffset;
 
         var positions = CalculateSocketPositions(item.Sockets.Count, gridSize, x1, SocketSpacing, offsetY, y1, y2, y3, y4);
-        DrawSockets(graphics, item, positions);
+        DrawSockets(graphics, item, positions, spriteStyle);
     }
 
-    private void DrawSockets(Graphics graphics, Item item, List<Point> positions)
+    private void DrawSockets(Graphics graphics, Item item, List<Point> positions,
+        SpriteStyle spriteStyle = SpriteStyle.Classic)
     {
         for (int i = 0; i < item.Sockets.Count && i < positions.Count; i++)
         {
@@ -383,11 +440,12 @@ public class ItemRenderer
                 ItemColor = socketItem.ItemColor,
                 InvTrans = socketItem.InvTrans,
                 Description = ""
-            }, Color.Transparent);
+            }, Color.Transparent, spriteStyle);
 
             var pos = positions[i];
-            int drawX = socketItem.Code == "gemsocket" ? pos.X - 1 : pos.X;
-            int drawY = socketItem.Code == "gemsocket" ? pos.Y + 1 : pos.Y;
+            bool isEmpty = socketItem.Code == HdSpriteSource.EmptySocketCode;
+            int drawX = isEmpty ? pos.X - 1 : pos.X;
+            int drawY = isEmpty ? pos.Y + 1 : pos.Y;
             graphics.DrawImage(socketBitmap, drawX, drawY);
         }
     }

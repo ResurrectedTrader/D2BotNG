@@ -74,6 +74,19 @@ message WindowSettings {
 message DisplaySettings {
   ItemFont item_font = 1;
   bool show_item_header = 2;  // Show profile info header on item images
+  SpriteStyle sprite_style = 3;
+}
+
+// Which artwork item sprites are drawn from. The two are the same size on screen — D2R redrew the
+// inventory art rather than enlarging it — so this changes how items LOOK, not how big they are.
+//
+// Classic is the default because it is what every install can draw: it renders from the DC6 files
+// and palettes this app ships for the 1.14d game. D2R art needs the code to have been captured by
+// an engine that reports it and the item to exist in the shipped archives, so it falls back to
+// classic per item rather than showing a gap.
+enum SpriteStyle {
+  SPRITE_STYLE_CLASSIC = 0;
+  SPRITE_STYLE_D2R = 1;
 }
 
 message ServerSettings {

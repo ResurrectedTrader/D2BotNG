@@ -28,6 +28,7 @@ export const ItemImage = memo(function ItemImage({
         invTrans={item.invTrans}
         ethereal={isEthereal(item)}
         sockets={showSockets ? item.sockets : []}
+        hd={item.hd}
         alt={item.name}
       />
     </div>

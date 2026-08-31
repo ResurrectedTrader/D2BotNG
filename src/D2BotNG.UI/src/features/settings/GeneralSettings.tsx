@@ -17,7 +17,7 @@ import {
   PathSelectorDialog,
   HelpTooltip,
 } from "@/components/ui";
-import { CloseAction, ItemFont } from "@/generated/settings_pb";
+import { CloseAction, ItemFont, SpriteStyle } from "@/generated/settings_pb";
 import type { ServerSettings as ServerSettingsType } from "@/generated/settings_pb";
 import type { DisplaySettings as DisplaySettingsType } from "@/generated/settings_pb";
 import type { StartupSettings as StartupSettingsType } from "@/generated/settings_pb";
@@ -68,6 +68,11 @@ const fontOptions = [
   { value: ItemFont.EXOCET.toString(), label: "Exocet" },
   { value: ItemFont.CONSOLAS.toString(), label: "Consolas (monospace)" },
   { value: ItemFont.SYSTEM.toString(), label: "System Default" },
+];
+
+const spriteStyleOptions = [
+  { value: SpriteStyle.CLASSIC.toString(), label: "Classic" },
+  { value: SpriteStyle.D2R.toString(), label: "Resurrected" },
 ];
 
 const checkboxClass =
@@ -143,7 +148,9 @@ export function GeneralSettings({
             />
           </div>
 
-          {/* App behavior & display */}
+          {/* App behaviour. One control per cell, so `items-end` has equal-height cells to align:
+              a two-checkbox stack next to single ones is the tallest thing in the row, and bottom
+              aligning it leaves it starting well above its neighbours. */}
           <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div className="flex flex-col gap-2 pb-2">
               <label className="flex cursor-pointer items-center gap-3">
@@ -155,7 +162,9 @@ export function GeneralSettings({
                 />
                 <span className="text-sm text-zinc-300">Start Minimized</span>
               </label>
+            </div>
 
+            <div className="flex flex-col gap-2 pb-2">
               <label
                 className="flex cursor-pointer items-center gap-3"
                 title="When minimizing, hide to the system tray instead of the taskbar."
@@ -182,18 +191,6 @@ export function GeneralSettings({
             />
 
             <div className="flex flex-col gap-2 pb-2">
-              <label className="flex cursor-pointer items-center gap-3">
-                <input
-                  type="checkbox"
-                  checked={display?.showItemHeader ?? false}
-                  onChange={(e) =>
-                    onDisplayChange({ showItemHeader: e.target.checked })
-                  }
-                  className={checkboxClass}
-                />
-                <span className="text-sm text-zinc-300">Show Item Header</span>
-              </label>
-
               {analyticsAvailable && (
                 // The tooltip sits outside the label: nested, its icon has no interactive
                 // element of its own, so clicking to read the text would toggle the setting.
@@ -215,6 +212,27 @@ export function GeneralSettings({
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Everything that changes how items are DRAWN, kept together on its own row. A separate
+              grid rather than more cells in the one above, so the grouping survives the narrower
+              breakpoints instead of holding only where four columns happen to fit — and it is three
+              columns because it holds three controls, which is what fills the row rather than
+              leaving a fourth column of nothing. */}
+          <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="flex flex-col gap-2 pb-2">
+              <label className="flex cursor-pointer items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={display?.showItemHeader ?? false}
+                  onChange={(e) =>
+                    onDisplayChange({ showItemHeader: e.target.checked })
+                  }
+                  className={checkboxClass}
+                />
+                <span className="text-sm text-zinc-300">Show Item Header</span>
+              </label>
+            </div>
 
             <Select
               id="item-font"
@@ -225,6 +243,19 @@ export function GeneralSettings({
               onChange={(e) =>
                 onDisplayChange({
                   itemFont: parseInt(e.target.value, 10) as ItemFont,
+                })
+              }
+            />
+
+            <Select
+              id="sprite-style"
+              label="Item Artwork"
+              tooltip="Which artwork item sprites are drawn from. D2R's art is redrawn rather than higher resolution, so items stay the same size on screen. It needs a character reported by a newer engine build; anything it cannot draw falls back to the classic art on its own."
+              options={spriteStyleOptions}
+              value={(display?.spriteStyle ?? SpriteStyle.CLASSIC).toString()}
+              onChange={(e) =>
+                onDisplayChange({
+                  spriteStyle: parseInt(e.target.value, 10) as SpriteStyle,
                 })
               }
             />

@@ -475,6 +475,7 @@ public class LegacyApiHandler
 
         var settings = await _settingsRepository.GetAsync();
         var itemFont = settings.Display.ItemFont;
+        var spriteStyle = settings.Display.SpriteStyle;
 
         response.Status = "success";
         response.Body = JsonSerializer.Serialize(results.Select(r => new
@@ -485,16 +486,16 @@ public class LegacyApiHandler
             account = r.Account,
             character = r.Character,
             description = r.Item.Description,
-            image = generateImages ? GenerateItemImage(r.Item, itemFont) : null
+            image = generateImages ? GenerateItemImage(r.Item, itemFont, spriteStyle) : null
         }));
         return response;
     }
 
-    private string? GenerateItemImage(Item item, ItemFont itemFont)
+    private string? GenerateItemImage(Item item, ItemFont itemFont, SpriteStyle spriteStyle)
     {
         try
         {
-            var png = _itemRenderer.RenderItemTooltip(item, itemFont);
+            var png = _itemRenderer.RenderItemTooltip(item, itemFont, spriteStyle: spriteStyle);
             return Convert.ToBase64String(png);
         }
         catch (Exception ex)

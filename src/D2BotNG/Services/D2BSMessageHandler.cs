@@ -428,7 +428,8 @@ public class D2BSMessageHandler : BackgroundService
             var item = legacyItem.ToModern();
             var settings = _settingsRepository.Current;
             var itemFont = settings.Display?.ItemFont ?? ItemFont.Exocet;
-            var png = _itemRenderer.RenderItemTooltip(item, itemFont);
+            var spriteStyle = settings.Display?.SpriteStyle ?? SpriteStyle.Classic;
+            var png = _itemRenderer.RenderItemTooltip(item, itemFont, spriteStyle: spriteStyle);
             var imagesDir = Path.Combine(_paths.BasePath, "images");
             Directory.CreateDirectory(imagesDir);
             var index = Directory.GetFiles(imagesDir, item.Name + "*").Length + 1;

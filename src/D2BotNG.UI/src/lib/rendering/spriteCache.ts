@@ -17,8 +17,10 @@ export function makeSpriteKey(
   ethereal: boolean,
   hasBackground: boolean,
   socketsKey: string,
+  /** Which artwork this was drawn from; empty for the classic DC6s. */
+  styleKey = "",
 ): string {
-  return `${code}|${colorShift}|${invTrans}|${ethereal ? 1 : 0}|${hasBackground ? 1 : 0}|${socketsKey}`;
+  return `${code}|${colorShift}|${invTrans}|${ethereal ? 1 : 0}|${hasBackground ? 1 : 0}|${socketsKey}|${styleKey}`;
 }
 
 export function getCachedSprite(

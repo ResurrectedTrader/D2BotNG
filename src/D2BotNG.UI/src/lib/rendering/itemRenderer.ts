@@ -1,13 +1,26 @@
-/**
+﻿/**
  * Renders Diablo 2 item images from DC6 sprites
  */
 
 import { decodeFirstFrame } from "./dc6Decoder";
 import { getPaletteManager, loadPaletteData } from "./paletteManager";
+import { appearanceFromShift, renderHdSprite } from "./hdRenderer";
+import type { HdAppearance } from "@/features/items/item-utils";
 
 // DC6 cache
 const dc6Cache = new Map<string, ArrayBuffer>();
 let fallbackDc6: ArrayBuffer | null = null;
+
+/**
+ * The marker drawn in a socket nothing is set into.
+ *
+ * Not an item, and not artwork either game draws in its inventory — D2 shows an empty socket as a
+ * hole in the item itself. It is this app's own affordance, so both styles draw the classic one:
+ * it is small and translucent, which is what the socket positions were spaced for. D2R does ship a
+ * sprite under this name, but it is an opaque filled disc a whole inventory cell across, and six of
+ * those tile edge to edge over the item they are meant to annotate.
+ */
+const EMPTY_SOCKET_CODE = "gemsocket";
 
 /**
  * Fetches and caches a DC6 file
@@ -57,7 +70,21 @@ export interface RenderOptions {
   /** Background color (null for transparent) */
   backgroundColor?: { r: number; g: number; b: number } | null;
   /** Socketed items to render on top (each needs code, itemColor, invTrans) */
-  sockets?: Array<{ code: string; itemColor: number; invTrans?: number }>;
+  sockets?: Array<{
+    code: string;
+    itemColor: number;
+    invTrans?: number;
+    hd?: HdAppearance;
+  }>;
+  /**
+   * Draw this item from D2R's artwork instead of the classic DC6, where it exists.
+   *
+   * Only the PIXELS change. Both artworks are drawn at 30 pixels to an inventory cell, so the
+   * canvas, the centring and the socket layout below are the same either way — which is the point:
+   * one compositor, two sprite sources, no chance of the two styles drifting apart in how an item
+   * is assembled.
+   */
+  hd?: HdAppearance;
 }
 
 /**
@@ -91,7 +118,7 @@ export async function renderItemSprite(
 
   let alpha = 255;
   if (ethereal) alpha = 127;
-  if (code === "gemsocket") alpha = 100;
+  if (code === EMPTY_SOCKET_CODE) alpha = 100;
 
   for (let y = 0; y < frame.height; y++) {
     for (let x = 0; x < frame.width; x++) {
@@ -150,9 +177,15 @@ export async function renderItemToBitmap(
   code: string,
   options: RenderOptions = {},
 ): Promise<ImageBitmap> {
-  const imageData = await renderItemSprite(code, options);
+  // The footprint comes from the CLASSIC frame even when D2R art is drawn. `calculateGridSize`
+  // reads pixel dimensions against thresholds tuned to the DC6s, and D2R's slightly larger cell
+  // tips a 1x1 item over the 30px line into two rows. Taking it from the same place in both styles
+  // is also what keeps an item the same size on screen whichever artwork is showing.
+  const frame = decodeFirstFrame(await getDc6Data(code));
+  const gridSize = calculateGridSize(frame.width, frame.height);
 
-  const gridSize = calculateGridSize(imageData.width, imageData.height);
+  const imageData = await spritePixels(code, options);
+
   const width = gridSize.x * 30 - 1;
   const height = gridSize.y * 30 - 1;
 
@@ -352,6 +385,37 @@ function getSocketPositions(
 /**
  * Renders an item with sockets to an ImageBitmap.
  */
+/**
+ * One sprite's pixels, from whichever artwork was asked for.
+ *
+ * The single seam between the two styles. Everything above it — canvas size, centring, socket
+ * placement, the ethereal wash — is shared, because none of it depends on where the pixels came
+ * from. D2R art that does not exist for a code falls back to the classic sprite silently, so the
+ * setting degrades per item rather than leaving a hole in a grid.
+ */
+async function spritePixels(
+  code: string,
+  options: {
+    colorShift?: number;
+    invTrans?: number;
+    ethereal?: boolean;
+    backgroundColor?: { r: number; g: number; b: number } | null;
+    hd?: HdAppearance;
+  },
+): Promise<ImageData> {
+  if (options.hd && code !== EMPTY_SOCKET_CODE) {
+    const pixels = await renderHdSprite(code, options.hd);
+    if (pixels) {
+      // Applied here rather than by the D2R decoder, so both artworks dim by the same rule.
+      if (options.ethereal) {
+        for (let i = 3; i < pixels.data.length; i += 4) pixels.data[i] >>= 1;
+      }
+      return pixels;
+    }
+  }
+  return renderItemSprite(code, options);
+}
+
 export async function renderItemWithSocketsToBitmap(
   code: string,
   options: RenderOptions = {},
@@ -361,6 +425,7 @@ export async function renderItemWithSocketsToBitmap(
     invTrans = 0,
     ethereal = false,
     sockets = [],
+    hd,
   } = options;
 
   await loadPaletteData();
@@ -379,10 +444,11 @@ export async function renderItemWithSocketsToBitmap(
 
   ctx.clearRect(0, 0, width, height);
 
-  const baseImageData = await renderItemSprite(code, {
+  const baseImageData = await spritePixels(code, {
     colorShift,
     invTrans,
     ethereal,
+    hd,
   });
   const itemX = Math.floor((width - baseImageData.width) / 2);
   const itemY = Math.floor((height - baseImageData.height) / 2);
@@ -395,10 +461,14 @@ export async function renderItemWithSocketsToBitmap(
       const socket = sockets[i];
       const pos = positions[i];
 
-      const isEmptySocket = socket.code === "gemsocket";
-      const socketImageData = await renderItemSprite(socket.code, {
+      const isEmptySocket = socket.code === EMPTY_SOCKET_CODE;
+      // Each filler carries its own appearance — a rune is tinted by its own row, not the host's.
+      const socketImageData = await spritePixels(socket.code, {
         colorShift: socket.itemColor,
         invTrans: socket.invTrans ?? 0,
+        hd: hd
+          ? (socket.hd ?? appearanceFromShift(socket.itemColor))
+          : undefined,
       });
 
       const socketCanvas = document.createElement("canvas");

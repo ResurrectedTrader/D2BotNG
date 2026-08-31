@@ -66,6 +66,7 @@ export function ItemCell({
                 // Only under the pointer: a full stash drawn with every socket marked is a wall of
                 // dots, and the sprite is small enough that they hide the item itself.
                 sockets={hovered ? item.sockets : undefined}
+                hd={item.hd}
                 alt={item.name}
               />
             </div>

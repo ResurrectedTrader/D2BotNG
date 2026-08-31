@@ -157,6 +157,7 @@ export const ItemTooltipContent = memo(function ItemTooltipContent({
             invTrans={item.invTrans}
             ethereal={isEthereal(item)}
             sockets={item.sockets}
+            hd={item.hd}
             alt={item.name}
           />
         </div>

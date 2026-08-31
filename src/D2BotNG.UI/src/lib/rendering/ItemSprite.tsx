@@ -3,6 +3,9 @@
  */
 
 import { memo, useEffect, useRef } from "react";
+import { SpriteStyle } from "@/generated/settings_pb";
+import { useSettings } from "@/stores/event-store";
+import { appearanceFromShift } from "./hdRenderer";
 import { useItemSprite, type UseItemSpriteOptions } from "./useItemSprite";
 
 export interface ItemSpriteProps extends UseItemSpriteOptions {
@@ -28,7 +31,17 @@ export const ItemSprite = memo(function ItemSprite({
   backgroundColor,
   sockets,
   skip,
+  hd,
 }: ItemSpriteProps) {
+  // The setting is read here rather than passed down from every call site: which artwork to draw
+  // is one preference for the whole app, and threading it through the grids, the paperdoll, the
+  // tooltip and the search results would put the same prop in a dozen signatures that have no
+  // opinion about it.
+  const style = useSettings()?.display?.spriteStyle ?? SpriteStyle.CLASSIC;
+
+  // A v2 capture supplies this; every other source is derived from its palette shift.
+  const appearance = hd ?? appearanceFromShift(colorShift);
+
   const { bitmap, loading, error } = useItemSprite(code, {
     colorShift,
     invTrans,
@@ -36,6 +49,7 @@ export const ItemSprite = memo(function ItemSprite({
     backgroundColor,
     sockets,
     skip,
+    hd: style === SpriteStyle.D2R ? appearance : undefined,
   });
 
   const canvasRef = useRef<HTMLCanvasElement>(null);

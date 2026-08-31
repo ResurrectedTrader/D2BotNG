@@ -61,7 +61,10 @@ Bot data files are stored under the **base path** in `data/ng/` (protobuf JSON f
 | `<base path>/data/ng/characters.json` | Character snapshots from running bots |
 | `<base path>/data/ng/schedules.json` | Schedule configs |
 | `<base path>/data/ng/patches.json` | Memory patches (version-specific) |
+| `<base path>/data/ng/captures.db` | SQLite: character captures from newer d2bsng builds, with items broken out so they can be searched by stat |
 | `<base path>/images/` | Item PNGs from the D2BS `saveItem` message |
+
+`captures.db` is derived state, not a record: a bot re-reports its whole character on the next game it enters, so deleting it costs only the kill and area-time totals of profiles that are not currently running.
 
 ### Migration from Legacy Format
 
@@ -79,9 +82,10 @@ No manual steps are required. To force re-migration of a specific file, delete i
 
 ## Features
 
-> **Character Viewer** and **SOCKS5 Proxy** require the **d2bsng** engine (the modern C++ D2BS rewrite that reports character-state telemetry and supports proxy hooking). They stay inactive on legacy D2BS; everything else works on both.
+> **Character Viewer**, **Item Search** and **SOCKS5 Proxy** require the **d2bsng** engine (the modern C++ D2BS rewrite that reports character-state telemetry and supports proxy hooking). They stay inactive on legacy D2BS; everything else works on both.
 
-- **Character Viewer** *(d2bsng)* - Live per-character equipment, inventory, stash, stats, skills, and quest/waypoint progression, plus analytics: lifetime monster kills and time spent per area.
+- **Character Viewer** *(d2bsng)* - Live per-character equipment, inventory, stash, stats, skills, and quest/waypoint progression, plus analytics: lifetime monster kills and time spent per area. Newer engine builds report each item's raw stats rather than a finished tooltip, so gear is rendered from the game's own tables — and holding **Ctrl** over an item swaps the tooltip for a breakdown: the range each modifier could have rolled within, the item level that decided them, and one labelled block per gem or rune instead of a merged total.
+- **Item Search** *(d2bsng)* - Search every character's gear by modifier, not just by name: "at least two resistances over 30", "any Amazon skill", "a Shako with 4 sockets". The ~1,200 searchable modifiers are derived from the game's own `ItemStatCost` table rather than written out by hand, so they are worded as the game words them. Conditions can be grouped with at-least-N and NOT, filtered by base item, type, tier, quality, runeword, item level and requirements, and the results sorted by clicking any modifier on them.
 - **SOCKS5 Proxy** *(d2bsng)* - Per-profile SOCKS5 proxy routing with a central Proxies tab for management, bulk import, and live connection testing.
 - **Web UI** - React frontend with Tailwind CSS, dark Diablo-inspired theme
 - **Remote Access** - Password-protected web interface accessible from anywhere
@@ -95,6 +99,7 @@ No manual steps are required. To force re-migration of a specific file, delete i
 - **Crash Safety** - Job objects auto-kill child game processes if the manager crashes
 - **Console** - Real-time console output with source filtering, regex search, D2 color codes
 - **Legacy API** - Backwards-compatible D2Bot# HTTP API for external tools (Limedrop, D2BS scripts) with AES session auth, webhooks, and game action scheduling
+- **Usage Statistics** - Anonymous, opt-out counts of how the app is configured (how many profiles, which features are in use, Windows version) plus a periodic heartbeat. Never a name, path, key or address. See [Usage Statistics](#usage-statistics)
 
 ### Remote Access
 
@@ -142,6 +147,19 @@ Use the **Test Discord** button in the Settings page to verify your configuratio
 | `/identify <password>` | Authenticate for privileged commands |
 
 Privileged commands (start, stop, restart, mule, schedule) require `/identify` first when a server password is set.
+
+### Usage Statistics
+
+Official releases report anonymous usage to help decide what to work on. Turn it off in **Settings → General → Usage Statistics**; the switch applies immediately, to both the manager and the next game launched, with no restart.
+
+What is sent is counts and yes/no answers — never a name, path, CD key, account or address:
+
+- **Once per start:** how many profiles, keys, schedules and frameworks exist, how many of them use each feature (proxies, Discord, scheduling), the game versions configured, and the machine's Windows version, core count, memory and whether it is running under Wine.
+- **Every 12 hours:** how many profiles are running, and how long the manager has been up.
+
+Installs are counted by a hash of machine identifiers, so a returning install is not counted twice. The hash is derived on the fly and never stored.
+
+Builds you compile yourself send **nothing at all** — the reporting key is baked in at build time from a secret that is not in this repository, and without it the whole feature is inert. `D2BOTNG_ANALYTICS_HOST` points a build at a different ingest host.
 
 ## Command Line
 
@@ -202,6 +220,26 @@ dotnet run -- --dev-ui
 
 The Vite dev server runs on port 4200, and the backend proxies UI requests to it in `--dev-ui` mode.
 
+### Checks
+
+The same gates CI runs on every pull request. `SkipUIBuild` matters for the C# ones: the app project builds the frontend by default, which the backend checks do not need.
+
+```bash
+# C#
+dotnet build src/D2BotNG/D2BotNG.csproj -p:SkipUIBuild=true
+dotnet test tests/D2BotNG.Tests/D2BotNG.Tests.csproj -p:SkipUIBuild=true
+dotnet format D2BotNG.sln --verify-no-changes
+dotnet jb inspectcode D2BotNG.sln --project=D2BotNG --properties:SkipUIBuild=true --severity=WARNING
+
+# TypeScript
+cd src/D2BotNG.UI
+npm run build
+npx eslint src --max-warnings 0
+npx prettier --check "src/**/*.{ts,tsx,css}"
+```
+
+`dotnet build -p:RunFormat=true` formats the solution before compiling, and `-p:RunInspect=true` writes an inspection report to `src/D2BotNG/obj/inspect.sarif`. Close the app first — a running `D2BotNG.exe` holds its own `bin/` directory open and the build cannot replace it.
+
 ### Building
 
 Build produces a single `D2BotNG.exe` with the UI and all game assets embedded.
@@ -228,6 +266,7 @@ src/
     Engine/          # Profile lifecycle, scheduling
     Windows/         # Win32 interop, DLL injection, IPC
     Data/            # Protobuf JSON persistence (data/ng/)
+    Capture/         # Character captures: ingest, SQLite storage, stat search
     Rendering/       # DC6 sprite decoding
     Legacy/          # D2Bot# API compatibility (middleware, handler, models, migration)
     UI/              # WinForms + WebView2 host
@@ -239,6 +278,8 @@ src/
       hooks/         # React Query mutations
       lib/           # gRPC client, auth, rendering
       generated/     # Protobuf-generated TypeScript types
+tests/
+  D2BotNG.Tests/     # xUnit — contract and invariant tests
 Resources/           # DC6 sprites, palettes, fonts
 ```
 

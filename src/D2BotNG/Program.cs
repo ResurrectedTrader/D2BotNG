@@ -405,6 +405,7 @@ internal static class Program
 
         // Add rendering services
         services.AddSingleton<PaletteManager>();
+        services.AddSingleton<HdSpriteSource>();
         services.AddSingleton<ItemRenderer>();
 
         // Add message service (centralized console messages)
@@ -534,6 +535,11 @@ internal static class Program
         contentTypeProvider.Mappings[".dat"] = "application/octet-stream";
         contentTypeProvider.Mappings[".PL2"] = "application/octet-stream";
         contentTypeProvider.Mappings[".pl2"] = "application/octet-stream";
+        // D2R item art. An archive is concatenated PNGs, so it is NOT image/png: the client asks
+        // for the whole file and slices it, and naming it an image would invite anything in the
+        // middle to treat it as one. Without a mapping here the static file middleware refuses to
+        // serve it at all, which is a 404 only in a packaged build.
+        contentTypeProvider.Mappings[".pngx"] = "application/octet-stream";
 
         app.UseStaticFiles(new StaticFileOptions
         {

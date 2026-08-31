@@ -127,6 +127,14 @@ export function stripD2ColorCodes(text: string): string {
  * and sprite are resolved from the game's tables rather than sent. All three satisfy this; none
  * needs to be converted into another.
  */
+/** The two things D2R art needs that its own item code does not carry. */
+export interface HdAppearance {
+  /** `gfx_index` — which of an item type's interchangeable graphics this one rolled. */
+  gfxIndex: number;
+  /** The `invtransform` colour name from the unique or set row; null for an untinted item. */
+  colorName: string | null;
+}
+
 export interface RenderableItem {
   code: string;
   name: string;
@@ -148,6 +156,16 @@ export interface RenderableItem {
   describe?: () => string;
   itemColor: number;
   invTrans: number;
+  /**
+   * What the D2R art path needs on top of the code, when the source can supply it.
+   *
+   * Absent for a mule line or a v1 character item, and that is not an oversight: D2R art is tinted
+   * by the `invtransform` NAME on the item's uniqueitems or setitems row, and v1 sends a classic
+   * palette-shift index instead — a resolved answer in the other scheme, which does not convert.
+   * Those items render D2R base art untinted, or classic art in full, which is why the style is a
+   * per-item fallback rather than a mode.
+   */
+  hd?: HdAppearance;
   /** Set when the source knows outright, rather than leaving it to the description. */
   ethereal?: boolean;
   sockets: RenderableItem[];

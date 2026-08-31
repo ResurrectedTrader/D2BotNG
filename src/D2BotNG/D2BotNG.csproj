@@ -47,6 +47,9 @@
     <EmbeddedResource Include="..\..\Resources\*.dc6" LinkBase="wwwroot\assets\rendering\dc6" />
     <EmbeddedResource Include="..\..\Resources\*.dat" LinkBase="wwwroot\assets\rendering" />
     <EmbeddedResource Include="..\..\Resources\*.png" LinkBase="wwwroot\assets\rendering" />
+    <!-- D2R item art: nine archives of concatenated PNGs plus the index that slices them. Served
+         whole rather than unpacked, because a slice of an archive already IS a PNG file. -->
+    <EmbeddedResource Include="..\..\Resources\hd\*" LinkBase="wwwroot\assets\rendering\hd" />
   </ItemGroup>
 
   <ItemGroup>
