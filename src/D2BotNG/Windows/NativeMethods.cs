@@ -165,6 +165,17 @@ public static class NativeMethods
     [DllImport("user32.dll")]
     public static extern bool PostMessage(nint hWnd, uint Msg, nint wParam, nint lParam);
 
+    // Blocking message-loop primitives. Only the MessageWindow pump thread uses these —
+    // returns >0 for a message, 0 for WM_QUIT, -1 for an error.
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern int GetMessageW(out MSG lpMsg, nint hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+
+    [DllImport("user32.dll")]
+    public static extern nint DispatchMessageW(ref MSG lpMsg);
+
+    [DllImport("user32.dll")]
+    public static extern void PostQuitMessage(int nExitCode);
+
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
     public static extern nint SendMessageTimeout(
         nint hWnd,

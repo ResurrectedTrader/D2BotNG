@@ -77,8 +77,24 @@ public class D2BSMessageHandler : BackgroundService
     {
         _logger.LogInformation("D2BS message handler started");
 
-        await foreach (var msg in _messageWindow.Messages.ReadAllAsync(stoppingToken))
+        await foreach (var raw in _messageWindow.Messages.ReadAllAsync(stoppingToken))
         {
+            // Decoding and JSON parsing happen here rather than in the WndProc: the sending game
+            // is blocked in SendMessageW for the whole of that call, and the rest of the fleet is
+            // queued behind it. Parse returns null for a payload it cannot read (already logged),
+            // and the buffer goes back to the pool either way.
+            D2BSMessage? msg;
+            try
+            {
+                msg = _messageWindow.Parse(raw);
+            }
+            finally
+            {
+                raw.Release();
+            }
+
+            if (msg == null) continue;
+
             try
             {
                 await HandleMessageAsync(msg);
