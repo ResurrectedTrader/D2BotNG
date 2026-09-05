@@ -80,7 +80,12 @@ public class MessageWindow : IDisposable
             // One reader: the consumer owns each payload buffer until it releases it, and
             // per-sender ordering only holds while a single reader drains the queue.
             SingleReader = true,
-            SingleWriter = true
+            SingleWriter = true,
+            // Stated rather than left to the default, because the whole point of this class
+            // rests on it: true would run the waiting consumer's continuation inline on
+            // TryWrite, which puts the parse and the SQLite capture ingest back on the pump
+            // thread — with the sending game blocked in SendMessageW for all of it.
+            AllowSynchronousContinuations = false
         });
     }
 
