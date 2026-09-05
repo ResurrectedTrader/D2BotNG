@@ -21,6 +21,24 @@ public static class NativeTypes
         public nint lpData;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT
+    {
+        public int x;
+        public int y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSG
+    {
+        public nint hwnd;
+        public uint message;
+        public nint wParam;
+        public nint lParam;
+        public uint time;
+        public POINT pt;
+    }
+
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     public struct WNDCLASSEXW
     {
@@ -135,6 +153,7 @@ public static class NativeTypes
 
     // Window messages (UINT)
     public const uint WM_NULL = 0x0000; // no-op; used as a liveness ping via SendMessageTimeout
+    public const uint WM_DESTROY = 0x0002;
     public const uint WM_CLOSE = 0x0010;
     public const uint WM_SETTEXT = 0x000C;
     public const uint WM_COPYDATA = 0x004A;

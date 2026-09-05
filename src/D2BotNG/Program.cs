@@ -124,7 +124,9 @@ internal static class Program
             // EngineHostedService.StartAsync (and any handoff RehydrateAsync inside it) reads
             // MessageWindow.Handle, so it must be valid by then. In GUI mode, MainForm no
             // longer switches the handle when it loads — the message-only window owns it
-            // for the full process lifetime.
+            // for the full process lifetime. The window runs on its own pump thread, so this
+            // returns once the handle exists and nothing here shares a pump with it: senders
+            // block on SendMessageW, and the UI thread below is about to host WebView2.
             var messageWindow = app.Services.GetRequiredService<MessageWindow>();
             messageWindow.CreateMessageOnlyWindow();
 
