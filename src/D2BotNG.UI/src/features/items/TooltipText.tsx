@@ -60,7 +60,10 @@ export function TooltipLine({
 
   return (
     <div
-      className={clsx("text-center leading-5", className)}
+      // The font's own line height, which is how the game spaces tooltip rows: its text layout
+      // advances by the font's metrics, and CSS `normal` is the same measure.
+      className={clsx("text-center", className)}
+      style={{ lineHeight: "normal" }}
       onClick={onClick}
       title={title}
     >

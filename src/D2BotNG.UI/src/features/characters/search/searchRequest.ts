@@ -10,6 +10,7 @@
 import {
   ItemColumn,
   type CharacterKey,
+  type GameVariant,
   type Ordering,
   type SearchItemsRequest,
   type StatCondition,
@@ -229,6 +230,14 @@ export interface PropertyFilters {
    */
   profiles: string[];
   characters: CharacterKey[];
+  /**
+   * Within the searched game (which is not a filter but the search's own tables — see
+   * `buildSearchRequest`): its version (Classic / Expansion / RotW) and the realm. Each ORs within
+   * itself and empty is "any", like the fields around them. The panel offers each only once the
+   * game's captures hold more than one value.
+   */
+  gameVersions: number[];
+  realms: string[];
   qualities: number[];
   tiers: Tier[];
   /** Base items, uniques, set items and runewords, from one list. */
@@ -275,6 +284,8 @@ export interface PropertyFilters {
 export const EMPTY_PROPERTIES: PropertyFilters = {
   profiles: [],
   characters: [],
+  gameVersions: [],
+  realms: [],
   qualities: [],
   tiers: [],
   items: [],
@@ -676,12 +687,18 @@ function buildGroups(
   return { conditions, groups: built };
 }
 
+/**
+ * `variant` is the game searched, and the tables every row and id in the filters was picked from
+ * — the catalogue and pickers are built from that game's tables — so it rides every request rather
+ * than being a filter that can be left empty.
+ */
 export function buildSearchRequest(
   properties: PropertyFilters,
   statGroups: StatFilterGroup[],
   sort: SortChoice,
   offset: number,
   limit: number,
+  variant: GameVariant,
 ): SearchItemsRequest {
   const { conditions, groups } = buildGroups(
     statGroups,
@@ -720,6 +737,9 @@ export function buildSearchRequest(
     $typeName: "d2bot.captures.SearchItemsRequest",
     profiles: properties.profiles,
     characters: properties.characters,
+    variant,
+    gameVersions: properties.gameVersions,
+    realms: properties.realms,
     classIds: properties.items.flatMap((i) =>
       i.kind === "base" ? [i.id] : [],
     ),
@@ -773,6 +793,8 @@ export function requestHasFilter(request: SearchItemsRequest): boolean {
   return (
     request.profiles.length > 0 ||
     request.characters.length > 0 ||
+    request.gameVersions.length > 0 ||
+    request.realms.length > 0 ||
     request.conditions.length > 0 ||
     request.groups.length > 0 ||
     request.classIds.length > 0 ||

@@ -8,6 +8,7 @@ using D2BotNG.Engine;
 using D2BotNG.Legacy.Api;
 using D2BotNG.Legacy.Models;
 using D2BotNG.Rendering;
+using GameFlavor = D2BotNG.Core.Protos.Captures.GameFlavor;
 using D2BotNG.Utilities;
 using D2BotNG.Windows;
 
@@ -33,6 +34,7 @@ public class D2BSMessageHandler : BackgroundService
     private readonly SettingsRepository _settingsRepository;
     private readonly CharacterStateService _characterStateService;
     private readonly CaptureEngine _captureEngine;
+    private readonly CaptureStore _captureStore;
 
     /// <summary>
     /// Handles we've already warned about, so a 1Hz sender doesn't flood the log.
@@ -54,7 +56,8 @@ public class D2BSMessageHandler : BackgroundService
         Paths paths,
         SettingsRepository settingsRepository,
         CharacterStateService characterStateService,
-        CaptureEngine captureEngine)
+        CaptureEngine captureEngine,
+        CaptureStore captureStore)
     {
         _logger = logger;
         _messageWindow = messageWindow;
@@ -71,6 +74,7 @@ public class D2BSMessageHandler : BackgroundService
         _settingsRepository = settingsRepository;
         _characterStateService = characterStateService;
         _captureEngine = captureEngine;
+        _captureStore = captureStore;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -182,7 +186,7 @@ public class D2BSMessageHandler : BackgroundService
 
             case "saveItem":
                 if (args.Length > 0 && !string.IsNullOrEmpty(args[0]))
-                    HandleSaveItem(args[0]);
+                    HandleSaveItem(profile, args[0]);
                 break;
 
             case "characterState":
@@ -436,7 +440,7 @@ public class D2BSMessageHandler : BackgroundService
         _discordWebhookService.PostConsole(profile, text);
     }
 
-    private void HandleSaveItem(string itemJson)
+    private void HandleSaveItem(Profile profile, string itemJson)
     {
         try
         {
@@ -445,7 +449,9 @@ public class D2BSMessageHandler : BackgroundService
             var settings = _settingsRepository.Current;
             var itemFont = settings.Display?.ItemFont ?? ItemFont.Exocet;
             var spriteStyle = settings.Display?.SpriteStyle ?? SpriteStyle.Classic;
-            var png = _itemRenderer.RenderItemTooltip(item, itemFont, spriteStyle: spriteStyle);
+            // The profile's game decides the palette and art, as it does for the character in the UI.
+            var png = _itemRenderer.RenderItemTooltip(item, itemFont, spriteStyle: spriteStyle,
+                resurrected: _captureStore.CurrentFlavor(profile.Name) == GameFlavor.D2R);
             var imagesDir = Path.Combine(_paths.BasePath, "images");
             Directory.CreateDirectory(imagesDir);
             var index = Directory.GetFiles(imagesDir, item.Name + "*").Length + 1;

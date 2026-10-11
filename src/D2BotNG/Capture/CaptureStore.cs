@@ -75,21 +75,36 @@ public sealed partial class CaptureStore : IDisposable
     // together — see Discard.
     private readonly Dictionary<string, SqliteCommand> _prepared = [];
 
-    // The class-id-keyed half of an item's base facts. TooltipEngine.Embedded is an immutable
-    // process-lifetime singleton, so the answer cannot change under us; without this every
-    // re-report of an inventory re-resolves the same few hundred base items, four row lookups
-    // and two string-keyed ones each.
+    // The class-id-keyed half of an item's base facts, per variant — a class id names a different
+    // item in each game's tables (Reign of the Warlock shifts every misc row by 15). Each variant's
+    // engine is an immutable process-lifetime singleton, so the answer cannot change under us;
+    // without this every re-report of an inventory re-resolves the same few hundred base items,
+    // four row lookups and two string-keyed ones each.
     //
     // Null is a memoised "the tables describe no such base", so an unresolvable class id is
     // probed once rather than on every re-report of the item carrying it.
-    private readonly Dictionary<int, BaseFacts?> _baseFacts = [];
+    private readonly Dictionary<(D2ItemToolkit.GameVariant, int), BaseFacts?> _baseFacts = [];
 
+    /// <param name="logger">The store's logger.</param>
+    /// <param name="paths">Where the data directory, and so captures.db, lives.</param>
+    /// <param name="tooltip">
+    /// The 1.14d engine, which resolves LOD captures (and 1.14d searches). A D2R capture is resolved
+    /// with its own variant's engine instead — see <see cref="EngineFor" />.
+    /// </param>
     public CaptureStore(ILogger<CaptureStore> logger, Paths paths, TooltipEngine tooltip)
     {
         _logger = logger;
         _paths = paths;
         _tooltip = tooltip;
     }
+
+    /// <summary>
+    /// The engine whose tables a capture's ids index. 1.14d is the injected one, so a caller that
+    /// supplied its own tables keeps them; the D2R variants are the library's cached singletons.
+    /// </summary>
+    private TooltipEngine EngineFor(GameVariant variant) => variant == GameVariant.Lod114D
+        ? _tooltip
+        : TooltipEngine.ForVariant(GameEdition.ToToolkit(variant));
 
     /// <summary>
     /// Opens (creating if needed) the database for the current base path. Safe to call again
@@ -115,6 +130,7 @@ public sealed partial class CaptureStore : IDisposable
                 try
                 {
                     _connection = ConnectWaitingForLock(path);
+                    RecomputeGames();
                 }
                 catch (SqliteException ex) when (IsLocked(ex))
                 {
@@ -352,9 +368,25 @@ public sealed partial class CaptureStore : IDisposable
                 Execute("DELETE FROM container WHERE character_id = $c", transaction, ("$c", characterId));
             }
 
+            // The backend rides every message rather than a section. Written before anything that
+            // reads it — the game below, and through it every item this snapshot inserts — and only
+            // when named: an empty one comes from a producer that predates the field, and must not
+            // blank what a newer one already said about this character.
+            if (snapshot.Backend.Length > 0)
+            {
+                Execute("UPDATE character SET backend = $backend WHERE id = $c", transaction,
+                    ("$c", characterId), ("$backend", snapshot.Backend));
+            }
+
             var state = previous;
             if (snapshot.Identity != null) state = ApplyIdentity(characterId, snapshot.Identity, state, transaction);
-            if (snapshot.Player != null) state = ApplyPlayer(characterId, snapshot.Player, state, transaction);
+
+            // Which game, now that the backend and identity this snapshot carried are in — and so
+            // which tables its items are resolved with. A keyframe brings identity with its
+            // containers, so the items of a character switching game are read with the new tables.
+            var engine = EngineFor(RecomputeGames(characterId, transaction).Variant);
+
+            if (snapshot.Player != null) state = ApplyPlayer(characterId, snapshot.Player, state, engine, transaction);
 
             // The mercenary, decided by the keyframe rather than by the payload's `merc: null`.
             // The producer emits merc on EVERY keyframe — the object, or null when there is none —
@@ -363,7 +395,7 @@ public sealed partial class CaptureStore : IDisposable
             // unset otherwise means unchanged. A merc that goes for good mid-game (a hardcore
             // death) therefore lingers until the next game, which for a bot is minutes — and in
             // exchange a merc that is simply unresolvable for one sample is not thrown away.
-            if (snapshot.Merc != null) ApplyMerc(characterId, snapshot.Merc, transaction);
+            if (snapshot.Merc != null) ApplyMerc(characterId, snapshot.Merc, engine, transaction);
             else if (snapshot.Keyframe) DismissMerc(characterId, transaction);
 
             // Progression and kills are filed UNDER a difficulty, so they must run after identity
@@ -599,7 +631,7 @@ public sealed partial class CaptureStore : IDisposable
             """
             UPDATE character
                SET account = $account, realm = $realm, difficulty = $difficulty,
-                   char_flags = $flags, ladder = $ladder
+                   char_flags = $flags, ladder = $ladder, game_type = $gameType
              WHERE id = $c
             """,
             transaction,
@@ -608,10 +640,74 @@ public sealed partial class CaptureStore : IDisposable
             ("$realm", identity.Realm),
             ("$difficulty", identity.Difficulty),
             ("$flags", (long)identity.CharFlags),
-            ("$ladder", identity.Ladder ? 1 : 0));
+            ("$ladder", identity.Ladder ? 1 : 0),
+            // The section is whole, so an absent game type is the producer's answer — it predates
+            // the field — and NULL says that; 0 would say Classic.
+            ("$gameType", identity.HasGameType ? identity.GameType : null));
 
         return state with { Difficulty = identity.Difficulty };
     }
+
+    /// <summary>
+    /// Rewrites one character's game columns from what it reported, and hands back the result.
+    /// The columns are derived — <see cref="GameEdition" /> is the rule — and stored only so search
+    /// can filter on them.
+    /// </summary>
+    private Game RecomputeGames(long characterId, SqliteTransaction transaction)
+    {
+        Game? game = null;
+        using (var command = Command("SELECT backend, game_type, char_flags FROM character WHERE id = $c",
+                   transaction, ("$c", characterId)))
+        using (var reader = command.ExecuteReader())
+        {
+            if (reader.Read())
+            {
+                game = GameEdition.Of(reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetInt32(1),
+                    (uint)reader.GetInt64(2));
+            }
+        }
+
+        game ??= GameEdition.Of("", null, 0);
+        WriteGame(characterId, game, transaction);
+        return game;
+    }
+
+    /// <summary>
+    /// Recomputes every character's game columns, on open: a file migrated to version 5 holds only
+    /// the column defaults, and a build whose reading changed must not serve the last one's. A
+    /// handful of rows, so cheap — and best effort, because the store is usable without it (search
+    /// by game is the one thing a stale column would get wrong) and the caller's answer to an open
+    /// that throws is to recreate the file.
+    /// </summary>
+    private void RecomputeGames()
+    {
+        try
+        {
+            using var transaction = _connection!.BeginTransaction();
+            var rows = new List<(long Id, Game Game)>();
+            using (var command = Command("SELECT id, backend, game_type, char_flags FROM character", transaction))
+            using (var reader = command.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    rows.Add((reader.GetInt64(0), GameEdition.Of(reader.GetString(1),
+                        reader.IsDBNull(2) ? null : reader.GetInt32(2), (uint)reader.GetInt64(3))));
+                }
+            }
+
+            foreach (var (id, game) in rows) WriteGame(id, game, transaction);
+            transaction.Commit();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not recompute the captured characters' games");
+        }
+    }
+
+    private void WriteGame(long characterId, Game game, SqliteTransaction transaction) =>
+        Execute("UPDATE character SET game_flavor = $f, game_version = $v, game_variant = $va WHERE id = $c",
+            transaction, ("$c", characterId), ("$f", (int)game.Flavor), ("$v", game.Version),
+            ("$va", (int)game.Variant));
 
     /// <summary>
     /// The player wearer, flattened onto the character row. Every part is independently
@@ -619,7 +715,7 @@ public sealed partial class CaptureStore : IDisposable
     /// each be absent while the others are present. <see cref="ApplyMerc" /> is the same shape
     /// against the merc's own row.
     /// </summary>
-    private Cursor ApplyPlayer(long characterId, Unit wearer, Cursor state,
+    private Cursor ApplyPlayer(long characterId, Unit wearer, Cursor state, TooltipEngine engine,
         SqliteTransaction transaction)
     {
         // The unit document rides one fingerprint on the engine side, so `name` being PRESENT
@@ -634,10 +730,14 @@ public sealed partial class CaptureStore : IDisposable
         const int owner = CaptureSchema.OwnerPlayer;
         if (wearer.HasName)
         {
+            // last_used_skill rides this document, and the producer leaves the key out when the
+            // player has used none — so inside a present document its absence IS the answer, and
+            // NULL says it (0 would be Attack).
             Execute(
                 """
                 UPDATE character
-                   SET char_class = $class, flags_ex = $flagsEx, area = $area, hand = $hand
+                   SET char_class = $class, flags_ex = $flagsEx, area = $area, hand = $hand,
+                       last_used_skill = $skill
                  WHERE id = $c
                 """,
                 transaction,
@@ -645,7 +745,8 @@ public sealed partial class CaptureStore : IDisposable
                 ("$class", wearer.ClassId),
                 ("$flagsEx", (long)wearer.FlagsEx),
                 ("$area", wearer.Area),
-                ("$hand", wearer.Hand));
+                ("$hand", wearer.Hand),
+                ("$skill", wearer.HasLastUsedSkill ? wearer.LastUsedSkill : null));
 
             ReplaceSkills(characterId, owner, wearer.Skills, transaction);
             state = state with { Area = wearer.Area };
@@ -663,12 +764,12 @@ public sealed partial class CaptureStore : IDisposable
             }
         }
 
-        ReplaceContainers(characterId, owner, wearer.Containers, transaction);
+        ReplaceContainers(characterId, owner, wearer.Containers, engine, transaction);
         return state;
     }
 
     /// <summary>The mercenary wearer. Presence rules exactly as <see cref="ApplyPlayer" />.</summary>
-    private void ApplyMerc(long characterId, Unit merc, SqliteTransaction transaction)
+    private void ApplyMerc(long characterId, Unit merc, TooltipEngine engine, SqliteTransaction transaction)
     {
         if (merc.HasName)
         {
@@ -687,7 +788,7 @@ public sealed partial class CaptureStore : IDisposable
         }
 
         if (merc.Stats.Count > 0) ReplaceStats(characterId, CaptureSchema.OwnerMerc, merc.Stats, transaction);
-        ReplaceContainers(characterId, CaptureSchema.OwnerMerc, merc.Containers, transaction);
+        ReplaceContainers(characterId, CaptureSchema.OwnerMerc, merc.Containers, engine, transaction);
     }
 
     private void DismissMerc(long characterId, SqliteTransaction transaction)
@@ -848,7 +949,7 @@ public sealed partial class CaptureStore : IDisposable
     // Containers and items
     // -----------------------------------------------------------------------
 
-    private void ReplaceContainers(long characterId, int owner, Containers? containers,
+    private void ReplaceContainers(long characterId, int owner, Containers? containers, TooltipEngine engine,
         SqliteTransaction transaction)
     {
         if (containers == null) return;
@@ -869,7 +970,7 @@ public sealed partial class CaptureStore : IDisposable
             foreach (var page in containers.Stash.Pages)
             {
                 Insert(CaptureSchema.ContainerStash, page.Name, page.Kind, page.Type, page.Index, page.Gold,
-                    page.Width, page.Height, page.Items, false);
+                    page.Width, page.Height, page.Items, false, page.RemoveOnly, page.Season);
             }
         }
 
@@ -895,7 +996,8 @@ public sealed partial class CaptureStore : IDisposable
                 transaction, ("$c", characterId), ("$o", owner), ("$n", name));
 
         void Insert(string name, string label, StashTabKind stashKind, StashTabType stashType, int page,
-            uint gold, int width, int height, IEnumerable<Unit> items, bool slotIndexed)
+            uint gold, int width, int height, IEnumerable<Unit> items, bool slotIndexed, bool removeOnly = false,
+            uint season = 0)
         {
             // OR REPLACE for the same reason as ReplaceStats, and here the hazard is closer: the
             // stash inserts one row per page under a UNIQUE(character_id, owner, name, stash_kind,
@@ -906,15 +1008,16 @@ public sealed partial class CaptureStore : IDisposable
             var containerId = InsertReturningId(
                 """
                 INSERT OR REPLACE INTO container
-                    (character_id, owner, name, label, stash_kind, stash_type, page, gold, width, height)
-                VALUES ($c, $o, $n, $l, $k, $t, $pg, $g, $w, $h)
+                    (character_id, owner, name, label, stash_kind, stash_type, page, gold, width, height,
+                     remove_only, season)
+                VALUES ($c, $o, $n, $l, $k, $t, $pg, $g, $w, $h, $ro, $s)
                 RETURNING id
                 """,
                 transaction, ("$c", characterId), ("$o", owner), ("$n", name), ("$l", label),
                 ("$k", (int)stashKind), ("$t", (int)stashType), ("$pg", page), ("$g", (long)gold),
-                ("$w", width), ("$h", height));
+                ("$w", width), ("$h", height), ("$ro", removeOnly ? 1 : 0), ("$s", (long)season));
 
-            InsertItems(new ItemTarget(containerId, characterId, transaction), items, width, height,
+            InsertItems(new ItemTarget(containerId, characterId, engine, transaction), items, width, height,
                 slotIndexed);
 
             // Every top-level item in this container is its own root, settled in one statement
@@ -925,11 +1028,12 @@ public sealed partial class CaptureStore : IDisposable
     }
 
     /// <summary>
-    /// Where an item is being written. Invariant through the whole socket recursion, so it travels
-    /// as one value rather than as three parameters re-threaded through every frame.
+    /// Where an item is being written, and with which game's tables its ingest-time columns are
+    /// resolved. Invariant through the whole socket recursion, so it travels as one value rather
+    /// than as four parameters re-threaded through every frame.
     /// </summary>
     private readonly record struct ItemTarget(
-        long ContainerId, long CharacterId, SqliteTransaction Transaction);
+        long ContainerId, long CharacterId, TooltipEngine Engine, SqliteTransaction Transaction);
 
     /// <summary>
     /// A socket filler's place in its host; absent for a top-level item, which has no parent, no
@@ -987,7 +1091,7 @@ public sealed partial class CaptureStore : IDisposable
         // — SearchQueryBuilder's item alias, fixed to `parent_id IS NULL` — and the read path does
         // not select them at all, so resolving them for a filler would pay a requirements pass and
         // the merged-stats pass behind Damage to write six columns nothing can read.
-        var facts = placement is null ? ResolveBaseFacts(item, unit) : default;
+        var facts = placement is null ? ResolveBaseFacts(item, unit, target.Engine) : default;
 
         // root_id is bound directly for a filler, which already knows its host's. A top-level item
         // is its own root and cannot know its id yet, so it goes in as 0 and the caller settles
@@ -1003,7 +1107,7 @@ public sealed partial class CaptureStore : IDisposable
                 location, x, y, width, height,
                 tier, type_0, type_1, req_level, req_str, req_dex,
                 damage_1h_min, damage_1h_max, damage_2h_min, damage_2h_max,
-                damage_throw_min, damage_throw_max)
+                damage_throw_min, damage_throw_max, stack_count)
             VALUES (
                 $container, $parent, $root, $socket, $character, $gid, $unitType, $classId, $code,
                 $quality, $itemFlags, $format, $fileIndex, $itemLevel, $rarePrefix, $rareSuffix, $autoAffix,
@@ -1011,7 +1115,7 @@ public sealed partial class CaptureStore : IDisposable
                 $earLevel, $playerName, $gfxIndex, $title,
                 $location, $x, $y, $w, $h,
                 $tier, $type0, $type1, $reqLevel, $reqStr, $reqDex,
-                $d1hMin, $d1hMax, $d2hMin, $d2hMax, $dThrowMin, $dThrowMax)
+                $d1hMin, $d1hMax, $d2hMin, $d2hMax, $dThrowMin, $dThrowMax, $stackCount)
             RETURNING id
             """,
             target.Transaction,
@@ -1058,7 +1162,8 @@ public sealed partial class CaptureStore : IDisposable
             ("$d2hMin", facts.Damage.TwoHandMin),
             ("$d2hMax", facts.Damage.TwoHandMax),
             ("$dThrowMin", facts.Damage.ThrowMin),
-            ("$dThrowMax", facts.Damage.ThrowMax));
+            ("$dThrowMax", facts.Damage.ThrowMax),
+            ("$stackCount", item.HasStackCount ? item.StackCount : null));
 
         InsertStatLists(id, item, target.Transaction);
 
@@ -1074,9 +1179,9 @@ public sealed partial class CaptureStore : IDisposable
         // indexing — a rune carries no stats at all, and what it grants is a property of the pair,
         // which is already folded into the host's row here.
         if (placement is { } socket)
-            InsertSynthesisedFillerStats(id, item, unit, socket.Host, target.Transaction);
+            InsertSynthesisedFillerStats(id, item, unit, socket.Host, target.Engine, target.Transaction);
         else
-            InsertMergedStats(id, unit, target.Transaction);
+            InsertMergedStats(id, unit, target.Engine, target.Transaction);
     }
 
     /// <summary>
@@ -1097,19 +1202,19 @@ public sealed partial class CaptureStore : IDisposable
     /// requirement of zero.
     /// </summary>
     private (int? Tier, int? Type0, int? Type1, int? ReqLevel, int? ReqStr, int? ReqDex,
-        DamageLines Damage) ResolveBaseFacts(Unit item, CapturedUnit unit)
+        DamageLines Damage) ResolveBaseFacts(Unit item, CapturedUnit unit, TooltipEngine engine)
     {
         // The memo answers the unresolvable case as well, so a modded base costs one dictionary
         // lookup on every re-report rather than a table probe it will fail forever.
-        if (!_baseFacts.TryGetValue(item.ClassId, out var basics))
+        if (!_baseFacts.TryGetValue((engine.Variant, item.ClassId), out var basics))
         {
-            basics = _tooltip.Items.TryResolve(item.ClassId, out _, out _)
+            basics = engine.Items.TryResolve(item.ClassId, out _, out _)
                 ? new BaseFacts(
-                    (int)_tooltip.Items.Tier(item.ClassId),
-                    _tooltip.Types.Row(_tooltip.Items.PrimaryTypeCode(item.ClassId)),
-                    _tooltip.Types.Row(_tooltip.Items.SecondaryTypeCode(item.ClassId)))
+                    (int)engine.Items.Tier(item.ClassId),
+                    engine.Types.Row(engine.Items.PrimaryTypeCode(item.ClassId)),
+                    engine.Types.Row(engine.Items.SecondaryTypeCode(item.ClassId)))
                 : null;
-            _baseFacts[item.ClassId] = basics;
+            _baseFacts[(engine.Variant, item.ClassId)] = basics;
         }
 
         if (basics is not { } resolved) return (null, null, null, null, null, null, default);
@@ -1118,7 +1223,7 @@ public sealed partial class CaptureStore : IDisposable
         // 91, so two items sharing a base can differ. No viewer either — the item belongs to no
         // character, it may sit on a mule of any class — so the level is the general requirement
         // rather than any one character's.
-        var requirements = _tooltip.Requirements(unit);
+        var requirements = engine.Requirements(unit);
 
         // Every line the tooltip would draw, kept apart by kind — a reader ranking on one of them
         // is asking about that line, and they are not comparable: a two-handed weapon has no
@@ -1126,7 +1231,7 @@ public sealed partial class CaptureStore : IDisposable
         // also means no Barbarian dual-wield split: a stored column has to mean the same thing
         // wherever the item ends up.
         var damage = new DamageLines();
-        foreach (var line in _tooltip.Damage(unit).Lines)
+        foreach (var line in engine.Damage(unit).Lines)
         {
             damage = line.Kind switch
             {
@@ -1214,11 +1319,11 @@ public sealed partial class CaptureStore : IDisposable
     /// </para>
     /// </summary>
     private void InsertSynthesisedFillerStats(long id, Unit filler, CapturedUnit unit,
-        CapturedUnit host, SqliteTransaction transaction)
+        CapturedUnit host, TooltipEngine engine, SqliteTransaction transaction)
     {
         if (filler.StatsLists.Count > 0) return;
 
-        var granted = _tooltip.SocketFillerStats(unit, host);
+        var granted = engine.SocketFillerStats(unit, host);
         if (granted.Count == 0) return;
 
         var statListId = InsertStatList(id, 0, 0, 0, transaction);
@@ -1238,9 +1343,10 @@ public sealed partial class CaptureStore : IDisposable
     /// `value_host` is the same total without the socket fillers, which is what makes "30 of its
     /// own" a different search from "30 with a rune in it".
     /// </summary>
-    private void InsertMergedStats(long id, CapturedUnit unit, SqliteTransaction transaction)
+    private void InsertMergedStats(long id, CapturedUnit unit, TooltipEngine engine,
+        SqliteTransaction transaction)
     {
-        var merged = _tooltip.MergedStats(
+        var merged = engine.MergedStats(
             unit, new MergedStatsOptions { IncludeSockets = true, IncludeSetBonuses = false });
 
         // The host pass is only worth making when a filler could make the two differ: with nothing
@@ -1257,7 +1363,7 @@ public sealed partial class CaptureStore : IDisposable
         Dictionary<(int, int), long>? hostValues = null;
         if (unit.Items.Count > 0)
         {
-            var host = _tooltip.MergedStats(
+            var host = engine.MergedStats(
                 unit, new MergedStatsOptions { IncludeSockets = false, IncludeSetBonuses = false });
 
             hostValues = new Dictionary<(int, int), long>();

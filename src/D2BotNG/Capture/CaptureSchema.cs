@@ -41,8 +41,15 @@ internal static class CaptureSchema
     ///      gains a surrogate id and that unique pair, and every table that hung off the profile
     ///      string hangs off the id instead. One profile playing several characters — a mule
     ///      profile — used to overwrite each with the next; now each keeps its own capture
+    ///   4  `character` records which game build's data its ids index (`backend`) and its game
+    ///      type; `item` records an advanced stash slot's stack size. All three are columns added
+    ///      in place: nothing that existed changes meaning, so no table is rebuilt
+    ///   5  `character` records the player's last-used skill, which D2R's requirement rules read,
+    ///      and the game it is of (flavor, version, variant), derived and stored for search
+    ///   6  a stash page records whether it is remove-only (D2R's shared tabs from a previous
+    ///      season) and the season it belongs to; both columns added in place
     /// </summary>
-    public const int Version = 3;
+    public const int Version = 6;
 
     /// <summary>
     /// Owner discriminator on containers, stats and skills. Matches the Owner proto enum.
@@ -85,6 +92,34 @@ internal static class CaptureSchema
             label         TEXT    NOT NULL DEFAULT '',
             stash_kind    INTEGER NOT NULL DEFAULT 0,  -- StashTabKind: 0 personal, 1 shared
             stash_type    INTEGER NOT NULL DEFAULT 0,  -- StashTabType: 0 normal, 1 advanced, 2 chronicle
+            page          INTEGER NOT NULL DEFAULT 0,
+            gold          INTEGER NOT NULL DEFAULT 0,
+            width         INTEGER NOT NULL DEFAULT 0,
+            height        INTEGER NOT NULL DEFAULT 0,
+            -- Version 6, last because ALTER TABLE ADD COLUMN appends them there. A stash page
+            -- items can be taken off but not put on (D2R's shared tabs from a previous season),
+            -- and the season a shared page belongs to; 0 / 0 everywhere else, LoD included.
+            remove_only   INTEGER NOT NULL DEFAULT 0,
+            season        INTEGER NOT NULL DEFAULT 0,
+            UNIQUE (character_id, owner, name, stash_kind, page)
+        ) STRICT;
+        """;
+
+    /// <summary>
+    /// The container table as versions 3 to 5 wrote it, kept for the 2→3 step: built from the
+    /// current shape, that step would already hold version 6's columns and the 5→6 step's ADD
+    /// COLUMN would then fail on them.
+    /// </summary>
+    private static string ContainerV3Table(string table) =>
+        $"""
+        CREATE TABLE {table} (
+            id            INTEGER PRIMARY KEY,
+            character_id  INTEGER NOT NULL REFERENCES character(id) ON DELETE CASCADE,
+            owner         INTEGER NOT NULL,
+            name          TEXT    NOT NULL,
+            label         TEXT    NOT NULL DEFAULT '',
+            stash_kind    INTEGER NOT NULL DEFAULT 0,
+            stash_type    INTEGER NOT NULL DEFAULT 0,
             page          INTEGER NOT NULL DEFAULT 0,
             gold          INTEGER NOT NULL DEFAULT 0,
             width         INTEGER NOT NULL DEFAULT 0,
@@ -134,7 +169,7 @@ internal static class CaptureSchema
         // rebuilt beside itself. The old `character` goes last, since every copy joins it.
         [2] = new(
             $"""
-            {CharacterTable("character_v3")}
+            {CharacterV3Table("character_v3")}
             INSERT INTO character_v3 (id, profile, char_name, account, realm, char_class, level, char_flags,
                                       flags_ex, ladder, difficulty, area, hand, game_id, updated_at, area_entered_at)
             SELECT rowid, profile, char_name, account, realm, char_class, level, char_flags,
@@ -171,7 +206,7 @@ internal static class CaptureSchema
             SELECT c.rowid, t.difficulty, t.area, t.milliseconds
               FROM area_time t JOIN character c ON c.profile = t.profile;
 
-            {ContainerTable("container_v3")}
+            {ContainerV3Table("container_v3")}
             INSERT INTO container_v3 (id, character_id, owner, name, label, stash_kind, stash_type, page, gold,
                                       width, height)
             SELECT t.id, c.rowid, t.owner, t.name, t.label, t.stash_kind, t.stash_type, t.page, t.gold,
@@ -195,6 +230,42 @@ internal static class CaptureSchema
             """,
             "merc", "wearer_stat", "wearer_skill", "progression", "kill", "area_time", "container", "item",
             "statlist"),
+
+        // 3 -> 4: three columns, each appended in place, so a fresh file states them in the same
+        // trailing positions (see CharacterTable and `item`). Existing rows take the meaning the
+        // older producer actually had: no backend named (it ran on 1.14d only), game type unknown
+        // rather than Classic, and no stack — a version-3 manager never stored an advanced page's
+        // slot counts, and the next stash re-send fills them. Nothing re-points a key, so there
+        // is nothing for the foreign key check to verify.
+        [3] = new(
+            """
+            ALTER TABLE character ADD COLUMN backend TEXT NOT NULL DEFAULT '';
+            ALTER TABLE character ADD COLUMN game_type INTEGER;
+            ALTER TABLE item ADD COLUMN stack_count INTEGER;
+            """),
+
+        // 4 -> 5: the player's last-used skill and the game the capture is of, appended in place.
+        // last_used_skill is NULL on existing rows: no earlier producer reported it, and 0 would
+        // claim Attack. The game columns take the defaults (LOD, Expansion, 1.14d) only until
+        // CaptureStore.Open recomputes every row from what was reported, which it does on every
+        // open — so the rule lives in GameEdition alone and is not restated here in SQL.
+        [4] = new(
+            """
+            ALTER TABLE character ADD COLUMN last_used_skill INTEGER;
+            ALTER TABLE character ADD COLUMN game_flavor INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE character ADD COLUMN game_version INTEGER NOT NULL DEFAULT 2;
+            ALTER TABLE character ADD COLUMN game_variant INTEGER NOT NULL DEFAULT 0;
+            """),
+
+        // 5 -> 6: a stash page's remove-only flag and season, appended in place. Existing rows
+        // take 0 / 0, which is what every earlier producer meant: none reported a remove-only
+        // page (they listed old-season tabs as ordinary shared pages), and the next stash re-send
+        // corrects any that were.
+        [5] = new(
+            """
+            ALTER TABLE container ADD COLUMN remove_only INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE container ADD COLUMN season INTEGER NOT NULL DEFAULT 0;
+            """),
     };
 
     /// <summary>
@@ -252,6 +323,50 @@ internal static class CaptureSchema
             game_id          TEXT    NOT NULL DEFAULT '',
             updated_at       INTEGER NOT NULL DEFAULT 0,  -- epoch ms, game-side assembly time
             area_entered_at  INTEGER,                     -- epoch ms; NULL until a real in-game entry
+            -- Version 4's additions, last because ALTER TABLE ADD COLUMN appends them there.
+            -- Which game build's data the ids index ("1.14d" / "d2r"); '' until a producer that
+            -- names it reports, and the producers that don't ran on 1.14d only.
+            backend          TEXT    NOT NULL DEFAULT '',
+            -- 0 Classic, 1 Expansion, 2 RotW. NULL until reported: 0 is a real answer, and an
+            -- older producer sends none.
+            game_type        INTEGER,
+            -- Version 5, appended the same way. D2R: the player's last-used skill id, which one
+            -- requirement rule reads. NULL until reported, since 0 is a real skill (Attack).
+            last_used_skill  INTEGER,
+            -- Version 5 as well: the game the capture is of (GameEdition), stored so search can
+            -- filter on it. DERIVED from backend, game_type and char_flags — rewritten with them on
+            -- every snapshot and recomputed for every row on open, never written independently.
+            game_flavor      INTEGER NOT NULL DEFAULT 0,  -- GameFlavor: 0 LOD, 1 D2R
+            game_version     INTEGER NOT NULL DEFAULT 2,  -- 1 Classic, 2 Expansion, 3 RotW
+            game_variant     INTEGER NOT NULL DEFAULT 0,  -- GameVariant: the tables its ids index
+            UNIQUE (profile, char_name)
+        ) STRICT;
+        """;
+
+    /// <summary>
+    /// The character table as version 3 wrote it, kept for the 2→3 step for the same reason as
+    /// <see cref="ContainerV2Table" />: built from the current shape, that step would already
+    /// hold version 4's columns and the 3→4 step's ADD COLUMN would then fail on them.
+    /// </summary>
+    private static string CharacterV3Table(string table) =>
+        $"""
+        CREATE TABLE {table} (
+            id               INTEGER PRIMARY KEY,
+            profile          TEXT    NOT NULL,
+            char_name        TEXT    NOT NULL DEFAULT '',
+            account          TEXT    NOT NULL DEFAULT '',
+            realm            TEXT    NOT NULL DEFAULT '',
+            char_class       INTEGER NOT NULL DEFAULT 0,
+            level            INTEGER NOT NULL DEFAULT 0,
+            char_flags       INTEGER NOT NULL DEFAULT 0,
+            flags_ex         INTEGER NOT NULL DEFAULT 0,
+            ladder           INTEGER NOT NULL DEFAULT 0,
+            difficulty       INTEGER,
+            area             INTEGER NOT NULL DEFAULT 0,
+            hand             INTEGER NOT NULL DEFAULT 0,
+            game_id          TEXT    NOT NULL DEFAULT '',
+            updated_at       INTEGER NOT NULL DEFAULT 0,
+            area_entered_at  INTEGER,
             UNIQUE (profile, char_name)
         ) STRICT;
         """;
@@ -485,11 +600,17 @@ internal static class CaptureSchema
             damage_throw_max INTEGER,
 
             -- Denormalised from the container, so a search can filter by character before it
-            -- joins anything. LAST, and without a REFERENCES clause, because that is the one shape
-            -- ALTER TABLE ADD COLUMN can produce — the 2→3 migration adds it in place rather than
-            -- rewriting the store's largest table — and a fresh file must match a migrated one.
-            -- A character's deletion still reaches these rows: through container, which cascades.
-            character_id     INTEGER NOT NULL DEFAULT 0
+            -- joins anything. Without a REFERENCES clause, and after every original column,
+            -- because that is the one shape ALTER TABLE ADD COLUMN can produce — the 2→3 migration
+            -- adds it in place rather than rewriting the store's largest table — and a fresh file
+            -- must match a migrated one. A character's deletion still reaches these rows: through
+            -- container, which cascades.
+            character_id     INTEGER NOT NULL DEFAULT 0,
+
+            -- Version 4, appended in place after character_id for the same reason. The slot's
+            -- stack size on a D2R advanced stash page; NULL on every other item, which is not a
+            -- slot at all rather than an empty one.
+            stack_count      INTEGER
         ) STRICT;
 
         -- One leaf stat array off the item's statlist chain. state_no and flags are the game's

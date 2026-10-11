@@ -4,8 +4,8 @@
 
 import { memo, useEffect, useRef } from "react";
 import { SpriteStyle } from "@/generated/settings_pb";
-import { useSettings } from "@/stores/event-store";
-import { appearanceFromShift } from "./hdRenderer";
+import { PLAIN_APPEARANCE } from "./hdRenderer";
+import { useSpriteStyle } from "./spriteStyleContext";
 import { useItemSprite, type UseItemSpriteOptions } from "./useItemSprite";
 
 export interface ItemSpriteProps extends UseItemSpriteOptions {
@@ -36,11 +36,11 @@ export const ItemSprite = memo(function ItemSprite({
   // The setting is read here rather than passed down from every call site: which artwork to draw
   // is one preference for the whole app, and threading it through the grids, the paperdoll, the
   // tooltip and the search results would put the same prop in a dozen signatures that have no
-  // opinion about it.
-  const style = useSettings()?.display?.spriteStyle ?? SpriteStyle.CLASSIC;
+  // opinion about it. A subtree showing a D2R character overrides it — see `ForcedSpriteStyle`.
+  const style = useSpriteStyle();
 
-  // A v2 capture supplies this; every other source is derived from its palette shift.
-  const appearance = hd ?? appearanceFromShift(colorShift);
+  // A v2 capture supplies this; every other source draws the base art its sprite name names.
+  const appearance = hd ?? PLAIN_APPEARANCE;
 
   const { bitmap, loading, error } = useItemSprite(code, {
     colorShift,

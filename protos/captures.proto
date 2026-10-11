@@ -139,6 +139,20 @@ message Unit {
   // The tooltip library needs it to narrow the roll ranges of the affixes whose span depends on
   // it; without it those come back in ItemRollRanges.itemLevelDependent instead of as bounds.
   int32 item_level = 32;
+
+  // How many the slot holds, on an item of a D2R ADVANCED stash page and nowhere else. Every item
+  // on such a page is a slot holding one class's stack, and the producer reads it as ItemCount() —
+  // which on any other item counts the socket fillers, so it is sent only where it means a stack.
+  // Optional because absence is the common case and says "not a slot", not "an empty one". The
+  // quantity stat is independent and stays in stats_lists.
+  optional int32 stack_count = 33;
+
+  // Player only, D2R only: the id of the last skill the player used (pSkillList->pUsedSkill).
+  // The tooltip library needs it for one requirement rule — a Warlock's Levitate lowers weapon
+  // requirements except on a throwing weapon while the last skill used was a throwing one.
+  // Optional because 0 is a real skill (Attack); absent means unchanged, like any field outside
+  // the unit document, so it can ride its own fingerprint rather than the document's.
+  optional int32 last_used_skill = 34;
 }
 
 // One leaf stat array off a unit's statlist chain. `flags` and `state_no` are the game's own
@@ -247,6 +261,12 @@ message StashPage {
   int32 width = 6;
   int32 height = 7;
   repeated Unit items = 8;
+  // Items can be taken off this page but not put on it: D2R's shared tabs from a previous season,
+  // which the game shows only behind its "Old stash" toggle and deletes at the next season.
+  // false wherever the game has none, LoD included — the same zero-is-the-old-meaning rule.
+  bool remove_only = 9;
+  // The season a shared page belongs to, as the game numbers it; 0 where there are no seasons.
+  uint32 season = 10;
 }
 
 // ---------------------------------------------------------------------------
@@ -283,6 +303,13 @@ message Snapshot {
   // keyframe means there is no merc, unset otherwise means unchanged.
   Unit merc = 8;
   Kills kills = 9;               // DELTA since the last send, not a running total
+
+  // Which game build produced this snapshot, and so whose tables the ids in it index:
+  // "LOD/<patch>" ("LOD/1.14d") or "D2R/<build>" ("D2R/91923"). On every message, not a section.
+  // Identity.game_type cannot answer this — one game type has different stat ids and tables on the
+  // two. Empty from a producer that predates the field, which only ever ran on 1.14d; an
+  // intermediate producer spelled it bare, "1.14d" / "d2r". See Game for how it is read.
+  string backend = 10;
 }
 
 // Account-level facts. Carries no character identity: name, class, level and area all ride the
@@ -293,6 +320,12 @@ message Identity {
   int32 difficulty = 3;   // 0 Normal, 1 Nightmare, 2 Hell
   uint32 char_flags = 4;  // .d2s status byte: hardcore 0x04, expansion 0x20
   bool ladder = 5;        // a separate BnetData flag, not in char_flags
+
+  // 0 Classic, 1 Expansion, 2 Reign of the Warlock — as scripts see it, compatibility flags
+  // applied, so a RotW game reports 1 while D2R's rotwLegacyGameType is on (its default).
+  // Optional because 0 is a real answer (Classic): a producer that predates the field sends none,
+  // and reading that as Classic would mislabel every expansion character it ever reported.
+  optional int32 game_type = 6;
 }
 
 // Kills since the engine's last send — it clears its own tally on send, so these are added to
@@ -335,6 +368,37 @@ message CharacterSummary {
   int32 level = 4;
 
   google.protobuf.Timestamp updated_at = 5;  // last snapshot received; the freshness signal
+
+  string backend = 6;  // Snapshot.backend as last reported, verbatim; empty from an older producer
+  Game game = 7;       // which game the capture is of, read from backend, game type and char flags
+}
+
+// Which of the two games a capture comes from — the producer's backend, with the build stripped.
+// A capture whose producer named no backend is LOD: every producer that predates the field ran on
+// 1.14d only.
+enum GameFlavor {
+  GAME_FLAVOR_LOD = 0;
+  GAME_FLAVOR_D2R = 1;
+}
+
+// Which game tables a capture's ids index. Values match D2ItemToolkit's GameVariant, which is what
+// they select: LOD is always 1.14d; D2R is its base tables unless the game is Reign of the Warlock.
+enum GameVariant {
+  GAME_VARIANT_LOD_114D = 0;
+  GAME_VARIANT_RESURRECTED = 1;
+  GAME_VARIANT_REIGN_OF_THE_WARLOCK = 2;
+}
+
+// What the manager reads off a capture's backend, game type and char flags — derived in ONE place
+// (Capture/GameEdition.cs) and served, so the viewer, search and ingest cannot disagree on which
+// tables a character's items are read with.
+message Game {
+  GameFlavor flavor = 1;
+  // 1 Classic, 2 Expansion, 3 Reign of the Warlock: Identity.game_type plus one when reported,
+  // else the expansion bit (0x20) of char_flags — the only answer an older producer gives, and
+  // never RotW, which only D2R has.
+  int32 version = 2;
+  GameVariant variant = 3;
 }
 
 // A captured character: the manager's own facts, wrapped around the wearers themselves.
@@ -365,6 +429,11 @@ message Character {
   repeated Progression progression = 8;  // one entry per difficulty seen
   repeated Kill kills = 9;               // lifetime totals, accumulated from per-send deltas
   repeated AreaTime area_time = 10;      // lifetime time per area (ms)
+
+  // Snapshot.backend as last reported, verbatim. Not part of Identity, because Identity is a wire
+  // section the producer sends only when it moved, and the backend rides every message beside it.
+  string backend = 11;
+  Game game = 12;  // as on CharacterSummary
 }
 
 // Quest/waypoint progression for one difficulty. Doubles as the wire section, where the engine
@@ -562,6 +631,19 @@ message SearchItemsRequest {
   int32 limit = 20;  // 0 = server default
 
   Ordering ordering = 21;  // absent = the store's own grouping order
+
+  // ---- which game.
+  //
+  // The tables every row and id above is written in — class_ids, item_types, stat ids, runeword
+  // ids, specific items — AND the only game searched: only characters whose Game.variant it is are
+  // looked at. A search spans one game's tables because the games number the same things
+  // differently (Reign of the Warlock moves every misc.txt row; D2R's ItemTypes.txt gains a `none`
+  // row 0), so a row means one thing in exactly one of them. Zero is 1.14d.
+  GameVariant variant = 22;
+  // Within that game. Each ORs within itself, empty = no filter, like the identity fields above.
+  repeated int32 game_versions = 23;  // Game.version: 1 Classic, 2 Expansion, 3 RotW
+  // Identity.realm, exactly; "" names the single-player captures, which report no realm.
+  repeated string realms = 24;
 }
 
 // How to order the results.

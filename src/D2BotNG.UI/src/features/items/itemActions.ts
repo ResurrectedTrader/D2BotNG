@@ -38,7 +38,7 @@ export function getCleanItemDescription(
 ): string {
   if (breakdown && item.detail) {
     return item.detail
-      .lines()
+      .lines({ standalone: true })
       .map((line) => line.segments.map((s) => s.text).join(""))
       .join("\n")
       .trim();
@@ -46,7 +46,9 @@ export function getCleanItemDescription(
 
   // Rendered on demand for a source that carries no text of its own, exactly as the tooltip does —
   // otherwise copying a captured item would put an empty string on the clipboard.
-  const raw = item.describe?.() ?? item.description ?? "";
+  // Standalone: a copy is usually made to trade the item, and the set block describes the
+  // wearer's other pieces — a single piece grants none of those bonuses.
+  const raw = item.describe?.({ standalone: true }) ?? item.description ?? "";
   const beforeMeta = raw.split("$")[0];
   // Lines may use literal "\n" (escape sequence in JSON) or real newlines.
   const normalized = beforeMeta.includes(String.raw`\n`)

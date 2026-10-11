@@ -46,7 +46,8 @@ public sealed partial class CaptureStore
         Read(
             $"""
              SELECT profile, account, realm, char_flags, ladder, difficulty,
-                    char_name, char_class, level, updated_at
+                    char_name, game_type, backend, char_class, level, updated_at,
+                    game_flavor, game_version, game_variant
                FROM character
               {(characterId == null ? "" : "WHERE id = $c")}
               ORDER BY profile, char_name
@@ -55,9 +56,11 @@ public sealed partial class CaptureStore
             {
                 Key = ReadKey(reader),
                 Identity = ReadIdentity(reader),
-                ClassId = reader.GetInt32(7),
-                Level = reader.GetInt32(8),
-                UpdatedAt = ToTimestamp(reader.GetInt64(9)),
+                Backend = reader.GetString(8),
+                ClassId = reader.GetInt32(9),
+                Level = reader.GetInt32(10),
+                UpdatedAt = ToTimestamp(reader.GetInt64(11)),
+                Game = ReadGame(reader, 12),
             }),
             args);
 
@@ -65,17 +68,32 @@ public sealed partial class CaptureStore
     }
 
     /// <summary>
-    /// Both character queries select the key and identity columns first and in the same order, so
-    /// one reader serves both. A NULL difficulty means no identity section has named one yet; 0
-    /// (Normal) is the closest truth to serve, and the store itself keeps the distinction.
+    /// Both character queries select the key, identity and backend columns first and in the same
+    /// order (0..8), so one reader serves both. A NULL difficulty means no identity section has
+    /// named one yet; 0 (Normal) is the closest truth to serve, and the store itself keeps the
+    /// distinction. A NULL game type is served as absent, since it has explicit presence on the
+    /// wire too.
     /// </summary>
-    private static Identity ReadIdentity(SqliteDataReader reader) => new()
+    private static Identity ReadIdentity(SqliteDataReader reader)
     {
-        Account = reader.GetString(1),
-        Realm = reader.GetString(2),
-        CharFlags = (uint)reader.GetInt64(3),
-        Ladder = reader.GetInt32(4) != 0,
-        Difficulty = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
+        var identity = new Identity
+        {
+            Account = reader.GetString(1),
+            Realm = reader.GetString(2),
+            CharFlags = (uint)reader.GetInt64(3),
+            Ladder = reader.GetInt32(4) != 0,
+            Difficulty = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
+        };
+        if (!reader.IsDBNull(7)) identity.GameType = reader.GetInt32(7);
+        return identity;
+    }
+
+    /// <summary>The three stored game columns, from <paramref name="first" /> on.</summary>
+    private static Game ReadGame(SqliteDataReader reader, int first) => new()
+    {
+        Flavor = (GameFlavor)reader.GetInt32(first),
+        Version = reader.GetInt32(first + 1),
+        Variant = (GameVariant)reader.GetInt32(first + 2),
     };
 
     private static CharacterKey ReadKey(SqliteDataReader reader) => new()
@@ -83,6 +101,28 @@ public sealed partial class CaptureStore
         Profile = reader.GetString(0),
         Name = reader.GetString(6),
     };
+
+    /// <summary>
+    /// Which game a profile is playing now — its current character's, or else its most recently
+    /// reported one's. Null when the profile has no capture at all (a v1 profile, or one that has
+    /// not reported yet), which callers read as 1.14d.
+    ///
+    /// For the paths that hold only a profile and something the game produced — an item it saved,
+    /// an item a webhook posts — and need to know whose palette and art that is.
+    /// </summary>
+    public GameFlavor? CurrentFlavor(string profile)
+    {
+        lock (_lock)
+        {
+            if (_connection == null) return null;
+
+            using var command = _current.TryGetValue(profile, out var current)
+                ? Command("SELECT game_flavor FROM character WHERE id = $c", null, ("$c", current))
+                : Command("SELECT game_flavor FROM character WHERE profile = $p ORDER BY updated_at DESC, id DESC LIMIT 1",
+                    null, ("$p", profile));
+            return command.ExecuteScalar() is long flavor ? (GameFlavor)flavor : null;
+        }
+    }
 
     /// <summary>
     /// One character, whole — both wearers with every container, item, stat list and socket
@@ -99,32 +139,37 @@ public sealed partial class CaptureStore
             Read(
                 """
                 SELECT profile, account, realm, char_flags, ladder, difficulty,
-                       char_name, char_class, flags_ex, area, hand, game_id, updated_at,
-                       area_entered_at, id
+                       char_name, game_type, backend, char_class, flags_ex, area, hand, game_id,
+                       updated_at, area_entered_at, id, last_used_skill,
+                       game_flavor, game_version, game_variant
                   FROM character WHERE profile = $p AND char_name = $n
                 """,
                 reader =>
                 {
-                    characterId = reader.GetInt64(14);
+                    characterId = reader.GetInt64(16);
                     character = new Character
                     {
                         Key = ReadKey(reader),
                         Identity = ReadIdentity(reader),
+                        Backend = reader.GetString(8),
+                        Game = ReadGame(reader, 18),
                         // The player IS the character — name, class, flags and position live on
                         // the wearer, exactly as the engine reports them.
                         Player = new Unit
                         {
                             UnitType = PlayerUnitType,
                             Name = reader.GetString(6),
-                            ClassId = reader.GetInt32(7),
-                            FlagsEx = (uint)reader.GetInt64(8),
-                            Area = reader.GetInt32(9),
-                            Hand = reader.GetInt32(10),
+                            ClassId = reader.GetInt32(9),
+                            FlagsEx = (uint)reader.GetInt64(10),
+                            Area = reader.GetInt32(11),
+                            Hand = reader.GetInt32(12),
                         },
-                        GameId = reader.GetString(11),
-                        UpdatedAt = ToTimestamp(reader.GetInt64(12)),
-                        AreaEnteredAt = reader.IsDBNull(13) ? null : ToTimestamp(reader.GetInt64(13)),
+                        GameId = reader.GetString(13),
+                        UpdatedAt = ToTimestamp(reader.GetInt64(14)),
+                        AreaEnteredAt = reader.IsDBNull(15) ? null : ToTimestamp(reader.GetInt64(15)),
                     };
+                    // Absent rather than 0 when never reported: 0 is Attack.
+                    if (!reader.IsDBNull(17)) character.Player.LastUsedSkill = reader.GetInt32(17);
                 },
                 ("$p", key.Profile), ("$n", key.Name));
 
@@ -165,7 +210,7 @@ public sealed partial class CaptureStore
         // it is also where a malformed request throws. Doing that inside the lock would stall
         // ingest for pure CPU work — and, on the rejection path, for work that never had a query
         // to run.
-        var sql = new SearchQueryBuilder(request, _tooltip);
+        var sql = new SearchQueryBuilder(request, EngineFor);
         var args = sql.Parameters;
 
         lock (_lock)
@@ -356,10 +401,11 @@ public sealed partial class CaptureStore
         // mercenary would take eight queries where four do — all of them holding the store's lock
         // against ingest, on the path the UI refetches from.
         var rows = new List<(long Id, int Owner, string Name, string Label, int StashKind, int StashType,
-            int Page, long Gold, int Width, int Height)>();
+            int Page, long Gold, int Width, int Height, bool RemoveOnly, long Season)>();
         using (var command = Command(
                    """
-                   SELECT id, owner, name, label, stash_kind, stash_type, page, gold, width, height
+                   SELECT id, owner, name, label, stash_kind, stash_type, page, gold, width, height,
+                          remove_only, season
                      FROM container
                     WHERE character_id = $c ORDER BY owner, name, stash_kind, page
                    """, null, ("$c", characterId)))
@@ -369,7 +415,7 @@ public sealed partial class CaptureStore
             {
                 rows.Add((reader.GetInt64(0), reader.GetInt32(1), reader.GetString(2), reader.GetString(3),
                     reader.GetInt32(4), reader.GetInt32(5), reader.GetInt32(6), reader.GetInt64(7),
-                    reader.GetInt32(8), reader.GetInt32(9)));
+                    reader.GetInt32(8), reader.GetInt32(9), reader.GetInt32(10) != 0, reader.GetInt64(11)));
             }
         }
 
@@ -393,7 +439,8 @@ public sealed partial class CaptureStore
         character.Player.Containers = new Containers();
         if (character.Merc != null) character.Merc.Containers = new Containers();
 
-        foreach (var (id, owner, name, label, stashKind, stashType, page, gold, width, height) in rows)
+        foreach (var (id, owner, name, label, stashKind, stashType, page, gold, width, height, removeOnly, season)
+                 in rows)
         {
             // Null for a merc that has no row, which drops its orphaned containers — the same
             // rule Populate applies to orphaned stats and skills.
@@ -430,6 +477,8 @@ public sealed partial class CaptureStore
                         Width = width,
                         Height = height,
                         Items = { items },
+                        RemoveOnly = removeOnly,
+                        Season = (uint)season,
                     });
                     break;
             }
@@ -468,7 +517,7 @@ public sealed partial class CaptureStore
                            i.location, i.x, i.y, i.width, i.height,
                            i.magic_prefix_0, i.magic_prefix_1, i.magic_prefix_2,
                            i.magic_suffix_0, i.magic_suffix_1, i.magic_suffix_2,
-                           i.item_level, i.container_id
+                           i.item_level, i.container_id, i.stack_count
                       FROM item i
                      WHERE {where}
                      ORDER BY i.parent_id NULLS FIRST, i.socket_index, i.id
@@ -502,9 +551,11 @@ public sealed partial class CaptureStore
                     Height = reader.GetInt32(22),
                     // Appended after the magic prefix/suffix block rather than beside file_index,
                     // so the 23..28 slot indices below keep meaning what they say. Anything else
-                    // this query grows goes on the end for the same reason — container_id at 30.
+                    // this query grows goes on the end for the same reason — container_id at 30,
+                    // stack_count at 31.
                     ItemLevel = reader.GetInt32(29),
                 };
+                if (!reader.IsDBNull(31)) record.StackCount = reader.GetInt32(31);
                 // All three slots, always: the position is the slot, so trailing empties are part
                 // of the shape rather than padding to be trimmed.
                 for (var slot = 0; slot < 3; slot++)

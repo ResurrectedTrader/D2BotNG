@@ -82,6 +82,15 @@ export interface DisplayItem extends RenderableItem {
   height: number;
   /** Session unit id — a React key that is stable while the game is, unlike the grid position. */
   gid: number;
+  /** An advanced stash slot's stack size; absent everywhere else. */
+  stackCount?: number;
+  /** False for an unidentified item; absent when the source cannot say (v1, mule lines). */
+  identified?: boolean;
+  /**
+   * False when the wearer could not use it — requirements unmet, broken or unequippable — which is
+   * what the game paints red behind it; absent when the source cannot say.
+   */
+  usable?: boolean;
 }
 
 /** A grid of items, or a slot set when the dimensions are zero. */
@@ -134,6 +143,13 @@ export interface DisplayStashPage {
   type: StashPageType;
   /** Gold held on this page; 0 when none, or when the producer reports no per-page figure. */
   gold: number;
+  /**
+   * Items can be taken off but not put on: D2R's shared tabs from a previous season, which the
+   * game keeps behind its "Old stash" toggle. False everywhere else, LoD included.
+   */
+  removeOnly: boolean;
+  /** The season a shared page belongs to, as the game numbers it; 0 where there are none. */
+  season: number;
   container: DisplayContainer;
 }
 
@@ -158,6 +174,83 @@ export const STAT_STASH_GOLD = 15;
 /** A stat off a wearer as a number; 0 when unreported. Both stacks send the same `{id, value}`. */
 export function statOf(stats: StatValue[] | undefined, id: number): number {
   return Number(stats?.find((s) => s.id === id)?.value ?? 0n);
+}
+
+/** Experience, and the thresholds of the current and next level (lastexp / nextexp). */
+export const STAT_EXPERIENCE = 13;
+export const STAT_LAST_EXPERIENCE = 29;
+export const STAT_NEXT_EXPERIENCE = 30;
+
+/** How far through a level `exp` is, given its two thresholds. */
+export interface LevelProgress {
+  fraction: number;
+  /** Experience now, the current level's threshold, and the next level's. */
+  experience: number;
+  last: number;
+  next: number;
+  /** Experience still to go. */
+  remaining: number;
+}
+
+/** Null when a threshold is unknown or the two do not bound `exp` (the top level, say). */
+export function levelProgress(
+  exp: number,
+  last: number | null,
+  next: number | null,
+): LevelProgress | null {
+  if (last === null || next === null) return null;
+  if (next <= last || exp < last || exp >= next) return null;
+  return {
+    fraction: (exp - last) / (next - last),
+    experience: exp,
+    last,
+    next,
+    remaining: next - exp,
+  };
+}
+
+/**
+ * A mercenary's level thresholds. The game keeps only the NEXT one on the unit (stat 30; stat 29
+ * arrives as 0). A hireling's curve is `expPerLevel × n² × (n + 1)` for the experience to REACH
+ * level n (hireling.txt `Exp/Lvl`) — a level-95 merc's stat 30 of 107,274,240 is exactly
+ * 120 × 96² × 97 — so the current level's threshold is the next one scaled by the ratio of the
+ * two cubics. A reported stat 29 is believed first.
+ */
+export function mercThresholds(
+  stats: StatValue[] | undefined,
+  level: number,
+): { last: number | null; next: number | null } {
+  const next = statOf(stats, STAT_NEXT_EXPERIENCE);
+  if (next <= 0 || level < 1) return { last: null, next: null };
+  const reported = statOf(stats, STAT_LAST_EXPERIENCE);
+  if (reported > 0) return { last: reported, next };
+  const curve = (l: number) => l * l * (l + 1);
+  return { last: Math.round((next * curve(level)) / curve(level + 1)), next };
+}
+
+/**
+ * Who the character is, as the top of its panel names it. The class is an id, resolved where it
+ * is drawn: names come from the character's own game's tables (`CharacterVariant`), which are in
+ * context only inside the view.
+ */
+export interface DisplayIdentity {
+  name: string;
+  level: number;
+  charClass: number;
+  /** Experience, for the bar under the name (thresholds from experience.txt, where drawn). */
+  experience: number;
+}
+
+/**
+ * A living mercenary as its panel's band names it: name, level, kind of hireling (a monstats
+ * row, resolved where drawn), and how far through the level it is.
+ */
+export interface DisplayMercInfo {
+  name: string;
+  level: number;
+  classId: number;
+  /** How far through its level; null when the thresholds are unreported. */
+  progress: LevelProgress | null;
 }
 
 /**

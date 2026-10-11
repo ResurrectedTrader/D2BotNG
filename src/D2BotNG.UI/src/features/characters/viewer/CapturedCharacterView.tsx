@@ -12,11 +12,15 @@ import { useMemo, useState, type ReactNode } from "react";
 import type { TooltipEngine } from "d2itemtoolkit";
 import { ConfirmationDialog } from "@/components/ui";
 import {
+  GameFlavor,
+  GameVariant,
   StashTabKind,
   StashTabType,
   type Character as CapturedCharacter,
   type CharacterKey,
 } from "@/generated/captures_pb";
+import { SpriteStyle } from "@/generated/settings_pb";
+import { ForcedSpriteStyle } from "@/lib/rendering";
 import {
   useForgetCapturedCharacter,
   useResetCapturedAreaTime,
@@ -25,6 +29,8 @@ import {
 import { captureMapKey } from "@/stores/event-store";
 import { CtrlBreakdownHint } from "@/features/items";
 import { CharacterChrome } from "./CharacterChrome";
+import { realmLabel } from "../realms";
+import { CharacterVariant } from "./gameNames";
 import { InventoryTab, type LabeledContainer } from "./InventoryTab";
 import { StatsSkillsTab } from "./StatsSkillsTab";
 import { ProgressionPanel } from "./ProgressionPanel";
@@ -36,18 +42,22 @@ import {
   STAT_LEVEL,
   STAT_STASH_GOLD,
   STORAGE_IDS,
+  STAT_EXPERIENCE,
+  levelProgress,
+  mercThresholds,
   statOf,
   withStashGoldFallback,
   type CharacterFacts,
   type DifficultyProgress,
+  type DisplayIdentity,
+  type DisplayMercInfo,
   type DisplayStashPage,
   type SkillLevels,
   type StashPageType,
 } from "./contracts";
 
-/** .d2s status byte bits, on `Identity.char_flags`. */
+/** .d2s status byte bit, on `Identity.char_flags`. */
 const HARDCORE_FLAG = 0x04;
-const EXPANSION_FLAG = 0x20;
 
 /** What the grids are until the tables arrive. Hoisted so it is one reference: `InventoryTab` is
  *  memoised, and a fresh literal here would defeat that for as long as the engine is loading. */
@@ -94,12 +104,17 @@ export function CapturedCharacterView({
 
   const player = captured.player;
   const identity = captured.identity;
+  const d2r = captured.game?.flavor === GameFlavor.D2R;
+  // The server's reading of the game version: the reported game type, else the expansion bit of
+  // char_flags — both of which the game sets correctly.
+  const expansion = (captured.game?.version ?? 2) >= 2;
 
   const facts: CharacterFacts = {
     profile: key.profile,
     charName: player?.name ?? "",
     account: identity?.account ?? "",
-    realm: identity?.realm ?? "",
+    // None for D2R: its characters log into any realm, so the last one says nothing about them.
+    realm: d2r || !identity?.realm ? "" : realmLabel(identity.realm),
     // Level is stat 12, not a field — a capture stores what the game held, and the game holds
     // level as a stat. There is no derived copy to read.
     level: statOf(player?.stats, STAT_LEVEL),
@@ -110,9 +125,14 @@ export function CapturedCharacterView({
     hand: player?.hand === 1 ? 1 : 0,
     hardcore: ((identity?.charFlags ?? 0) & HARDCORE_FLAG) !== 0,
     ladder: identity?.ladder ?? false,
-    expansion: ((identity?.charFlags ?? 0) & EXPANSION_FLAG) !== 0,
+    expansion,
     updatedAt: captured.updatedAt,
   };
+
+  // The viewer's expansion rules follow the character's game — char_flags' expansion bit, or the
+  // game version a newer producer reports — rather than whatever its unit `flagsEx` held (see
+  // `asViewer`). Memoised so the gear memo below keeps its identity across renders.
+  const viewerGame = useMemo(() => ({ expansion }), [expansion]);
 
   const gear = useMemo(() => {
     if (!engine || !player) return undefined;
@@ -121,6 +141,7 @@ export function CapturedCharacterView({
     for (const id of STORAGE_IDS) {
       const display = toDisplayContainer(id, containers?.[id], engine, {
         wearer: player,
+        ...viewerGame,
       });
       if (display)
         storage.push({ label: CONTAINER_LABELS[id], container: display });
@@ -137,13 +158,15 @@ export function CapturedCharacterView({
           name: page.name,
           type: stashPageType(page.type),
           gold: page.gold,
+          removeOnly: page.removeOnly,
+          season: page.season,
           container: {
             // A React key: every page is a "stash", and an index repeats across kinds.
             id: `stash-${page.kind}-${page.index}`,
             width: page.width,
             height: page.height,
             items: page.items.map((i) =>
-              toDisplayItem(i, engine, { wearer: player }),
+              toDisplayItem(i, engine, { wearer: player, ...viewerGame }),
             ),
           },
         }),
@@ -154,21 +177,23 @@ export function CapturedCharacterView({
       stash,
       equipped: toDisplayContainer("equipped", containers?.equipped, engine, {
         wearer: player,
+        ...viewerGame,
       }),
       // The mercenary is its own wearer in v2, with its own equipped container — and its own
       // viewer for requirement purposes, which is why it is rendered against itself.
       // Both units: the merc wears it, but the game times a merc's weapon against the CHARACTER.
+      // A mercenary is reported only while alive, and one wearing nothing is still there.
       merc: captured.merc
-        ? toDisplayContainer(
+        ? (toDisplayContainer(
             "merc",
             captured.merc.containers?.equipped,
             engine,
-            { wearer: captured.merc, clientPlayer: player },
-          )
+            { wearer: captured.merc, clientPlayer: player, ...viewerGame },
+          ) ?? { id: "merc", width: 0, height: 0, items: [] })
         : undefined,
       storage,
     };
-  }, [engine, player, captured.merc]);
+  }, [engine, player, captured.merc, viewerGame]);
 
   const skills = useMemo<SkillLevels[]>(
     () =>
@@ -191,89 +216,122 @@ export function CapturedCharacterView({
 
   const displayName = facts.charName || key.profile;
 
+  // Memoised: InventoryTab is memo'd, and these ride beside the gear on every capture change.
+  const panelIdentity = useMemo<DisplayIdentity>(
+    () => ({
+      name: displayName,
+      level: facts.level,
+      charClass: facts.charClass,
+      experience: statOf(player?.stats, STAT_EXPERIENCE),
+    }),
+    [displayName, facts.level, facts.charClass, player?.stats],
+  );
+  const merc = captured.merc;
+  const mercInfo = useMemo<DisplayMercInfo | undefined>(() => {
+    if (!merc) return undefined;
+    const level = statOf(merc.stats, STAT_LEVEL);
+    const { last, next } = mercThresholds(merc.stats, level);
+    return {
+      name: merc.name ?? "",
+      level,
+      classId: merc.classId,
+      progress: levelProgress(statOf(merc.stats, STAT_EXPERIENCE), last, next),
+    };
+  }, [merc]);
+
   return (
-    <>
-      {/* Only this view and item search render it: the breakdown needs the item's stat lists, which
+    // A D2R character is drawn in D2R's art whatever the app-wide preference says: some of its
+    // items have no classic art at all, and the rest should look the way the game that owns them
+    // draws them. Null leaves the preference in charge.
+    <ForcedSpriteStyle.Provider value={d2r ? SpriteStyle.D2R : null}>
+      {/* Skill, monster and class names come from the character's own game's tables. */}
+      <CharacterVariant.Provider
+        value={captured.game?.variant ?? GameVariant.LOD_114D}
+      >
+        {/* Only this view and item search render it: the breakdown needs the item's stat lists, which
           only a capture carries. */}
-      <CtrlBreakdownHint />
-      <CharacterChrome
-        facts={facts}
-        online={online}
-        selector={selector}
-        inventory={
-          <InventoryTab
-            profileKey={identityKey}
-            expansion={facts.expansion}
-            activeSet={facts.hand}
-            gold={statOf(player?.stats, STAT_GOLD)}
-            equipped={gear?.equipped}
-            merc={gear?.merc}
-            storage={gear?.storage ?? NO_STORAGE}
-            stash={gear?.stash ?? NO_STASH}
-          />
-        }
-        statsAndSkills={
-          <StatsSkillsTab
-            stats={player?.stats ?? []}
-            difficulty={facts.difficulty}
-            skills={skills}
-            charClass={facts.charClass}
-          />
-        }
-        actions={
-          <button
-            type="button"
-            onClick={() => setForgetOpen(true)}
-            title="Drop this capture — every item, kill count and time in area recorded for it"
-            className="rounded px-2 py-1 text-xs font-medium text-zinc-500 hover:bg-zinc-800 hover:text-red-400"
-          >
-            Forget
-          </button>
-        }
-        progression={
-          <ProgressionPanel
-            key={identityKey}
-            progression={progression}
-            activeDifficulty={facts.difficulty}
-          />
-        }
-        analytics={
-          <AnalyticsPanel
-            key={identityKey}
-            displayName={displayName}
-            activeDifficulty={facts.difficulty}
-            // Already the flat tuples the panel counts — v2 never nested them.
-            kills={captured.kills}
-            areaTime={captured.areaTime}
-            killsReset={{
-              onReset: () => resetKills.mutateAsync(key),
-              isPending: resetKills.isPending,
-            }}
-            areaTimeReset={{
-              onReset: () => resetAreaTime.mutateAsync(key),
-              isPending: resetAreaTime.isPending,
-            }}
-          />
-        }
-      />
-      {/* Forgetting is the one way a capture leaves the store: deleting the profile does not
-          take its characters with it, since the items still exist on the account. */}
-      <ConfirmationDialog
-        open={forgetOpen}
-        title="Forget character"
-        description={`Forget the capture of "${displayName}"?`}
-        message="This drops every item, kill count and time in area recorded for it. The character itself is untouched; if it reports again, a fresh capture starts."
-        confirmLabel="Forget"
-        isPending={forget.isPending}
-        onConfirm={async () => {
-          try {
-            await forget.mutateAsync(key);
-          } finally {
-            setForgetOpen(false);
+        <CtrlBreakdownHint />
+        <CharacterChrome
+          facts={facts}
+          online={online}
+          selector={selector}
+          inventory={
+            <InventoryTab
+              profileKey={identityKey}
+              expansion={facts.expansion}
+              activeSet={facts.hand}
+              gold={statOf(player?.stats, STAT_GOLD)}
+              equipped={gear?.equipped}
+              merc={gear?.merc}
+              storage={gear?.storage ?? NO_STORAGE}
+              stash={gear?.stash ?? NO_STASH}
+              identity={panelIdentity}
+              mercInfo={mercInfo}
+            />
           }
-        }}
-        onCancel={() => setForgetOpen(false)}
-      />
-    </>
+          statsAndSkills={
+            <StatsSkillsTab
+              stats={player?.stats ?? []}
+              difficulty={facts.difficulty}
+              skills={skills}
+              charClass={facts.charClass}
+            />
+          }
+          actions={
+            <button
+              type="button"
+              onClick={() => setForgetOpen(true)}
+              title="Drop this capture — every item, kill count and time in area recorded for it"
+              className="rounded px-2 py-1 text-xs font-medium text-zinc-500 hover:bg-zinc-800 hover:text-red-400"
+            >
+              Forget
+            </button>
+          }
+          progression={
+            <ProgressionPanel
+              key={identityKey}
+              progression={progression}
+              activeDifficulty={facts.difficulty}
+            />
+          }
+          analytics={
+            <AnalyticsPanel
+              key={identityKey}
+              displayName={displayName}
+              activeDifficulty={facts.difficulty}
+              // Already the flat tuples the panel counts — v2 never nested them.
+              kills={captured.kills}
+              areaTime={captured.areaTime}
+              killsReset={{
+                onReset: () => resetKills.mutateAsync(key),
+                isPending: resetKills.isPending,
+              }}
+              areaTimeReset={{
+                onReset: () => resetAreaTime.mutateAsync(key),
+                isPending: resetAreaTime.isPending,
+              }}
+            />
+          }
+        />
+        {/* Forgetting is the one way a capture leaves the store: deleting the profile does not
+          take its characters with it, since the items still exist on the account. */}
+        <ConfirmationDialog
+          open={forgetOpen}
+          title="Forget character"
+          description={`Forget the capture of "${displayName}"?`}
+          message="This drops every item, kill count and time in area recorded for it. The character itself is untouched; if it reports again, a fresh capture starts."
+          confirmLabel="Forget"
+          isPending={forget.isPending}
+          onConfirm={async () => {
+            try {
+              await forget.mutateAsync(key);
+            } finally {
+              setForgetOpen(false);
+            }
+          }}
+          onCancel={() => setForgetOpen(false)}
+        />
+      </CharacterVariant.Provider>
+    </ForcedSpriteStyle.Provider>
   );
 }

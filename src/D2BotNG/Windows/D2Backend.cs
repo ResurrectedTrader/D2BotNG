@@ -64,7 +64,7 @@ public class D2Backend : IGameBackend
             process.EnableRaisingEvents = true;
 
             // Step 5: Apply patches
-            if (!await ApplyPatchesAsync(process, gameDir, config.Visible, config.GameVersion))
+            if (!await ApplyPatchesAsync(process, config.GamePath, config.Visible, config.GameVersion))
             {
                 throw new ApplicationException("Failed to apply patches");
             }
@@ -147,8 +147,10 @@ public class D2Backend : IGameBackend
         }
     }
 
-    private async Task<bool> ApplyPatchesAsync(Process process, string gameDir, bool visible, string? version)
+    private async Task<bool> ApplyPatchesAsync(Process process, string gamePath, bool visible, string? version)
     {
+        var gameDir = Path.GetDirectoryName(gamePath)!;
+
         if (string.IsNullOrEmpty(version))
         {
             _logger.LogWarning("No D2 version configured on the framework, skipping patches");
@@ -174,8 +176,11 @@ public class D2Backend : IGameBackend
                 continue;
             }
 
-            var moduleName = PatchRepository.GetModuleName(patch.Module);
-            var modulePath = Path.Combine(gameDir, moduleName);
+            // The game module is whatever executable the profile launches (Game.exe on LoD 1.14d,
+            // D2R.exe or a renamed copy elsewhere), not a fixed name in the game directory.
+            var modulePath = patch.Module == D2Module.Game
+                ? gamePath
+                : Path.Combine(gameDir, PatchRepository.GetModuleName(patch.Module));
 
             if (!await _patcher.ApplyPatchAsync(process, modulePath, patch))
             {

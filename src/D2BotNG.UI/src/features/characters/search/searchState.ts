@@ -16,7 +16,7 @@
  */
 
 import { create } from "zustand";
-import type { SearchItemsRequest } from "@/generated/captures_pb";
+import type { GameVariant, SearchItemsRequest } from "@/generated/captures_pb";
 import {
   DEFAULT_SORT,
   EMPTY_PROPERTIES,
@@ -30,9 +30,16 @@ import {
 export interface CommittedFilters {
   properties: PropertyFilters;
   groups: StatFilterGroup[];
+  variant: GameVariant;
 }
 
 interface ItemSearchState {
+  /**
+   * The game being searched, as the reader chose it; null until they do, which means "the one
+   * there is" (see `ItemSearchTab`). Every filter below is written in that game's tables, which is
+   * why choosing another one starts the search over.
+   */
+  variant: GameVariant | null;
   properties: PropertyFilters;
   groups: StatFilterGroup[];
   sort: SortChoice;
@@ -40,6 +47,12 @@ interface ItemSearchState {
   submitted: SearchItemsRequest | null;
   committed: CommittedFilters | null;
 
+  /**
+   * Switches game and clears everything else. The picks are rows of the old game's tables — a
+   * base item, a type, a stat — and the same number names something else in the new one, so
+   * carrying them across would quietly change what they ask for.
+   */
+  chooseVariant: (variant: GameVariant) => void;
   setProperties: (properties: PropertyFilters) => void;
   setGroups: (groups: StatFilterGroup[]) => void;
   setSort: (sort: SortChoice) => void;
@@ -60,12 +73,15 @@ const initial = () => ({
 });
 
 export const useItemSearchState = create<ItemSearchState>((set) => ({
+  variant: null,
   ...initial(),
+  chooseVariant: (variant) => set({ ...initial(), variant }),
   setProperties: (properties) => set({ properties }),
   setGroups: (groups) => set({ groups }),
   setSort: (sort) => set({ sort }),
   setFiltersOpen: (filtersOpen) => set({ filtersOpen }),
   setSubmitted: (submitted) => set({ submitted }),
   setCommitted: (committed) => set({ committed }),
+  // The game stays: Reset clears the question, not which game it is asked of.
   reset: () => set(initial()),
 }));

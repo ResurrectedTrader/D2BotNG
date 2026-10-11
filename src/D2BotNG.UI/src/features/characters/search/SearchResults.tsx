@@ -32,7 +32,7 @@ import {
   damageKinds,
   renderLines,
   toDisplayItem,
-  trimBlankRows,
+  withoutSetBlock,
   type RenderedLine,
 } from "../viewer/capturedItem";
 import { CONTAINER_LABELS, stashPageLabel } from "../viewer/contracts";
@@ -41,34 +41,6 @@ import {
   SORTABLE_SECTIONS,
   type SortChoice,
 } from "./searchRequest";
-
-/**
- * The set block, which a result has no business showing.
- *
- * All of it is about a WEARER, and a search result has none — the item may sit on a mule of any
- * class. The piece list renders every sibling in "not owned" red, which is a claim about a
- * character nobody named; the bonus blocks are the tiers that character has earned; and the set's
- * NAME is the heading for those two, so with them gone it labels nothing. The piece's own name
- * already says which set it belongs to. The character viewer, which does have a wearer, keeps the
- * whole block.
- */
-const WEARER_SECTIONS = new Set([
-  "SetName",
-  "SetPieceList",
-  "PartialSetBonus",
-  "FullSetBonus",
-]);
-
-/**
- * The tooltip without its set block, re-trimmed.
- *
- * Trimming again matters: the game separates the block with a blank row, and dropping the block
- * leaves that blank as the last row — a gap at the bottom of every set item's card that reads as a
- * rendering fault.
- */
-function withoutSetBlock(lines: RenderedLine[]): RenderedLine[] {
-  return trimBlankRows(lines.filter((l) => !WEARER_SECTIONS.has(l.section)));
-}
 
 function locationOf(match: ItemMatch): string {
   // A stash page is named the way the viewer's tab strip names it, so the two agree.
@@ -302,7 +274,10 @@ export function SearchResults({
   onSort,
 }: {
   matches: ItemMatch[];
-  /** Null while the tables load; the sprite and colour cannot be resolved without them. */
+  /**
+   * The searched game's tables — every result is from that one game, since a search names it.
+   * Null while the tables load; the sprite and colour cannot be resolved without them.
+   */
   engine: TooltipEngine | null;
   sort: SortChoice;
   onSort: (sort: SortChoice) => void;

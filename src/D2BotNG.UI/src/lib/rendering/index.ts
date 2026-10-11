@@ -33,3 +33,4 @@ export {
   type UseItemSpriteResult,
 } from "./useItemSprite";
 export { ItemSprite, type ItemSpriteProps } from "./ItemSprite";
+export { ForcedSpriteStyle, useSpriteStyle } from "./spriteStyleContext";

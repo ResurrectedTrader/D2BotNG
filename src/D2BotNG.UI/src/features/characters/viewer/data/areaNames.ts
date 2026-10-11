@@ -146,4 +146,7 @@ export const AREA_NAMES: Record<number, string> = {
   134: "Forgotten Sands",
   135: "Furnace of Pain",
   136: "Tristram",
+  // Reign of the Warlock (D2R) — Levels.txt Id 137, LevelName `ColossalSummit`. Ids are shared:
+  // RotW appends this row and leaves every earlier one where 1.14d has it.
+  137: "Colossal Summit",
 };

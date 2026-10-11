@@ -16,7 +16,11 @@ import { memo, useEffect, useState } from "react";
 import { ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
 import { Card, CardContent } from "@/components/ui";
 import { useTooltipTextStyle } from "@/features/items";
+import { SpriteStyle } from "@/generated/settings_pb";
+import { useSpriteStyle } from "@/lib/rendering";
+import { useUiPanels } from "@/lib/rendering/hdUi";
 import { PanelTitle } from "./CharacterChrome";
+import { useGameNames } from "./gameNames";
 import { ContainerGrid, GRID_SURFACE_STYLE } from "./ContainerGrid";
 import {
   EquipmentPaperdoll,
@@ -24,11 +28,24 @@ import {
   WeaponSetToggle,
 } from "./EquipmentPaperdoll";
 import {
+  cubeFitsPanel,
+  GameCubePanel,
+  GameInventoryPanel,
+  GameMercPanel,
+  GameSmallStashPanel,
+  GameStashPanel,
+  inventoryFitsPanel,
+  smallStashLayout,
+  stashFitsPanel,
+} from "./GamePanels";
+import {
   CONTAINER_LABELS,
   STASH_KIND_LABELS,
   STASH_PAGE_TYPE_LABELS,
   stashPageLabel,
   type DisplayContainer,
+  type DisplayIdentity,
+  type DisplayMercInfo,
   type DisplayStashPage,
   type StashKind,
 } from "./contracts";
@@ -74,13 +91,22 @@ function EquipmentCard({
   expansion,
   activeSet,
   gold,
+  identity,
 }: {
   equipped: DisplayContainer | undefined;
   expansion: boolean;
   activeSet: 0 | 1;
   gold: number;
+  identity: DisplayIdentity;
 }) {
   const [selectedSet, setSelectedSet] = useState<0 | 1>(activeSet);
+  const className = useGameNames().characterClass(identity.charClass);
+  const title = [
+    identity.name,
+    `Level ${identity.level}${className ? ` ${className}` : ""}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <Card>
       <CardContent>
@@ -95,7 +121,7 @@ function EquipmentCard({
             ) : undefined
           }
         >
-          Equipment
+          {title}
         </PanelTitle>
         <EquipmentPaperdoll
           equipped={equipped}
@@ -106,6 +132,22 @@ function EquipmentCard({
       </CardContent>
     </Card>
   );
+}
+
+/**
+ * What qualifies a page beyond its name: its type, when not the plain one, and a previous
+ * season's remove-only page. Undefined for an ordinary page, which needs no qualifier.
+ */
+function pageNote(page: DisplayStashPage): string | undefined {
+  const notes = [
+    STASH_PAGE_TYPE_LABELS[page.type],
+    page.removeOnly
+      ? page.season > 0
+        ? `Past season ${page.season}`
+        : "Past season"
+      : undefined,
+  ].filter(Boolean);
+  return notes.length > 0 ? notes.join(" · ") : undefined;
 }
 
 /** A page's identity, as a React key and as the selection. */
@@ -144,7 +186,7 @@ function StashBlock({ pages }: { pages: DisplayStashPage[] }) {
   // The arrows walk the pages in list order — every personal page, then every shared one — so
   // stepping off the end of one kind lands on the start of the next.
   const position = pages.indexOf(selected);
-  const selectedTypeNote = STASH_PAGE_TYPE_LABELS[selected.type];
+  const selectedTypeNote = pageNote(selected);
   const groups = STASH_KIND_ORDER.map((kind) => ({
     kind,
     pages: pages.filter((p) => p.kind === kind),
@@ -180,7 +222,7 @@ function StashBlock({ pages }: { pages: DisplayStashPage[] }) {
             {groups.map((group) => (
               <optgroup key={group.kind} label={STASH_KIND_LABELS[group.kind]}>
                 {group.pages.map((page) => {
-                  const typeNote = STASH_PAGE_TYPE_LABELS[page.type];
+                  const typeNote = pageNote(page);
                   const label = stashPageLabel(page);
                   return (
                     <option key={pageKey(page)} value={pageKey(page)}>
@@ -224,9 +266,15 @@ export const InventoryTab = memo(function InventoryTab({
   merc,
   storage,
   stash,
+  identity,
+  mercInfo,
 }: {
   /** Remounts the equipment card and the stash per character, so their selections re-default. */
   profileKey: string;
+  /** Who the character is, named at the top of its panel. */
+  identity: DisplayIdentity;
+  /** The living mercenary's name, level and kind, for its panel's band; absent when unknown. */
+  mercInfo?: DisplayMercInfo;
   expansion: boolean;
   activeSet: 0 | 1;
   /** Gold carried on the character. */
@@ -237,6 +285,112 @@ export const InventoryTab = memo(function InventoryTab({
   /** Sorted by kind then index; empty until a stash is reported. */
   stash: DisplayStashPage[];
 }) {
+  // In the D2R art style the game's own panels draw what they were drawn for: the paperdoll and
+  // inventory, the mercenary, a 10x10 stash, and the composed classic (6x4) and LoD (6x8)
+  // stashes. Anything else keeps the plain grids.
+  const style = useSpriteStyle();
+  const loaded = useUiPanels();
+  const panels = style === SpriteStyle.D2R ? loaded : null;
+  const inventory = storage.find((s) => s.container.id === "inventory");
+  const cube = storage.find((s) => s.container.id === "cube");
+  const inventoryPanel =
+    panels && inventoryFitsPanel(panels, inventory?.container) ? panels : null;
+  const stashPanel =
+    panels && stash.length > 0 && stashFitsPanel(panels, stash) ? panels : null;
+  const smallStashPanel =
+    panels && !stashPanel && smallStashLayout(stash) ? panels : null;
+  // A mercenary is reported only while it is alive. The cube goes under a living mercenary,
+  // else on its own panel — never on RotW's advanced stash pages, where the game keeps it, so it
+  // is always in one place whatever the game.
+  const cubeFits = !!panels && cubeFitsPanel(panels, cube?.container);
+  const cubeUnderMerc = cubeFits && merc !== undefined;
+  const cubePanel = cubeFits && !cubeUnderMerc ? panels : null;
+  const cubeDrawn = cubeUnderMerc || cubePanel !== null;
+  // The belt is left out: the game shows it on the HUD, not on any of these panels.
+  const grids = storage.filter(
+    (s) =>
+      s.container.id !== "belt" &&
+      !(inventoryPanel && s === inventory) &&
+      !(cubeDrawn && s === cube),
+  );
+  const stashOnPanel = stashPanel !== null || smallStashPanel !== null;
+
+  if (panels) {
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-start justify-center gap-4">
+          {stashPanel && (
+            <GameStashPanel
+              key={`stash-${profileKey}`}
+              panels={stashPanel}
+              pages={stash}
+            />
+          )}
+          {smallStashPanel && (
+            <GameSmallStashPanel
+              key={`stash-${profileKey}`}
+              panels={smallStashPanel}
+              pages={stash}
+            />
+          )}
+          {/* Always stash, then the character, then the mercenary with the cube or the cube alone. */}
+          {inventoryPanel ? (
+            <GameInventoryPanel
+              key={profileKey}
+              panels={inventoryPanel}
+              equipped={equipped}
+              inventory={inventory?.container}
+              gold={gold}
+              expansion={expansion}
+              activeSet={activeSet}
+              identity={identity}
+            />
+          ) : (
+            <EquipmentCard
+              key={profileKey}
+              equipped={equipped}
+              expansion={expansion}
+              activeSet={activeSet}
+              gold={gold}
+              identity={identity}
+            />
+          )}
+          {merc && (
+            <GameMercPanel
+              panels={panels}
+              merc={merc}
+              cube={cubeUnderMerc ? cube?.container : undefined}
+              info={mercInfo}
+            />
+          )}
+          {cubePanel && cube && (
+            <GameCubePanel panels={cubePanel} cube={cube.container} />
+          )}
+        </div>
+        {(grids.length > 0 || (!stashOnPanel && stash.length > 0)) && (
+          <Card>
+            <CardContent>
+              <PanelTitle>Items</PanelTitle>
+              <div className="flex flex-wrap items-start justify-center gap-x-8 gap-y-6">
+                {grids.map(({ label, container }) => (
+                  <div key={container.id} className="shrink-0">
+                    <div className="mb-1 whitespace-nowrap text-xs font-medium text-zinc-500">
+                      {label}
+                    </div>
+                    <ContainerGrid container={container} />
+                  </div>
+                ))}
+                {!stashOnPanel && stash.length > 0 && (
+                  <StashBlock key={profileKey} pages={stash} />
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-center gap-4">
@@ -246,6 +400,7 @@ export const InventoryTab = memo(function InventoryTab({
           expansion={expansion}
           activeSet={activeSet}
           gold={gold}
+          identity={identity}
         />
         {merc && merc.items.length > 0 && (
           <Card>

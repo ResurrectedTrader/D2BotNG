@@ -19,6 +19,34 @@ import { ItemSprite } from "@/lib/rendering";
 import { ItemTooltip, isEthereal, useItemContextMenu } from "@/features/items";
 import type { DisplayItem } from "./contracts";
 
+/**
+ * The wash the game paints behind an item (d2r.exe `sub_1401DF810` for a grid, `sub_1401DAEF0`
+ * for a slot): a solid rect over its footprint at alpha 63/255, in a colour picked by the item's
+ * state. The colours are palette entries read from the running game (state -> index
+ * `byte_141C813C4`, index -> RGB `dword_141D27238`).
+ */
+const CELL_WASH = {
+  hovered: "rgba(24, 100, 8, 0.247)", // state 1, palette 118
+  unusable: "rgba(144, 0, 0, 0.247)", // state 0, palette 8
+  unidentified: "rgba(140, 64, 64, 0.247)", // state 4, palette 77
+  normal: "rgba(24, 0, 104, 0.247)", // state 2, palette 234
+} as const;
+
+/**
+ * Which wash an item gets. A grid paints every item — blue when nothing is wrong with it; a slot
+ * paints only the exceptions, since an equipped item the wearer can use needs no marking.
+ */
+function washFor(
+  item: DisplayItem,
+  hovered: boolean,
+  kind: "grid" | "slot",
+): string | null {
+  if (hovered) return CELL_WASH.hovered;
+  if (item.usable === false) return CELL_WASH.unusable;
+  if (item.identified === false) return CELL_WASH.unidentified;
+  return kind === "grid" ? CELL_WASH.normal : null;
+}
+
 export function ItemCell({
   item,
   className,
@@ -26,6 +54,7 @@ export function ItemCell({
   spriteClassName,
   spriteStyle,
   empty,
+  cellKind = "grid",
 }: {
   item: DisplayItem | undefined;
   /** The box the item sits in — a grid footprint, or a slot in the paperdoll. */
@@ -36,24 +65,38 @@ export function ItemCell({
   spriteStyle?: CSSProperties;
   /** Drawn instead when there is no item; a paperdoll slot names itself. */
   empty?: ReactNode;
+  /** A grid cell washes every item; a slot only an item that needs marking, as the game does. */
+  cellKind?: "grid" | "slot";
 }) {
   const [hovered, setHovered] = useState(false);
   const { contextMenu, onContextMenu } = useItemContextMenu({ item });
+  const wash = item ? washFor(item, hovered, cellKind) : null;
 
   return (
     <>
       <div
-        className={className}
+        // The wash is positioned against this box, which a grid already positions absolutely.
+        className={clsx(
+          className,
+          !(className ?? "").split(" ").includes("absolute") && "relative",
+        )}
         style={style}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         onContextMenu={item ? onContextMenu : undefined}
       >
+        {wash && (
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{ backgroundColor: wash }}
+          />
+        )}
         {item ? (
           <ItemTooltip item={item} showSprite={false} open={hovered}>
             <div
+              // Positioned, so it paints over the wash rather than under it.
               className={clsx(
-                "flex items-center justify-center",
+                "relative flex items-center justify-center",
                 spriteClassName,
               )}
               style={spriteStyle}

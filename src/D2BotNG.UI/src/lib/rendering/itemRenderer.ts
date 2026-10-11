@@ -4,7 +4,7 @@
 
 import { decodeFirstFrame } from "./dc6Decoder";
 import { getPaletteManager, loadPaletteData } from "./paletteManager";
-import { appearanceFromShift, renderHdSprite } from "./hdRenderer";
+import { hdSocketLayout, PLAIN_APPEARANCE, renderHdSprite } from "./hdRenderer";
 import type { HdAppearance } from "@/features/items/item-utils";
 
 // DC6 cache
@@ -404,7 +404,11 @@ async function spritePixels(
   },
 ): Promise<ImageData> {
   if (options.hd && code !== EMPTY_SOCKET_CODE) {
-    const pixels = await renderHdSprite(code, options.hd);
+    const pixels = await renderHdSprite(
+      code,
+      options.hd,
+      options.colorShift ?? -1,
+    );
     if (pixels) {
       // Applied here rather than by the D2R decoder, so both artworks dim by the same rule.
       if (options.ethereal) {
@@ -455,34 +459,75 @@ export async function renderItemWithSocketsToBitmap(
   ctx.putImageData(baseImageData, itemX, itemY);
 
   if (sockets.length > 0) {
-    const positions = getSocketPositions(sockets.length, gridSize, itemX);
-
-    for (let i = 0; i < sockets.length && i < positions.length; i++) {
-      const socket = sockets[i];
-      const pos = positions[i];
-
-      const isEmptySocket = socket.code === EMPTY_SOCKET_CODE;
-      // Each filler carries its own appearance — a rune is tinted by its own row, not the host's.
-      const socketImageData = await spritePixels(socket.code, {
+    // Each filler carries its own appearance — a rune is tinted by its own row, not the host's.
+    const fillerPixels = (socket: (typeof sockets)[number]) =>
+      spritePixels(socket.code, {
         colorShift: socket.itemColor,
         invTrans: socket.invTrans ?? 0,
-        hd: hd
-          ? (socket.hd ?? appearanceFromShift(socket.itemColor))
-          : undefined,
+        hd: hd ? (socket.hd ?? PLAIN_APPEARANCE) : undefined,
       });
 
-      const socketCanvas = document.createElement("canvas");
-      socketCanvas.width = socketImageData.width;
-      socketCanvas.height = socketImageData.height;
-      const socketCtx = socketCanvas.getContext("2d")!;
-      socketCtx.putImageData(socketImageData, 0, 0);
+    const drawn =
+      hd &&
+      (await drawHdSockets(ctx, sockets, gridSize, itemX, itemY, fillerPixels));
+    if (!drawn) {
+      const positions = getSocketPositions(sockets.length, gridSize, itemX);
 
-      const drawX = isEmptySocket ? pos.x - 1 : pos.x;
-      const drawY = isEmptySocket ? pos.y + 1 : pos.y;
+      for (let i = 0; i < sockets.length && i < positions.length; i++) {
+        const socket = sockets[i];
+        const pos = positions[i];
 
-      ctx.drawImage(socketCanvas, drawX, drawY);
+        const isEmptySocket = socket.code === EMPTY_SOCKET_CODE;
+        const drawX = isEmptySocket ? pos.x - 1 : pos.x;
+        const drawY = isEmptySocket ? pos.y + 1 : pos.y;
+
+        ctx.drawImage(toCanvas(await fillerPixels(socket)), drawX, drawY);
+      }
     }
   }
 
   return await createImageBitmap(canvas);
+}
+
+function toCanvas(image: ImageData): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  canvas.getContext("2d")!.putImageData(image, 0, 0);
+  return canvas;
+}
+
+/**
+ * Sockets the way D2R draws them: its own layout, and its own marker under EVERY socket at the
+ * game's alpha, with the filler (if any) over it at the same spot. False when the game has no
+ * layout for this size and count, or no marker art, and the classic layout should be used instead.
+ */
+async function drawHdSockets(
+  ctx: CanvasRenderingContext2D,
+  sockets: NonNullable<RenderOptions["sockets"]>,
+  gridSize: { x: number; y: number },
+  artX: number,
+  artY: number,
+  fillerPixels: (
+    socket: NonNullable<RenderOptions["sockets"]>[number],
+  ) => Promise<ImageData>,
+): Promise<boolean> {
+  const layout = await hdSocketLayout(sockets.length, gridSize);
+  const marker = await renderHdSprite(EMPTY_SOCKET_CODE, PLAIN_APPEARANCE, -1);
+  if (!layout || !marker) return false;
+
+  const markerCanvas = toCanvas(marker);
+  for (let i = 0; i < sockets.length; i++) {
+    const x = artX + layout.positions[i].x;
+    const y = artY + layout.positions[i].y;
+
+    ctx.globalAlpha = layout.alpha;
+    ctx.drawImage(markerCanvas, x, y);
+    ctx.globalAlpha = 1;
+
+    if (sockets[i].code !== EMPTY_SOCKET_CODE) {
+      ctx.drawImage(toCanvas(await fillerPixels(sockets[i])), x, y);
+    }
+  }
+  return true;
 }

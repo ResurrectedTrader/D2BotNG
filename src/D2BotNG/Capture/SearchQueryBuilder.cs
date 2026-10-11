@@ -57,11 +57,23 @@ internal sealed class SearchQueryBuilder
     private readonly StringBuilder _where = new("i.parent_id IS NULL");
     private int _cteCount;
 
-    public SearchQueryBuilder(SearchItemsRequest request, TooltipEngine tooltip)
+    /// <param name="request">The search.</param>
+    /// <param name="tablesFor">
+    /// Each game's tables. The request's <c>variant</c> picks the one its rows and ids are written
+    /// in, and only that game's characters are searched — so a row is only ever read against the
+    /// tables it came from, and nothing has to be translated between games.
+    /// </param>
+    public SearchQueryBuilder(SearchItemsRequest request, Func<GameVariant, TooltipEngine> tablesFor)
     {
+        // Before the tables are chosen by it: an unknown variant names no tables at all.
+        if (!Enum.IsDefined(request.Variant))
+            throw new InvalidSearchRequestException($"unknown variant {(int)request.Variant}");
+
+        var tooltip = tablesFor(request.Variant);
         Validate(request, tooltip);
 
         AppendCharacters(request);
+        AppendGames(request);
 
         AppendIdentity(request);
 
@@ -494,6 +506,14 @@ internal sealed class SearchQueryBuilder
                 throw new InvalidSearchRequestException($"unknown item_type row {type}");
         }
 
+        // The game column holds only what GameEdition writes, so anything else would filter to
+        // nothing and read as "no such items" — the same argument as the tier above.
+        foreach (var version in request.GameVersions)
+        {
+            if (version is < GameEdition.Classic or > GameEdition.ReignOfTheWarlock)
+                throw new InvalidSearchRequestException($"unknown game version {version}");
+        }
+
         // Each of these becomes a chain of SQL terms rather than an IN list.
         Chain("conditions", request.Conditions.Count);
         Chain("groups", request.Groups.Count);
@@ -742,6 +762,24 @@ internal sealed class SearchQueryBuilder
                 + $"AND i.file_index = {Param($"sf{i}", item.FileIndex)} AND i.file_index >= 0)");
             _where.Append($"\n   AND ({string.Join(" OR ", pairs)})");
         }
+    }
+
+    /// <summary>
+    /// Which game: always the request's variant — the tables its rows are written in, so the only
+    /// characters they can mean anything for — then the game version and the realm within it. Each
+    /// a semi-join on the character table like <see cref="AppendCharacters" />; the game columns
+    /// there are derived (see GameEdition) and stored for exactly this.
+    /// </summary>
+    private void AppendGames(SearchItemsRequest request)
+    {
+        var terms = new List<string> { $"game_variant = {Param("gva", (int)request.Variant)}" };
+        if (request.GameVersions.Count > 0)
+            terms.Add(In("game_version", request.GameVersions.Select(v => (object)v), "gv"));
+        if (request.Realms.Count > 0)
+            terms.Add(In("realm", request.Realms.Select(r => (object)r), "rm"));
+
+        _where.Append(
+            $"\n   AND i.character_id IN (SELECT id FROM character WHERE {string.Join(" AND ", terms)})");
     }
 
     private void AppendIn(string column, IEnumerable<object> values)

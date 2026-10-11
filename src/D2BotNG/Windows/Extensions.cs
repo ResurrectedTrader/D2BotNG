@@ -19,6 +19,7 @@ public static class Extensions
     private static readonly HashSet<string> GameWindowClassNames = new(StringComparer.Ordinal)
     {
         "Diablo II",
+        "OsWindow",
     };
 
     extension(Process proc)

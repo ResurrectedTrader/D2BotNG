@@ -68,6 +68,10 @@ internal sealed class CapturedUnit(Unit unit) : IUnit
     public IReadOnlyList<IUnitSkill> Skills =>
         _skills ??= unit.Skills.Select(IUnitSkill (s) => new CapturedSkill(s)).ToList();
 
+    // The library's "not recorded" is -1, since 0 is a real skill (Attack); the capture says the
+    // same thing with presence.
+    public int LastUsedSkill => unit.HasLastUsedSkill ? unit.LastUsedSkill : -1;
+
     private sealed class CapturedStatList(Core.Protos.Captures.StatList list) : IUnitStatList
     {
         private IReadOnlyList<IUnitStat>? _stats;

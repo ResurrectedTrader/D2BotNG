@@ -18,7 +18,9 @@ import {
   MagnifyingGlassIcon,
 } from "@heroicons/react/24/outline";
 import { Button, Card, CardContent, EmptyState } from "@/components/ui";
-import type { CharacterSummary } from "@/generated/captures_pb";
+import { GameVariant, type CharacterSummary } from "@/generated/captures_pb";
+import { SpriteStyle } from "@/generated/settings_pb";
+import { ForcedSpriteStyle } from "@/lib/rendering";
 import { CtrlBreakdownHint } from "@/features/items";
 import { useToolkit } from "@/hooks/useToolkit";
 import { useCtrlWheelScroll } from "@/hooks/useCtrlWheelScroll";
@@ -35,9 +37,16 @@ import { useItemSearchState, type CommittedFilters } from "./searchState";
 import { StatGroups } from "./StatGroups";
 import { PropertyFilterPanel } from "./PropertyFilters";
 import { SearchResults } from "./SearchResults";
-import { Panel } from "./controls";
+import { Panel, SingleSelect } from "./controls";
 
 const PAGE_SIZE = 48;
+
+/** The games a search can be of, as the selector names them. */
+const VARIANT_LABELS: Record<GameVariant, string> = {
+  [GameVariant.LOD_114D]: "Lord of Destruction (1.14d)",
+  [GameVariant.RESURRECTED]: "Resurrected",
+  [GameVariant.REIGN_OF_THE_WARLOCK]: "Reign of the Warlock",
+};
 
 export function ItemSearchTab({
   characters,
@@ -48,9 +57,6 @@ export function ItemSearchTab({
   // Ctrl is this view's breakdown key, so Ctrl+scroll here means "read on down the results" rather
   // than "zoom the app". The scrolling still happens; only the zooming is taken away.
   const wheelRef = useCtrlWheelScroll<HTMLDivElement>();
-
-  // The tables are needed for the catalogue itself, so this tab always wants them.
-  const engine = useToolkit(true);
 
   /**
    * Held in a store rather than in this component, because the tab that is not showing is
@@ -64,6 +70,8 @@ export function ItemSearchTab({
    * results being looked at.
    */
   const {
+    variant: chosenVariant,
+    chooseVariant,
     properties,
     setProperties,
     groups,
@@ -78,6 +86,40 @@ export function ItemSearchTab({
     setCommitted,
     reset,
   } = useItemSearchState();
+
+  /**
+   * Which game is searched. One at a time, because the games number the same things differently —
+   * a base item, a type, a stat, a runeword is a row of ONE game's tables — so the catalogue and
+   * every picker below are read out of the chosen game's tables, and the request names it.
+   *
+   * The games on offer are the ones the captures hold, in GameVariant order; the reader's pick
+   * stands while that game still has captures, and otherwise it is the first there is. With only
+   * one, there is nothing to choose and no control is drawn.
+   */
+  const variants = useMemo(
+    () =>
+      [
+        ...new Set(
+          characters.map((c) => c.game?.variant ?? GameVariant.LOD_114D),
+        ),
+      ].sort((a, b) => a - b),
+    [characters],
+  );
+  const variant =
+    chosenVariant !== null && variants.includes(chosenVariant)
+      ? chosenVariant
+      : (variants[0] ?? GameVariant.LOD_114D);
+  const searchable = useMemo(
+    () =>
+      characters.filter(
+        (c) => (c.game?.variant ?? GameVariant.LOD_114D) === variant,
+      ),
+    [characters, variant],
+  );
+
+  // The tables are needed for the catalogue itself, so this tab always wants them — the chosen
+  // game's, since those are what every row the filters pick is written in.
+  const engine = useToolkit(true, variant);
 
   const catalog = useMemo(
     () => (engine ? buildStatCatalog(engine) : []),
@@ -101,13 +143,13 @@ export function ItemSearchTab({
    */
   const pending = useMemo(
     // Offset 0: the hook owns paging from here, asking for the next slice as the list is scrolled.
-    () => buildSearchRequest(properties, groups, sort, 0, PAGE_SIZE),
-    [properties, groups, sort],
+    () => buildSearchRequest(properties, groups, sort, 0, PAGE_SIZE, variant),
+    [properties, groups, sort, variant],
   );
 
   /** Search: commits what is on the filter panels, and everything after that re-reads it. */
   const runSearch = () => {
-    setCommitted({ properties, groups });
+    setCommitted({ properties, groups, variant });
     setFiltersOpen(false);
     setSubmitted(pending);
   };
@@ -123,6 +165,7 @@ export function ItemSearchTab({
           nextSort,
           0,
           PAGE_SIZE,
+          filters.variant,
         ),
       );
     },
@@ -193,166 +236,194 @@ export function ItemSearchTab({
   }, [hasNextPage, isFetchingNextPage, fetchNextPage, matches.length]);
 
   return (
-    <div ref={wheelRef} className="space-y-4">
-      <CtrlBreakdownHint />
-      <Card>
-        <CardContent className="space-y-4">
-          {/* Item on the left, modifiers on the right — the reference's split, and the one that
+    // A D2R search is drawn in D2R's art, as a D2R character's view is — its items are D2R items.
+    <ForcedSpriteStyle.Provider
+      value={variant === GameVariant.LOD_114D ? null : SpriteStyle.D2R}
+    >
+      <div ref={wheelRef} className="space-y-4">
+        <CtrlBreakdownHint />
+        <Card>
+          <CardContent className="space-y-4">
+            {/* The game first, because everything after it is read out of that game's tables. Only
+              drawn when the captures span more than one — otherwise it is a choice of one. */}
+            {variants.length > 1 && (
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium text-zinc-300">Game</span>
+                <div className="w-64">
+                  <SingleSelect
+                    value={String(variant)}
+                    onChange={(value) =>
+                      chooseVariant(Number(value) as GameVariant)
+                    }
+                    options={variants.map((v) => ({
+                      value: String(v),
+                      label: VARIANT_LABELS[v] ?? `Game ${v}`,
+                    }))}
+                  />
+                </div>
+                <span className="text-xs text-zinc-500">
+                  Switching game clears the filters — each game numbers its
+                  items differently.
+                </span>
+              </div>
+            )}
+            {/* Item on the left, modifiers on the right — the reference's split, and the one that
               matches how a search is composed: what the thing IS, then what it has to do.
               Unmounted rather than hidden when folded: these are two panels of live controls, and
               a hidden one still runs its ~1,230-entry catalogue filtering on every keystroke
               elsewhere. Their state lives above them, so nothing is lost by not rendering them. */}
-          {filtersOpen && (
-            <div className="grid items-start gap-4 xl:grid-cols-2">
-              <Panel title="What the item is">
-                <PropertyFilterPanel
-                  filters={properties}
-                  onChange={setProperties}
-                  characters={characters}
-                  engine={engine}
-                />
-              </Panel>
-
-              <Panel title="What it has to have">
-                {engine ? (
-                  <StatGroups
-                    catalog={catalog}
-                    groups={groups}
-                    onChange={setGroups}
+            {filtersOpen && (
+              <div className="grid items-start gap-4 xl:grid-cols-2">
+                <Panel title="What the item is">
+                  <PropertyFilterPanel
+                    filters={properties}
+                    onChange={setProperties}
+                    characters={searchable}
+                    engine={engine}
                   />
-                ) : (
-                  <p className="text-sm text-zinc-500">
-                    Loading the item tables…
-                  </p>
-                )}
-              </Panel>
-            </div>
-          )}
+                </Panel>
 
-          <div
-            className={clsx(
-              "flex items-center gap-3",
-              filtersOpen && "border-t border-zinc-800 pt-3",
+                <Panel title="What it has to have">
+                  {engine ? (
+                    <StatGroups
+                      catalog={catalog}
+                      groups={groups}
+                      onChange={setGroups}
+                    />
+                  ) : (
+                    <p className="text-sm text-zinc-500">
+                      Loading the item tables…
+                    </p>
+                  )}
+                </Panel>
+              </div>
             )}
-          >
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setFiltersOpen(!filtersOpen)}
-              title={filtersOpen ? "Hide the filters" : "Show the filters"}
-            >
-              {filtersOpen ? (
-                <ChevronUpIcon className="h-4 w-4" />
-              ) : (
-                <ChevronDownIcon className="h-4 w-4" />
+
+            <div
+              className={clsx(
+                "flex items-center gap-3",
+                filtersOpen && "border-t border-zinc-800 pt-3",
               )}
-              Filters
-            </Button>
-            <Button
-              onClick={() => runSearch()}
-              disabled={!canSearch || isSearching}
             >
-              {isSearching ? "Searching…" : "Search"}
-            </Button>
-            {!canSearch && (
-              <span className="text-xs text-zinc-500">
-                {refusedGroup
-                  ? "A counted group holds a modifier it cannot count. Move that row to a group with no count, or clear the count."
-                  : "Add a filter — an unfiltered search would return every item of every character."}
-              </span>
-            )}
-            <Button className="ml-auto" variant="secondary" onClick={reset}>
-              Reset
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setFiltersOpen(!filtersOpen)}
+                title={filtersOpen ? "Hide the filters" : "Show the filters"}
+              >
+                {filtersOpen ? (
+                  <ChevronUpIcon className="h-4 w-4" />
+                ) : (
+                  <ChevronDownIcon className="h-4 w-4" />
+                )}
+                Filters
+              </Button>
+              <Button
+                onClick={() => runSearch()}
+                disabled={!canSearch || isSearching}
+              >
+                {isSearching ? "Searching…" : "Search"}
+              </Button>
+              {!canSearch && (
+                <span className="text-xs text-zinc-500">
+                  {refusedGroup
+                    ? "A counted group holds a modifier it cannot count. Move that row to a group with no count, or clear the count."
+                    : "Add a filter — an unfiltered search would return every item of every character."}
+                </span>
+              )}
+              <Button className="ml-auto" variant="secondary" onClick={reset}>
+                Reset
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
-      {rejection && (
-        <Card>
-          <CardContent>
-            {/* The store refuses a filter it cannot answer literally rather than repairing it,
+        {rejection && (
+          <Card>
+            <CardContent>
+              {/* The store refuses a filter it cannot answer literally rather than repairing it,
                 because a repaired filter matches more than was asked and the caller cannot tell.
                 So this is a fixable statement about the filter, not an error. */}
-            <p className="text-sm text-red-400">{rejection}</p>
-          </CardContent>
-        </Card>
-      )}
+              <p className="text-sm text-red-400">{rejection}</p>
+            </CardContent>
+          </Card>
+        )}
 
-      {error && !rejection && (
-        <Card>
-          <CardContent>
-            <p className="text-sm text-red-400">
-              {error instanceof Error ? error.message : "Search failed."}
-            </p>
-          </CardContent>
-        </Card>
-      )}
+        {error && !rejection && (
+          <Card>
+            <CardContent>
+              <p className="text-sm text-red-400">
+                {error instanceof Error ? error.message : "Search failed."}
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
-      {submitted && !error && (
-        <Card>
-          <CardContent className="space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-xs text-zinc-400">
-                {!answered
-                  ? "Searching…"
-                  : total === 0
-                    ? "No matches"
-                    : `${total.toLocaleString()} match${total === 1 ? "" : "es"}`}
-                {/* There is no sort CONTROL: a modifier on a result is the handle, which is both
+        {submitted && !error && (
+          <Card>
+            <CardContent className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs text-zinc-400">
+                  {!answered
+                    ? "Searching…"
+                    : total === 0
+                      ? "No matches"
+                      : `${total.toLocaleString()} match${total === 1 ? "" : "es"}`}
+                  {/* There is no sort CONTROL: a modifier on a result is the handle, which is both
                     the reference's behaviour and one fewer panel. All that is left is saying what
                     the order currently is, and a way back out of it. */}
-                {sortLabel && (
-                  <>
-                    {" · sorted by "}
-                    <span className="text-zinc-200">{sortLabel}</span>
-                    {sort.descending ? " ▼" : " ▲"}
-                    <button
-                      type="button"
-                      onClick={() => changeSort(DEFAULT_SORT)}
-                      className="ml-1 text-zinc-500 underline decoration-dotted hover:text-zinc-300"
-                    >
-                      clear
-                    </button>
-                  </>
-                )}
-              </span>
-            </div>
+                  {sortLabel && (
+                    <>
+                      {" · sorted by "}
+                      <span className="text-zinc-200">{sortLabel}</span>
+                      {sort.descending ? " ▼" : " ▲"}
+                      <button
+                        type="button"
+                        onClick={() => changeSort(DEFAULT_SORT)}
+                        className="ml-1 text-zinc-500 underline decoration-dotted hover:text-zinc-300"
+                      >
+                        clear
+                      </button>
+                    </>
+                  )}
+                </span>
+              </div>
 
-            {/* Nothing at all until a response has landed, rather than the empty state: an answer
+              {/* Nothing at all until a response has landed, rather than the empty state: an answer
                 about the results cannot be given before there are any, and on a re-sort that
                 swapped a full list for "nothing matched" and back again. */}
-            {!answered ? null : total === 0 ? (
-              <EmptyState
-                icon={MagnifyingGlassIcon}
-                title="Nothing matched"
-                description="Every group has to be satisfied at once. Loosening a bound, lowering a group's count, or dropping a modifier is usually what widens it."
-              />
-            ) : (
-              <>
-                <SearchResults
-                  matches={matches}
-                  engine={engine}
-                  sort={sort}
-                  onSort={changeSort}
+              {!answered ? null : total === 0 ? (
+                <EmptyState
+                  icon={MagnifyingGlassIcon}
+                  title="Nothing matched"
+                  description="Every group has to be satisfied at once. Loosening a bound, lowering a group's count, or dropping a modifier is usually what widens it."
                 />
-                {/* The end of the list, watched rather than clicked: reaching it IS the request
+              ) : (
+                <>
+                  <SearchResults
+                    matches={matches}
+                    engine={engine}
+                    sort={sort}
+                    onSort={changeSort}
+                  />
+                  {/* The end of the list, watched rather than clicked: reaching it IS the request
                     for more. Kept in the flow (not absolutely placed) so it moves down with the
                     rows it follows, and given a margin so the fetch starts a screen early and the
                     reader meets rows rather than a spinner. */}
-                <div ref={sentinelRef} className="h-px" />
-                {hasNextPage && (
-                  <p className="py-2 text-center text-xs text-zinc-500">
-                    {isFetchingNextPage
-                      ? "Loading more…"
-                      : `${matches.length.toLocaleString()} of ${total.toLocaleString()} shown`}
-                  </p>
-                )}
-              </>
-            )}
-          </CardContent>
-        </Card>
-      )}
-    </div>
+                  <div ref={sentinelRef} className="h-px" />
+                  {hasNextPage && (
+                    <p className="py-2 text-center text-xs text-zinc-500">
+                      {isFetchingNextPage
+                        ? "Loading more…"
+                        : `${matches.length.toLocaleString()} of ${total.toLocaleString()} shown`}
+                    </p>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    </ForcedSpriteStyle.Provider>
   );
 }

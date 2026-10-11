@@ -86,6 +86,7 @@ function Paperdoll({
       {slots.map((def) => (
         <ItemCell
           key={def.area}
+          cellKind="slot"
           item={bySlot.get(locationOf ? locationOf(def) : def.slot)}
           className="flex min-h-[72px] items-center justify-center rounded bg-zinc-900/40 ring-1 ring-zinc-800"
           style={{ gridArea: def.area }}

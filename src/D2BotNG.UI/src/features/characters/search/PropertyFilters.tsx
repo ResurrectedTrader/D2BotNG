@@ -16,12 +16,14 @@ import type { TooltipEngine } from "d2itemtoolkit";
 import { ItemSprite } from "@/lib/rendering";
 import { colorForQuality } from "@/features/items/item-utils";
 import {
+  GameFlavor,
   SocketScope,
   Tier,
   type CharacterKey,
   type CharacterSummary,
 } from "@/generated/captures_pb";
 import { captureMapKey } from "@/stores/event-store";
+import { realmLabel, realmMatters } from "../realms";
 import {
   IDENTIFIED_FLAG,
   RUNEWORD_FLAG,
@@ -120,6 +122,37 @@ const RANGE_FIELDS: { key: RangeKey; label: string; hint?: string }[] = [
     hint: "What the item rolled at — which decides the affixes it could have. Not what it demands of a wearer.",
   },
 ];
+
+const GAME_VERSIONS: Record<number, string> = {
+  1: "Classic",
+  2: "Expansion",
+  3: "Reign of the Warlock",
+};
+
+/**
+ * The version and realm values the searched game's captures actually hold — which is what decides
+ * whether each filter is offered at all. Read off the summaries' `game`, the server's one reading
+ * of what each producer reported, so a filter cannot offer a value the store would file differently.
+ */
+function gameOptions(characters: CharacterSummary[]) {
+  const versions = new Set<number>();
+  const realms = new Set<string>();
+  for (const c of characters) {
+    versions.add(c.game?.version ?? 2);
+    // Realms only where a character is bound to one — see `realmMatters`.
+    if (realmMatters(c.game?.flavor ?? GameFlavor.LOD)) {
+      realms.add(c.identity?.realm ?? "");
+    }
+  }
+  return {
+    versions: [...versions]
+      .sort((a, b) => a - b)
+      .map((id) => ({ id, name: GAME_VERSIONS[id] ?? `Version ${id}` })),
+    realms: [...realms]
+      .sort((a, b) => a.localeCompare(b))
+      .map((id) => ({ id, name: realmLabel(id) })),
+  };
+}
 
 /**
  * Type, quality, tier and location are one question asked of four lists: which of these ids.
@@ -393,15 +426,25 @@ const PICK_COLORS: Record<SpecificPick["kind"], string> = {
  */
 interface WherePick {
   id: string;
+  /** What the selection summary and the type-to-filter match on: the profile and the character. */
   name: string;
   profile?: string;
   key?: CharacterKey;
+  /**
+   * How the row draws. A profile holding several captures is a HEADER over its characters; one
+   * holding a single capture is one row naming both, since a header over one child says nothing.
+   */
+  display:
+    | { kind: "header"; profile: string; count: number }
+    | { kind: "child"; charName: string }
+    | { kind: "single"; profile: string; charName: string };
 }
 
 /**
  * The rows: every profile with captures, and under a profile holding several — a mule profile —
  * each of its characters as well, so one mule can be picked out of the twenty the profile has
- * used. A profile holding one capture is one row, since naming the character would add nothing.
+ * used. The header stays selectable: picking it is the whole profile, including the characters it
+ * goes on to capture, which ticking each child cannot express.
  */
 function whereOptions(characters: CharacterSummary[]): WherePick[] {
   const byProfile = new Map<string, CharacterKey[]>();
@@ -416,24 +459,55 @@ function whereOptions(characters: CharacterSummary[]): WherePick[] {
   for (const [profile, keys] of [...byProfile].sort(([a], [b]) =>
     a.localeCompare(b),
   )) {
+    if (keys.length === 1) {
+      out.push({
+        id: profile,
+        name: `${profile} ${keys[0].name}`,
+        profile,
+        display: { kind: "single", profile, charName: keys[0].name },
+      });
+      continue;
+    }
     out.push({
       id: profile,
-      name: keys.length > 1 ? `${profile} (all ${keys.length})` : profile,
+      name: `${profile} (all ${keys.length})`,
       profile,
+      display: { kind: "header", profile, count: keys.length },
     });
-    if (keys.length > 1) {
-      for (const key of [...keys].sort((a, b) =>
-        a.name.localeCompare(b.name),
-      )) {
-        out.push({
-          id: captureMapKey(key),
-          name: `${key.name} · ${profile}`,
-          key,
-        });
-      }
+    for (const key of [...keys].sort((a, b) => a.name.localeCompare(b.name))) {
+      out.push({
+        id: captureMapKey(key),
+        name: `${key.name} · ${profile}`,
+        key,
+        display: { kind: "child", charName: key.name },
+      });
     }
   }
   return out;
+}
+
+/** One row of the character picker, drawn as its place in the profile grouping. */
+function WhereRow({ pick }: { pick: WherePick }) {
+  const d = pick.display;
+  switch (d.kind) {
+    case "header":
+      return (
+        <span className="font-medium text-zinc-200">
+          {d.profile}{" "}
+          <span className="font-normal text-zinc-500">
+            ({d.count} characters)
+          </span>
+        </span>
+      );
+    case "child":
+      return <span className="pl-4">{d.charName}</span>;
+    case "single":
+      return (
+        <span>
+          <span className="text-zinc-400">{d.profile}</span> {d.charName}
+        </span>
+      );
+  }
 }
 
 export function PropertyFilterPanel({
@@ -444,14 +518,16 @@ export function PropertyFilterPanel({
 }: {
   filters: Filters;
   onChange: (next: Filters) => void;
-  /** Every capture the store holds; the picker groups them by profile. */
+  /** The searched game's captures; the picker groups them by profile. */
   characters: CharacterSummary[];
+  /** The searched game's tables, which every list here is read out of. */
   engine: TooltipEngine | null;
 }) {
   const { items, types } = useItemTaxonomy(engine);
   const patch = (next: Partial<Filters>) => onChange({ ...filters, ...next });
 
   const where = useMemo(() => whereOptions(characters), [characters]);
+  const games = useMemo(() => gameOptions(characters), [characters]);
   // The chosen rows, as the widget's ids: the profiles by name, the captures by their map key.
   const whereChosen = [
     ...filters.profiles,
@@ -568,13 +644,49 @@ export function PropertyFilterPanel({
           {/* Several, because comparing what a handful of mules hold is the normal question — and
               "all" is the empty selection rather than an option in the list, so there is no way to
               pick it alongside a name and mean two contradictory things. */}
-          <IdSelect
+          <MultiSelect
+            values={where.filter((w) => whereChosen.includes(w.id))}
             options={where}
-            chosen={whereChosen}
-            onChange={patchWhere}
+            keyOf={(w) => w.id}
+            labelOf={(w) => w.name}
+            onChange={(picks) => patchWhere(picks.map((w) => w.id))}
             placeholder="All characters"
+            renderOption={(w) => <WhereRow pick={w} />}
           />
         </Field>
+
+        {/* The version only once the searched game's captures hold more than one, since one is a
+            choice with one answer. The realm whenever a LOD character reports one — a realm is a
+            fact worth narrowing to even before a second appears, and D2R's are not offered at all,
+            since a D2R character can log into any realm. */}
+        {games.versions.length > 1 && (
+          <Field
+            label="Game version"
+            hint="Classic, Expansion or Reign of the Warlock, as the character was reported."
+          >
+            <IdSelect
+              options={games.versions}
+              chosen={filters.gameVersions}
+              onChange={(gameVersions) => patch({ gameVersions })}
+              placeholder="Any version"
+              width="14rem"
+            />
+          </Field>
+        )}
+        {games.realms.some((r) => r.id !== "") && (
+          <Field
+            label="Realm"
+            hint="Which realm the character plays on, or single player."
+          >
+            <IdSelect
+              options={games.realms}
+              chosen={filters.realms}
+              onChange={(realms) => patch({ realms })}
+              placeholder="Any realm"
+              width="14rem"
+            />
+          </Field>
+        )}
 
         <Field
           label="Location"

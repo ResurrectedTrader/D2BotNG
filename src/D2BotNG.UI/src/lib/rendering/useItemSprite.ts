@@ -17,8 +17,8 @@ export interface UseItemSpriteOptions extends RenderOptions {
   /**
    * Draw from D2R's artwork instead of the classic DC6s, when this item can be.
    *
-   * Per item rather than per app: D2R art needs a `colorName` the classic path does not carry, and
-   * an item code the shipped archives actually hold. An item that cannot be drawn that way falls
+   * Per item rather than per app: D2R art may need the item's own code and unique/set row, which
+   * the classic sprite name does not carry. An item the archives hold no art for falls
    * back to classic silently, which is the only sensible answer — the alternative is a gap in a
    * grid where an item plainly is.
    */
@@ -51,6 +51,8 @@ export function useItemSprite(
     sockets,
     hd,
   } = options;
+
+  const hdFragment = hd ? `hd:${hdKey(hd)}` : "";
 
   const [bitmap, setBitmap] = useState<ImageBitmap | null>(null);
   const [loading, setLoading] = useState(false);
@@ -87,7 +89,7 @@ export function useItemSprite(
       ethereal,
       hasBackground,
       socketsKey,
-      hd ? `hd:${hd.gfxIndex}:${hd.colorName ?? ""}` : "",
+      hdFragment,
     );
 
     // One renderer either way — `hd` only changes where its pixels come from, and it falls back
@@ -139,9 +141,16 @@ export function useItemSprite(
     ethereal,
     backgroundColor,
     socketsKey,
-    hd?.gfxIndex,
-    hd?.colorName,
+    hdFragment,
   ]);
 
   return { bitmap, loading, error };
+}
+
+/** An appearance as a cache-key fragment: everything in it that changes the pixels. */
+function hdKey(hd: HdAppearance): string {
+  const named = hd.named
+    ? `${hd.named.set ? "s" : "u"}${hd.named.fileIndex}`
+    : "";
+  return `${hd.code ?? ""}:${hd.variant}:${named}`;
 }

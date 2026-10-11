@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import type { TooltipEngine } from "d2itemtoolkit";
 
-import { loadToolkit, toolkitIfLoaded } from "@/lib/toolkit";
+import { GameVariant } from "@/generated/captures_pb";
+import { engineFor, loadToolkit, toolkitIfLoaded } from "@/lib/toolkit";
 
 /**
  * The item tables, loaded on demand.
@@ -16,7 +17,10 @@ import { loadToolkit, toolkitIfLoaded } from "@/lib/toolkit";
  * the game's own tables is worth the chunk. What `enabled` still buys is the pages that never name
  * anything, and the frames before a character is chosen.
  */
-export function useToolkit(enabled: boolean): TooltipEngine | null {
+export function useToolkit(
+  enabled: boolean,
+  variant: GameVariant = GameVariant.LOD_114D,
+): TooltipEngine | null {
   const [engine, setEngine] = useState<TooltipEngine | null>(toolkitIfLoaded);
 
   useEffect(() => {
@@ -32,5 +36,7 @@ export function useToolkit(enabled: boolean): TooltipEngine | null {
     };
   }, [enabled, engine]);
 
-  return engine;
+  // The state only tracks the module arriving; which variant's engine is wanted is a pure lookup
+  // over it, so switching characters across games needs no reload.
+  return engine ? engineFor(variant) : null;
 }

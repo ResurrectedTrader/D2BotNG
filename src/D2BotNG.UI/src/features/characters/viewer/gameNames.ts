@@ -23,8 +23,9 @@
  *     shows quality as a text COLOUR rather than as a word.
  */
 
-import { useMemo } from "react";
+import { createContext, useContext, useMemo } from "react";
 import type { TooltipEngine } from "d2itemtoolkit";
+import { GameVariant } from "@/generated/captures_pb";
 import { useToolkit } from "@/hooks/useToolkit";
 import { MISSING_STRING } from "../search/statCatalog";
 
@@ -35,12 +36,18 @@ export interface GameNames {
   monster(id: number): string | null;
   /** charstats.txt, whose class column doubles as the string-table key. */
   characterClass(id: number): string | null;
+  /**
+   * experience.txt: the experience a character needs to reach `level` (level 1 is 0). Null past
+   * the table's last level, where there is nothing more to reach. Every class shares the curve.
+   */
+  levelExperience(level: number): number | null;
 }
 
 const UNKNOWN: GameNames = {
   skill: () => null,
   monster: () => null,
   characterClass: () => null,
+  levelExperience: () => null,
 };
 
 /**
@@ -51,6 +58,7 @@ function namesFor(engine: TooltipEngine): GameNames {
   const strings = engine.data.strings;
   const monsters = engine.data.monsterStats;
   const classes = engine.data.charStats;
+  const experience = engine.data.experience;
 
   // The string table answers an unknown key with its own placeholder rather than with nothing, and
   // that placeholder is a real string — so every lookup has to reject it explicitly or the UI
@@ -83,14 +91,37 @@ function namesFor(engine: TooltipEngine): GameNames {
           ? resolve(classes.getString(id, "class"))
           : null,
       ),
+    // The row keyed `Level` = N holds what reaching level N+1 takes (row 1 is 500, level 2's
+    // threshold). Read as a string: level 99 is ~3.52 billion, past what an int32 parse holds.
+    // The table also has a row past the cap (row 99, "level 100"); its own MaxLvl row stops there.
+    levelExperience: (level) => {
+      if (!experience || level < 1) return null;
+      const capRow = experience.findRow("Level", "MaxLvl");
+      const cap =
+        capRow >= 0 ? Number(experience.getString(capRow, "Amazon")) : 99;
+      if (level > (Number.isFinite(cap) && cap > 0 ? cap : 99)) return null;
+      const row = experience.findRow("Level", String(level - 1));
+      if (row < 0) return null;
+      const value = Number(experience.getString(row, "Amazon"));
+      return Number.isFinite(value) ? value : null;
+    },
   };
 }
 
 /**
+ * The game whose tables a character view's ids index — set by the view of a capture, from its
+ * `game`. A skill, monster or class id means something only in ITS game's tables: a Warlock's
+ * skills exist in D2R's skills.txt alone. 1.14d by default, which is what a v1 character is.
+ */
+export const CharacterVariant = createContext<GameVariant>(
+  GameVariant.LOD_114D,
+);
+
+/**
  * Names for the character views. Loads the tables — both schemas need them, since a skill id is a
- * skill id whichever stack reported it.
+ * skill id whichever stack reported it — and reads them in the character's own game.
  */
 export function useGameNames(): GameNames {
-  const engine = useToolkit(true);
+  const engine = useToolkit(true, useContext(CharacterVariant));
   return useMemo(() => (engine ? namesFor(engine) : UNKNOWN), [engine]);
 }

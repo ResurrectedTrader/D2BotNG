@@ -75,8 +75,37 @@ function build(unit: Unit): ToolkitUnit {
     // The toolkit wants the BONUSED level, which is exactly what the producer sends as `level`;
     // `hardPoints` is the invested share and has no place in a tooltip.
     skills: unit.skills.map((s) => ({ skill: s.skillId, level: s.level })),
+    // The library's "not recorded" is -1, since 0 is a real skill (Attack); the capture says the
+    // same thing with presence. Only a D2R requirement rule reads it.
+    lastUsedSkill: unit.lastUsedSkill ?? -1,
   };
 }
+
+/** UNITFLAGEX_ISEXPANSION, the bit the library reads to apply the expansion rules to a viewer. */
+const UNIT_FLAG_EXPANSION = 0x02000000;
+
+/**
+ * A viewer whose expansion bit says what its GAME says, rather than what its unit `flagsEx` held.
+ *
+ * The library tests the viewer's expansion bit (D2R itself asks the unit's version), and the
+ * character's game is the authority on that: char_flags carries the expansion bit, and a newer
+ * producer reports the game version outright. A shallow copy, kept per unit like the conversion
+ * itself — the viewer is converted once and re-read for every tooltip.
+ */
+export function asViewer(unit: ToolkitUnit, expansion: boolean): ToolkitUnit {
+  const cache = expansion ? expansionViewers : classicViewers;
+  const cached = cache.get(unit);
+  if (cached) return cached;
+  const flagsEx = expansion
+    ? unit.flagsEx | UNIT_FLAG_EXPANSION
+    : unit.flagsEx & ~UNIT_FLAG_EXPANSION;
+  const result = flagsEx === unit.flagsEx ? unit : { ...unit, flagsEx };
+  cache.set(unit, result);
+  return result;
+}
+
+const expansionViewers = new WeakMap<ToolkitUnit, ToolkitUnit>();
+const classicViewers = new WeakMap<ToolkitUnit, ToolkitUnit>();
 
 /**
  * Everything a wearer is holding, flattened.

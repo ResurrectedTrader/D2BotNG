@@ -13,6 +13,7 @@ import type { Character, Container } from "@/generated/characters_pb";
 import { useResetKills } from "@/hooks/useResetKills";
 import { useResetAreaTime } from "@/hooks/useResetAreaTime";
 import { CharacterChrome } from "./CharacterChrome";
+import { realmLabel } from "../realms";
 import { InventoryTab, type LabeledContainer } from "./InventoryTab";
 import { StatsSkillsTab } from "./StatsSkillsTab";
 import { ProgressionPanel } from "./ProgressionPanel";
@@ -22,11 +23,13 @@ import {
   STAT_GOLD,
   STAT_STASH_GOLD,
   STORAGE_IDS,
+  STAT_EXPERIENCE,
   statOf,
   withStashGoldFallback,
   type AreaDuration,
   type CharacterFacts,
   type DifficultyProgress,
+  type DisplayIdentity,
   type DisplayStashPage,
   type KillCount,
   type SkillLevels,
@@ -73,7 +76,7 @@ export function StreamedCharacterView({
     profile: character.profile,
     charName: character.charName,
     account: character.account,
-    realm: character.realm,
+    realm: character.realm ? realmLabel(character.realm) : "",
     level: character.level,
     charClass: character.charClass,
     difficulty: character.difficulty,
@@ -89,7 +92,9 @@ export function StreamedCharacterView({
   };
 
   const equipped = containerById(character.containers, "equipped");
-  const merc = containerById(character.containers, "merc");
+  // v1 says nothing of whether a mercenary is alive; one with gear on is the best reading of it.
+  const mercGear = containerById(character.containers, "merc");
+  const merc = mercGear?.items.length ? mercGear : undefined;
 
   const storage = useMemo(() => {
     const containers = character.containers;
@@ -116,6 +121,8 @@ export function StreamedCharacterView({
               name: page.name,
               type: "normal",
               gold: 0,
+              removeOnly: false,
+              season: 0,
               // The id is a React key and every page shares "stash", so page-qualify it.
               container: { ...page, id: `stash-personal-${page.page}` },
             }),
@@ -185,6 +192,16 @@ export function StreamedCharacterView({
   }, [character.areaTime]);
 
   const displayName = character.charName || character.profile;
+  // v1 names no mercenary, so its band stays empty; the character's panel is still titled.
+  const identity = useMemo<DisplayIdentity>(
+    () => ({
+      name: displayName,
+      level: facts.level,
+      charClass: facts.charClass,
+      experience: statOf(character.stats, STAT_EXPERIENCE),
+    }),
+    [displayName, facts.level, facts.charClass, character.stats],
+  );
 
   return (
     <CharacterChrome
@@ -201,6 +218,7 @@ export function StreamedCharacterView({
           merc={merc}
           storage={storage}
           stash={stash}
+          identity={identity}
         />
       }
       statsAndSkills={

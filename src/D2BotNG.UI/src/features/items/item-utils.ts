@@ -6,25 +6,25 @@
  * differently: as a ÿcN marker in text, or as an index the game resolved.
  */
 
+import { paletteColors, type TextPalette } from "@/lib/rendering/colors";
+
 /**
- * D2 text color codes used in item descriptions.
- * These match the reference implementation's TextColors array.
+ * D2 text color codes, by code character (`'0' + index`), per game — built from the palettes in
+ * `lib/rendering/colors.ts`, which document where D2R's values come from.
  */
-const D2_TEXT_COLORS: Record<string, string> = {
-  "0": "#ffffff", // White
-  "1": "#ff4d4d", // Red
-  "2": "#00ff00", // Green
-  "3": "#6969ff", // Blue
-  "4": "#c7b377", // Gold/Tan
-  "5": "#696969", // Gray
-  "6": "#000000", // Black
-  "7": "#d0c27d", // Light gold
-  "8": "#ffa800", // Orange
-  "9": "#ffff64", // Yellow
-  ":": "#008000", // Dark green
-  ";": "#ae00ff", // Purple
-  "<": "#00c800", // Bright green
+const D2_TEXT_COLORS: Record<TextPalette, Record<string, string>> = {
+  lod: codeMap("lod"),
+  d2r: codeMap("d2r"),
 };
+
+function codeMap(palette: TextPalette): Record<string, string> {
+  return Object.fromEntries(
+    paletteColors(palette).map((c, index) => [
+      String.fromCharCode(48 + index),
+      `#${[c.r, c.g, c.b].map((v) => v.toString(16).padStart(2, "0")).join("")}`,
+    ]),
+  );
+}
 
 const DEFAULT_COLOR = "#ffffff";
 
@@ -48,6 +48,7 @@ const COLOR_PREFIX = String.raw`\xffc`;
 export function parseD2ColoredText(
   text: string,
   initialColor: string = DEFAULT_COLOR,
+  palette: TextPalette = "lod",
 ): ColoredTextSegment[] {
   const segments: ColoredTextSegment[] = [];
   let currentColor = initialColor;
@@ -74,8 +75,9 @@ export function parseD2ColoredText(
     // First character is the color code
     if (part.length > 0) {
       const colorCode = part[0];
-      if (colorCode in D2_TEXT_COLORS) {
-        currentColor = D2_TEXT_COLORS[colorCode];
+      const colors = D2_TEXT_COLORS[palette];
+      if (colorCode in colors) {
+        currentColor = colors[colorCode];
       }
       // Rest of the part is the text
       const textContent = part.slice(1);
@@ -127,12 +129,34 @@ export function stripD2ColorCodes(text: string): string {
  * and sprite are resolved from the game's tables rather than sent. All three satisfy this; none
  * needs to be converted into another.
  */
-/** The two things D2R art needs that its own item code does not carry. */
+/**
+ * What D2R art needs that the item code and palette shift do not carry. The colour is not here:
+ * it is the classic palette shift (`itemColor`) every source already sends.
+ */
 export interface HdAppearance {
-  /** `gfx_index` — which of an item type's interchangeable graphics this one rolled. */
-  gfxIndex: number;
-  /** The `invtransform` colour name from the unique or set row; null for an untinted item. */
-  colorName: string | null;
+  /**
+   * The item's own items.txt code, where the source knows it. The `code` a renderable carries is
+   * the CLASSIC sprite name, which for an identified unique or set is that row's own art (`invsoj`)
+   * and names no D2R item; the D2R art is filed under the item code instead.
+   */
+  code?: string;
+  /**
+   * Which of an item type's interchangeable graphics this one rolled, 1-based like the art is
+   * suffixed (`gfx_index + 1`); 0 when unknown or not applicable.
+   */
+  variant: number;
+  /** The unique or set row the item is, whose own art replaces the base's when it has some. */
+  named?: { set: boolean; fileIndex: number };
+}
+
+/** Per-call choices for `RenderableItem.describe`. */
+export interface DescribeOptions {
+  /**
+   * The item on its own, as when it is copied to trade: rendered against no wearer, and without
+   * the set block — the piece list and the bonus tiers are about a wearer's other pieces, and one
+   * piece grants no set bonus.
+   */
+  standalone?: boolean;
 }
 
 export interface RenderableItem {
@@ -153,21 +177,24 @@ export interface RenderableItem {
    * tooltip prefers this; the cheap readers of `description` (ethereal detection) do not, and must
    * not, since they run per cell.
    */
-  describe?: () => string;
+  describe?: (options?: DescribeOptions) => string;
   itemColor: number;
   invTrans: number;
   /**
-   * What the D2R art path needs on top of the code, when the source can supply it.
+   * What the D2R art path needs on top of the code and colour, when the source can supply it.
    *
-   * Absent for a mule line or a v1 character item, and that is not an oversight: D2R art is tinted
-   * by the `invtransform` NAME on the item's uniqueitems or setitems row, and v1 sends a classic
-   * palette-shift index instead — a resolved answer in the other scheme, which does not convert.
-   * Those items render D2R base art untinted, or classic art in full, which is why the style is a
-   * per-item fallback rather than a mode.
+   * Absent for a mule line or a v1 character item, which send only the resolved classic sprite
+   * name: those draw the base art for it (variant read back off the name), tinted by `itemColor`
+   * like any other — the colour is the same colors.txt index in both games.
    */
   hd?: HdAppearance;
   /** Set when the source knows outright, rather than leaving it to the description. */
   ethereal?: boolean;
+  /**
+   * Which game's text palette the tooltip's colour markers name. Absent is 1.14d — every source
+   * but a D2R capture.
+   */
+  palette?: TextPalette;
   sockets: RenderableItem[];
   /**
    * A richer view of the same item, when the source can produce one on demand. Absent for a mule
@@ -186,7 +213,7 @@ export interface RenderableItem {
  */
 export interface ItemDetail {
   /** Shown in place of the description, one entry per row the game would have drawn. */
-  lines(): DetailLine[];
+  lines(options?: DescribeOptions): DetailLine[];
 }
 
 /**
@@ -210,8 +237,13 @@ export interface DetailLine {
 }
 
 /** The hex for a D2 colour INDEX, as opposed to the ÿcN character `parseD2ColoredText` reads. */
-export function colorForIndex(index: number): string {
-  return D2_TEXT_COLORS[String.fromCharCode(48 + index)] ?? DEFAULT_COLOR;
+export function colorForIndex(
+  index: number,
+  palette: TextPalette = "lod",
+): string {
+  return (
+    D2_TEXT_COLORS[palette][String.fromCharCode(48 + index)] ?? DEFAULT_COLOR
+  );
 }
 
 /**

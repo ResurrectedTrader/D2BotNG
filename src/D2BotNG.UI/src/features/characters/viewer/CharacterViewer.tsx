@@ -15,11 +15,18 @@
  * runs.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import clsx from "clsx";
 import { UserIcon, ChevronUpDownIcon } from "@heroicons/react/24/outline";
 import { EmptyState } from "@/components/ui";
-import type { CharacterKey, CharacterSummary } from "@/generated/captures_pb";
+import {
+  GameFlavor,
+  GameVariant,
+  type CharacterKey,
+  type CharacterSummary,
+} from "@/generated/captures_pb";
+import { FlavorBadge } from "../FlavorBadge";
+import { realmLabel, realmMatters } from "../realms";
 import { isActive } from "@/features/profiles/profile-states";
 import {
   captureMapKey,
@@ -57,6 +64,13 @@ interface ListEntry {
   latest: boolean;
   /** The profile holds several captures, so the name alone does not say which profile this is. */
   ambiguous: boolean;
+  /**
+   * Which game, as the server read it (see `Game` in captures.proto). A v1 character is LOD: the
+   * v1 stack predates D2R support, and nothing on its wire says otherwise.
+   */
+  flavor: GameFlavor;
+  /** The tables the character's items are read with. LOD 1.14d for v1. */
+  variant: GameVariant;
 }
 
 /** Later of two summaries by their last report; ties go to the first argument. */
@@ -76,11 +90,14 @@ function CharacterSelector({
   selected,
   onSelect,
   isOnline,
+  showFlavor,
 }: {
   entries: ListEntry[];
   selected: ListEntry;
   onSelect: (id: string) => void;
   isOnline: (entry: ListEntry) => boolean;
+  /** More than one game is in the list, so each row says which it is. */
+  showFlavor: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -103,11 +120,23 @@ function CharacterSelector({
     const q = search.trim().toLowerCase();
     if (!q) return entries;
     return entries.filter((c) =>
-      [c.charName, c.profile, c.account, c.realm].some((s) =>
+      [c.charName, c.profile, c.account, shownRealm(c)].some((s) =>
         s.toLowerCase().includes(q),
       ),
     );
   }, [entries, search]);
+
+  // By profile, in the order the list already has (online first), so a mule profile's characters
+  // sit together under one header instead of each restating which profile it is.
+  const groups = useMemo(() => {
+    const byProfile = new Map<string, ListEntry[]>();
+    for (const c of filtered) {
+      const group = byProfile.get(c.profile) ?? [];
+      group.push(c);
+      byProfile.set(c.profile, group);
+    }
+    return [...byProfile.entries()];
+  }, [filtered]);
 
   function handleSelect(id: string) {
     onSelect(id);
@@ -131,6 +160,7 @@ function CharacterSelector({
         <h2 className="text-xl font-bold text-zinc-100">
           {selected.charName || selected.profile}
         </h2>
+        {showFlavor && <FlavorBadge flavor={selected.flavor} />}
         {/* Named only when the name alone would not say which profile this came through. */}
         {selected.ambiguous && (
           <span className="text-sm text-zinc-500">{selected.profile}</span>
@@ -151,40 +181,59 @@ function CharacterSelector({
             />
           </div>
           <div className="max-h-60 overflow-y-auto p-1">
-            {filtered.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => handleSelect(c.id)}
-                className={clsx(
-                  "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
-                  c.id === selected.id
-                    ? "bg-d2-gold/20 text-d2-gold"
-                    : "text-zinc-300 hover:bg-zinc-700",
-                )}
-              >
-                <span
-                  className={clsx(
-                    "h-2 w-2 flex-shrink-0 rounded-full",
-                    isOnline(c) ? "bg-green-500" : "bg-zinc-600",
-                  )}
-                />
-                <span className="flex-1 truncate">
-                  {c.charName || c.profile}
-                </span>
-                {/* Both stacks, not just v2: the badge is only informative if its absence means
-                    something, and a list where most rows are unmarked reads as "these are normal
-                    and that one is odd" rather than as two kinds. */}
-                <SchemaBadge schema={c.schema} />
-                {(c.ambiguous || c.account || c.realm) && (
-                  <span className="truncate text-xs text-zinc-500">
-                    {[c.ambiguous ? c.profile : "", c.account, c.realm]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </span>
-                )}
-              </button>
-            ))}
+            {groups.map(([profile, members]) => {
+              // Every profile is a header over its characters, even a profile with one: the tags
+              // then sit on one column of headers rather than on every row, which reads more easily.
+              // They move to the header when every character under it shares them — the normal
+              // case, since a profile runs one engine against one game — and stay on the rows that
+              // differ otherwise.
+              const flavorShared = members.every(
+                (m) => m.flavor === members[0].flavor,
+              );
+              const schemaShared = members.every(
+                (m) => m.schema === members[0].schema,
+              );
+              return (
+                <div key={profile}>
+                  {/* A header, not an option: what is chosen here is a character. */}
+                  <div className="flex items-center gap-2 px-2 pb-0.5 pt-1.5 text-xs">
+                    <span className="truncate font-medium text-zinc-300">
+                      {profile}
+                    </span>
+                    <span className="text-zinc-500">
+                      ({members.length}{" "}
+                      {members.length === 1 ? "character" : "characters"})
+                    </span>
+                    <span className="ml-auto flex items-center gap-1">
+                      {showFlavor && flavorShared && (
+                        <FlavorBadge flavor={members[0].flavor} />
+                      )}
+                      {schemaShared && members[0].schema === 1 && (
+                        <SchemaBadge />
+                      )}
+                    </span>
+                  </div>
+                  {members.map((c) => (
+                    <EntryRow
+                      key={c.id}
+                      entry={c}
+                      selected={c.id === selected.id}
+                      online={isOnline(c)}
+                      onSelect={handleSelect}
+                      indent
+                      label={c.charName || profile}
+                      badges={
+                        <Badges
+                          entry={c}
+                          showFlavor={showFlavor && !flavorShared}
+                          showSchema={!schemaShared}
+                        />
+                      }
+                    />
+                  ))}
+                </div>
+              );
+            })}
             {filtered.length === 0 && (
               <p className="px-2 py-3 text-center text-sm text-zinc-500">
                 No matches found
@@ -197,25 +246,92 @@ function CharacterSelector({
   );
 }
 
-/** Which stack this character came from. Worth surfacing because it explains what the view can
- *  show: only a v2 capture carries per-item stat lists, so a v1 character has no searchable item
- *  detail behind it. */
-function SchemaBadge({ schema }: { schema: 1 | 2 }) {
+/**
+ * The realm a row names: a LOD character's, and none for D2R, whose characters are not bound to a
+ * realm — they can log into any of them, so the last one played on says nothing about the
+ * character.
+ */
+function shownRealm(entry: ListEntry): string {
+  return realmMatters(entry.flavor) && entry.realm
+    ? realmLabel(entry.realm)
+    : "";
+}
+
+/** One selectable character in the dropdown. */
+function EntryRow({
+  entry,
+  selected,
+  online,
+  onSelect,
+  label,
+  badges,
+  indent = false,
+}: {
+  entry: ListEntry;
+  selected: boolean;
+  online: boolean;
+  onSelect: (id: string) => void;
+  label: ReactNode;
+  badges: ReactNode;
+  indent?: boolean;
+}) {
+  const detail = [entry.account, shownRealm(entry)].filter(Boolean).join(" · ");
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(entry.id)}
+      className={clsx(
+        "flex w-full items-center gap-2 rounded py-1.5 pr-2 text-left text-sm transition-colors",
+        indent ? "pl-5" : "pl-2",
+        selected
+          ? "bg-d2-gold/20 text-d2-gold"
+          : "text-zinc-300 hover:bg-zinc-700",
+      )}
+    >
+      <span
+        className={clsx(
+          "h-2 w-2 flex-shrink-0 rounded-full",
+          online ? "bg-green-500" : "bg-zinc-600",
+        )}
+      />
+      <span className="flex-1 truncate">{label}</span>
+      {badges}
+      {detail && (
+        <span className="truncate text-xs text-zinc-500">{detail}</span>
+      )}
+    </button>
+  );
+}
+
+/** A row's own tags, for the ones a group header did not already carry. */
+function Badges({
+  entry,
+  showFlavor,
+  showSchema = true,
+}: {
+  entry: ListEntry;
+  showFlavor: boolean;
+  showSchema?: boolean;
+}) {
+  return (
+    <>
+      {showFlavor && <FlavorBadge flavor={entry.flavor} />}
+      {showSchema && entry.schema === 1 && <SchemaBadge />}
+    </>
+  );
+}
+
+/**
+ * Marks a v1 character. Only v1 is marked: v2 is the normal case now, and what the tag explains is
+ * the exception — a v1 character's items carry no stat lists, so it cannot be searched.
+ */
+function SchemaBadge() {
   return (
     <span
-      className={clsx(
-        "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-        schema === 2
-          ? "bg-d2-gold/15 text-d2-gold"
-          : "bg-zinc-700/60 text-zinc-400",
-      )}
-      title={
-        schema === 2
-          ? "Wire schema v2 capture — full item detail, pulled on demand"
-          : "Wire schema v1 — streamed live, presentation resolved by the game engine"
-      }
+      className="rounded bg-zinc-700/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-400"
+      title="Wire schema v1 — streamed live, presentation resolved by the game engine; not searchable"
     >
-      {schema === 2 ? "v2" : "v1"}
+      v1
     </span>
   );
 }
@@ -276,6 +392,8 @@ export function CharacterViewer() {
           schema: 2,
           latest: group.latest === s,
           ambiguous: group.count > 1,
+          flavor: s.game?.flavor ?? GameFlavor.LOD,
+          variant: s.game?.variant ?? GameVariant.LOD_114D,
         },
       ];
     });
@@ -292,6 +410,8 @@ export function CharacterViewer() {
           schema: 1,
           latest: true,
           ambiguous: false,
+          flavor: GameFlavor.LOD,
+          variant: GameVariant.LOD_114D,
         })),
     ];
   }, [streamed, capturedSummaries]);
@@ -335,7 +455,15 @@ export function CharacterViewer() {
   const { data: capturedDetail } = useCapturedCharacter(
     isCaptured ? selected.key : null,
   );
-  const engine = useToolkit(!!isCaptured);
+  // The selected character's own game tables: a D2R capture's ids index D2R's, which number the
+  // same items differently. Read off the summary, so it is known before the capture arrives.
+  const engine = useToolkit(!!isCaptured, selected?.variant);
+
+  // A badge only says something when its absence would too — a list of one game needs none.
+  const showFlavor = useMemo(
+    () => new Set(entries.map((e) => e.flavor)).size > 1,
+    [entries],
+  );
 
   // On entering the view, default to the first online character (falling back to the first
   // character when none are online). We commit that pick to state once — rather than leaving the
@@ -371,6 +499,7 @@ export function CharacterViewer() {
       selected={selected}
       onSelect={setSelectedId}
       isOnline={isOnline}
+      showFlavor={showFlavor}
     />
   );
   const online = isOnline(selected);

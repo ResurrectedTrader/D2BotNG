@@ -1401,6 +1401,377 @@ public class CaptureStoreTests : IDisposable
     }
 
     /// <summary>
+    /// A version-3 file gains the backend, game type and stack columns in place and keeps every
+    /// row. What it held reads as what its producer could say: no backend named, no game type
+    /// (not Classic), and no item a slot — and then a D2R report fills all three.
+    /// </summary>
+    [Fact]
+    public void AVersionThreeDatabaseIsMigratedAndKeepsItsRows()
+    {
+        Apply(Keyframe());
+        Apply("""
+              {"schemaVersion":2,"gameId":"Game#1","updatedAt":1717000010000,
+               "kills":{"byClass":[{"id":58,"spec":2,"count":4}]}}
+              """);
+        _store.Dispose();
+        DowngradeToVersionThree(DatabasePath);
+
+        using var reopened = new CaptureStore(NullLogger<CaptureStore>.Instance, new Paths(_directory), _tooltip);
+        reopened.Open();
+
+        Assert.Equal((long)CaptureSchema.Version, ScalarRaw(DatabasePath, "PRAGMA user_version"));
+        Assert.True(File.Exists(BackupPath(3)));
+
+        var character = reopened.GetCharacter(Key("Bot1"))!;
+        Assert.Equal("", character.Backend);
+        Assert.False(character.Identity.HasGameType);
+        Assert.Equal(7, character.Kills.Single(k => k.Id == 58 && !k.SuperUnique).Count);
+        var ring = Assert.Single(Assert.Single(character.Player.Containers.Stash.Pages).Items);
+        Assert.False(ring.HasStackCount);
+        Assert.Equal(3, reopened.SearchItems(new SearchItemsRequest { Profiles = { "Bot1" } }).Total);
+
+        reopened.Apply("Bot1", Parse(AdvancedStashKeyframe()));
+        var upgraded = reopened.GetCharacter(Key("Bot1"))!;
+        Assert.Equal("d2r", upgraded.Backend);
+        Assert.Equal(2, upgraded.Identity.GameType);
+        Assert.Contains(upgraded.Player.Containers.Stash.Pages.SelectMany(p => p.Items), i => i.StackCount == 37);
+    }
+
+    /// <summary>
+    /// The three fields a D2R producer adds. The backend rides every message, so an unnamed update
+    /// that omits it — an older producer's shape — must not blank what a keyframe said; a stack
+    /// size exists only on an advanced page's slots and reads as absent everywhere else, as the
+    /// game type does from an identity that predates it.
+    /// </summary>
+    [Fact]
+    public void BackendGameTypeAndStackCountAreStoredAsReported()
+    {
+        Apply(AdvancedStashKeyframe());
+
+        var summary = Assert.Single(_store.ListCharacters());
+        Assert.Equal("d2r", summary.Backend);
+        Assert.Equal(2, summary.Identity.GameType);
+
+        var character = _store.GetCharacter(Key("Bot1"))!;
+        Assert.Equal("d2r", character.Backend);
+        var pages = character.Player.Containers.Stash.Pages;
+        var slot = Assert.Single(pages.Single(p => p.Type == StashTabType.AdvancedStash).Items);
+        Assert.True(slot.HasStackCount);
+        Assert.Equal(37, slot.StackCount);
+        Assert.False(Assert.Single(pages.Single(p => p.Type == StashTabType.Normal).Items).HasStackCount);
+
+        Apply("""
+              {"schemaVersion":2,"gameId":"Game#1","updatedAt":1717000010000,
+               "identity":{"account":"Acct","realm":"USWest","difficulty":2,"charFlags":36,"ladder":true},
+               "player":{"stats":[{"id":12,"value":90}]}}
+              """);
+        var after = Assert.Single(_store.ListCharacters());
+        Assert.Equal("d2r", after.Backend);
+        Assert.False(after.Identity.HasGameType);
+    }
+
+    /// <summary>
+    /// The last-used skill rides the wearer document, which leaves the key out when the player has
+    /// used none. So: absent until a document reports one (0 is Attack, a real skill), kept while
+    /// no document arrives, and cleared by a document without it.
+    /// </summary>
+    [Fact]
+    public void LastUsedSkillFollowsTheWearerDocument()
+    {
+        Apply(Keyframe());
+        Assert.False(_store.GetCharacter(Key("Bot1"))!.Player.HasLastUsedSkill);
+
+        Apply("""
+              {"schemaVersion":2,"gameId":"Game#1","updatedAt":1717000010000,
+               "player":{"name":"Sorc","classId":1,"area":40,"lastUsedSkill":0}}
+              """);
+        var attack = _store.GetCharacter(Key("Bot1"))!.Player;
+        Assert.True(attack.HasLastUsedSkill);
+        Assert.Equal(0, attack.LastUsedSkill);
+
+        // Stats alone: no document, so the stored skill stands.
+        Apply("""
+              {"schemaVersion":2,"gameId":"Game#1","updatedAt":1717000020000,
+               "player":{"stats":[{"id":12,"value":90}]}}
+              """);
+        Assert.Equal(0, _store.GetCharacter(Key("Bot1"))!.Player.LastUsedSkill);
+
+        // A document without the key: the player has used none.
+        Apply("""
+              {"schemaVersion":2,"gameId":"Game#1","updatedAt":1717000030000,
+               "player":{"name":"Sorc","classId":1,"area":41}}
+              """);
+        Assert.False(_store.GetCharacter(Key("Bot1"))!.Player.HasLastUsedSkill);
+    }
+
+    /// <summary>
+    /// The one reading of which game a capture is of. A missing backend is LOD and a missing game
+    /// type falls back to the expansion bit — what every older producer gives — and both spellings
+    /// of the backend are read: "LOD/1.14d" / "D2R/91923", and the bare "1.14d" / "d2r" before it.
+    /// </summary>
+    [Theory]
+    [InlineData("", null, 0x20u, GameFlavor.Lod, 2, GameVariant.Lod114D)]
+    [InlineData("", null, 0x00u, GameFlavor.Lod, 1, GameVariant.Lod114D)]
+    [InlineData("1.14d", null, 0x20u, GameFlavor.Lod, 2, GameVariant.Lod114D)]
+    [InlineData("LOD/1.14d", 0, 0x20u, GameFlavor.Lod, 1, GameVariant.Lod114D)]
+    [InlineData("LOD/1.14d", 2, 0x20u, GameFlavor.Lod, 2, GameVariant.Lod114D)]
+    [InlineData("d2r", 1, 0x20u, GameFlavor.D2R, 2, GameVariant.Resurrected)]
+    [InlineData("D2R/91923", null, 0x00u, GameFlavor.D2R, 1, GameVariant.Resurrected)]
+    [InlineData("D2R/91923", 2, 0x20u, GameFlavor.D2R, 3, GameVariant.ReignOfTheWarlock)]
+    public void TheGameIsReadFromBackendGameTypeAndCharFlags(string backend, int? gameType, uint charFlags,
+        GameFlavor flavor, int version, GameVariant variant)
+    {
+        var game = GameEdition.Of(backend, gameType, charFlags);
+        Assert.Equal(flavor, game.Flavor);
+        Assert.Equal(version, game.Version);
+        Assert.Equal(variant, game.Variant);
+    }
+
+    /// <summary>
+    /// A Reign of the Warlock character's items are resolved with ITS tables, which number misc.txt
+    /// 15 rows later than 1.14d, so a 1.14d reading would take its El Rune for whatever sits 15 rows
+    /// on. A search names the game whose tables its rows are written in, and looks at that game's
+    /// characters only.
+    /// </summary>
+    [Fact]
+    public void AReignOfTheWarlockCaptureIsReadWithItsOwnTables()
+    {
+        var rotw = TooltipEngine.ForVariant(D2ItemToolkit.GameVariant.ReignOfTheWarlock);
+        var lodElRune = ClassIdOf(_tooltip, "r01");
+        var rotwElRune = ClassIdOf(rotw, "r01");
+        Assert.Equal(lodElRune + 15, rotwElRune);
+
+        Apply(RuneKeyframe("D2R/91923", 2, rotwElRune));
+
+        var summary = Assert.Single(_store.ListCharacters());
+        Assert.Equal(GameVariant.ReignOfTheWarlock, summary.Game.Variant);
+        Assert.Equal(GameFlavor.D2R, summary.Game.Flavor);
+        Assert.Equal(3, summary.Game.Version);
+
+        // The type column came from the RotW tables: a rune is of type `rune` there.
+        var runeTypeRow = ScalarRaw(DatabasePath, $"SELECT type_0 FROM item WHERE class_id = {rotwElRune}");
+        Assert.Equal(rotw.Types.Row("rune"), (int)runeTypeRow);
+
+        // Asked in RotW's own rows, and found; the type expands through RotW's tree.
+        var inRotw = new SearchItemsRequest { Variant = GameVariant.ReignOfTheWarlock };
+        Assert.Equal(1, _store.SearchItems(new SearchItemsRequest(inRotw) { ClassIds = { rotwElRune } }).Total);
+        Assert.Equal(1,
+            _store.SearchItems(new SearchItemsRequest(inRotw) { ItemTypes = { rotw.Types.Row("rune") } }).Total);
+
+        // A 1.14d search does not look at a RotW character at all, whichever row it names.
+        Assert.Equal(0, _store.SearchItems(new SearchItemsRequest { ClassIds = { lodElRune } }).Total);
+        Assert.Equal(0, _store.SearchItems(new SearchItemsRequest { ClassIds = { rotwElRune } }).Total);
+    }
+
+    /// <summary>
+    /// The game filters: the variant picks the game searched, and version and realm narrow within
+    /// it. An out-of-range variant or version is refused rather than answered with nothing.
+    /// </summary>
+    [Fact]
+    public void SearchFiltersByVariantVersionAndRealm()
+    {
+        var rotw = TooltipEngine.ForVariant(D2ItemToolkit.GameVariant.ReignOfTheWarlock);
+        Apply("Bot1", RuneKeyframe("D2R/91923", 2, ClassIdOf(rotw, "r01")));
+        Apply("Bot2", RuneKeyframe("LOD/1.14d", 1, ClassIdOf(_tooltip, "r01"), realm: "Europe"));
+        Apply("Bot3", RuneKeyframe("LOD/1.14d", 0, ClassIdOf(_tooltip, "r01")));
+
+        Assert.Equal("Bot1", Assert.Single(_store.SearchItems(new SearchItemsRequest
+        {
+            Variant = GameVariant.ReignOfTheWarlock,
+        }).Results).Character.Profile);
+        Assert.Equal(2, _store.SearchItems(new SearchItemsRequest()).Total);
+        Assert.Equal("Bot2", Assert.Single(_store.SearchItems(new SearchItemsRequest
+        {
+            GameVersions = { 2 },
+        }).Results).Character.Profile);
+        Assert.Equal("Bot3", Assert.Single(_store.SearchItems(new SearchItemsRequest
+        {
+            Realms = { "USWest" },
+        }).Results).Character.Profile);
+        Assert.Empty(_store.SearchItems(new SearchItemsRequest
+        {
+            GameVersions = { 1 },
+            Realms = { "Europe" },
+        }).Results);
+
+        Assert.Throws<InvalidSearchRequestException>(() =>
+            _store.SearchItems(new SearchItemsRequest { GameVersions = { 4 } }));
+        Assert.Throws<InvalidSearchRequestException>(() =>
+            _store.SearchItems(new SearchItemsRequest { Variant = (GameVariant)7 }));
+    }
+
+    private static int ClassIdOf(TooltipEngine engine, string code)
+    {
+        for (var id = 0; id < engine.Items.RowCount; id++)
+        {
+            if (engine.Items.Code(id).Trim() == code) return id;
+        }
+
+        throw new InvalidOperationException($"no {code} in the tables");
+    }
+
+    /// <summary>A keyframe holding one El Rune in the inventory, for the given backend and game type.</summary>
+    private static string RuneKeyframe(string backend, int gameType, int runeClassId, string realm = "USWest") =>
+        """
+        {"schemaVersion":2,"backend":"BACKEND","gameId":"Game#R","keyframe":true,"updatedAt":1717000005000,
+         "identity":{"account":"Acct","realm":"REALM","difficulty":2,"charFlags":36,"ladder":true,"gameType":GAME_TYPE},
+         "player":{"unitType":0,"classId":1,"flagsEx":32,"name":"Sorc","containers":{
+           "inventory":{"width":10,"height":4,"items":[
+             {"unitType":4,"classId":RUNE,"code":"r01","quality":2,"itemFlags":16,"format":0,
+              "fileIndex":-1,"itemLevel":1,"rarePrefix":0,"rareSuffix":0,"autoAffix":0,
+              "magicPrefix":[0,0,0],"magicSuffix":[0,0,0],"earLevel":0,"playerName":"","gfxIndex":0,
+              "title":"El Rune","gid":3001,"location":3,"x":0,"y":0,"w":1,"h":1}]}}}}
+        """.Replace("BACKEND", backend).Replace("REALM", realm)
+            .Replace("GAME_TYPE", gameType.ToString()).Replace("RUNE", runeClassId.ToString());
+
+    /// <summary>
+    /// A D2R keyframe: backend and game type named, a normal personal page holding a ring, and an
+    /// advanced shared page whose one slot carries its stack size.
+    /// </summary>
+    private static string AdvancedStashKeyframe() =>
+        """
+        {"schemaVersion":2,"backend":"d2r","gameId":"Game#9","keyframe":true,"updatedAt":1717000005000,
+         "identity":{"account":"Acct","realm":"USWest","difficulty":2,"charFlags":36,"ladder":true,"gameType":2},
+         "player":{"unitType":0,"classId":1,"flagsEx":32,"name":"Sorc","containers":{"stash":{"pages":[
+           {"kind":0,"index":0,"type":0,"name":"Main","width":10,"height":10,"items":[
+             {"unitType":4,"classId":522,"code":"rin","quality":4,"itemFlags":0,"format":0,
+              "fileIndex":-1,"itemLevel":50,"rarePrefix":0,"rareSuffix":0,"autoAffix":0,
+              "magicPrefix":[0,0,0],"magicSuffix":[0,0,0],"earLevel":0,"playerName":"","gfxIndex":2,
+              "title":"Ring","statsLists":[{"stateNo":0,"flags":1,"stats":[{"id":7,"value":50}]}],
+              "gid":1004,"location":7,"x":1,"y":2,"w":1,"h":1}]},
+           {"kind":1,"index":0,"type":1,"name":"Materials","width":10,"height":10,"items":[
+             {"unitType":4,"classId":610,"code":"r01","quality":2,"itemFlags":0,"format":0,
+              "fileIndex":-1,"itemLevel":1,"rarePrefix":0,"rareSuffix":0,"autoAffix":0,
+              "magicPrefix":[0,0,0],"magicSuffix":[0,0,0],"earLevel":0,"playerName":"","gfxIndex":0,
+              "title":"El Rune","stackCount":37,
+              "gid":1005,"location":7,"x":0,"y":0,"w":1,"h":1}]}
+         ]}}}}
+        """;
+
+    /// <summary>
+    /// Drops version 4's columns and stamps the file as version 3. Every one was appended by
+    /// ALTER TABLE ADD COLUMN and is unindexed, so DROP COLUMN undoes exactly that.
+    /// </summary>
+    private static void DowngradeToVersionThree(string path)
+    {
+        DowngradeToVersionFour(path);
+        ExecuteRaw(path,
+            """
+            ALTER TABLE character DROP COLUMN backend;
+            ALTER TABLE character DROP COLUMN game_type;
+            ALTER TABLE item DROP COLUMN stack_count;
+            PRAGMA user_version = 3;
+            """);
+    }
+
+    /// <summary>Drops version 6's columns and stamps the file as version 5.</summary>
+    private static void DowngradeToVersionFive(string path) =>
+        ExecuteRaw(path,
+            """
+            ALTER TABLE container DROP COLUMN remove_only;
+            ALTER TABLE container DROP COLUMN season;
+            PRAGMA user_version = 5;
+            """);
+
+    /// <summary>Drops version 5's columns and stamps the file as version 4.</summary>
+    private static void DowngradeToVersionFour(string path)
+    {
+        DowngradeToVersionFive(path);
+        ExecuteRaw(path,
+            """
+            ALTER TABLE character DROP COLUMN last_used_skill;
+            ALTER TABLE character DROP COLUMN game_flavor;
+            ALTER TABLE character DROP COLUMN game_version;
+            ALTER TABLE character DROP COLUMN game_variant;
+            PRAGMA user_version = 4;
+            """);
+    }
+
+    /// <summary>
+    /// A version-5 file gains the stash pages' remove-only flag and season, every existing page
+    /// reading as an ordinary current one — no earlier producer reported otherwise — and the next
+    /// stash a D2R producer sends records both.
+    /// </summary>
+    [Fact]
+    public void AVersionFiveDatabaseIsMigratedAndKeepsItsRows()
+    {
+        Apply(AdvancedStashKeyframe());
+        _store.Dispose();
+        DowngradeToVersionFive(DatabasePath);
+
+        using var reopened = new CaptureStore(NullLogger<CaptureStore>.Instance, new Paths(_directory), _tooltip);
+        reopened.Open();
+
+        Assert.Equal((long)CaptureSchema.Version, ScalarRaw(DatabasePath, "PRAGMA user_version"));
+        Assert.True(File.Exists(BackupPath(5)));
+
+        var pages = reopened.GetCharacter(Key("Bot1"))!.Player.Containers.Stash.Pages;
+        Assert.Equal(2, pages.Count);
+        Assert.All(pages, p => Assert.False(p.RemoveOnly));
+        Assert.All(pages, p => Assert.Equal(0u, p.Season));
+
+        reopened.Apply("Bot1", Parse(OldSeasonStashKeyframe()));
+        var shared = reopened.GetCharacter(Key("Bot1"))!.Player.Containers.Stash.Pages
+            .Where(p => p.Kind == StashTabKind.Shared).ToList();
+        Assert.Equal(2, shared.Count);
+        var old = Assert.Single(shared, p => p.RemoveOnly);
+        Assert.Equal(11u, old.Season);
+        Assert.Single(old.Items);
+        var current = Assert.Single(shared, p => !p.RemoveOnly);
+        Assert.Equal(12u, current.Season);
+    }
+
+    /// <summary>A D2R stash with a current shared page and a remove-only one from the season before.</summary>
+    private static string OldSeasonStashKeyframe() =>
+        """
+        {"schemaVersion":2,"backend":"d2r","gameId":"Game#10","keyframe":true,"updatedAt":1717000020000,
+         "identity":{"account":"Acct","realm":"USWest","difficulty":2,"charFlags":36,"ladder":true,"gameType":2},
+         "player":{"unitType":0,"classId":1,"flagsEx":32,"name":"Sorc","containers":{"stash":{"pages":[
+           {"kind":0,"index":0,"type":0,"name":"","width":10,"height":10,"items":[]},
+           {"kind":1,"index":0,"type":0,"season":12,"name":"","width":10,"height":10,"items":[]},
+           {"kind":1,"index":1,"type":0,"removeOnly":true,"season":11,"name":"","width":10,"height":10,"items":[
+             {"unitType":4,"classId":522,"code":"rin","quality":4,"itemFlags":0,"format":0,
+              "fileIndex":-1,"itemLevel":50,"rarePrefix":0,"rareSuffix":0,"autoAffix":0,
+              "magicPrefix":[0,0,0],"magicSuffix":[0,0,0],"earLevel":0,"playerName":"","gfxIndex":2,
+              "title":"Ring","gid":1006,"location":7,"x":0,"y":0,"w":1,"h":1}]}
+         ]}}}}
+        """;
+
+    /// <summary>
+    /// A version-4 file — the shape a local build of the backend/stack-count change already wrote —
+    /// gains the last-used skill column and keeps what version 4 added: the backend and game type
+    /// it recorded survive, and the new column reads as never reported.
+    /// </summary>
+    [Fact]
+    public void AVersionFourDatabaseIsMigratedAndKeepsItsRows()
+    {
+        Apply(AdvancedStashKeyframe());
+        _store.Dispose();
+        DowngradeToVersionFour(DatabasePath);
+
+        using var reopened = new CaptureStore(NullLogger<CaptureStore>.Instance, new Paths(_directory), _tooltip);
+        reopened.Open();
+
+        Assert.Equal((long)CaptureSchema.Version, ScalarRaw(DatabasePath, "PRAGMA user_version"));
+        Assert.True(File.Exists(BackupPath(4)));
+
+        var character = reopened.GetCharacter(Key("Bot1"))!;
+        Assert.Equal("d2r", character.Backend);
+        Assert.Equal(2, character.Identity.GameType);
+        Assert.False(character.Player.HasLastUsedSkill);
+        Assert.Contains(character.Player.Containers.Stash.Pages.SelectMany(p => p.Items), i => i.StackCount == 37);
+        // The game columns were added with defaults (LOD) and recomputed on open from what the
+        // version-4 file held: a D2R backend and game type 2.
+        Assert.Equal(GameVariant.ReignOfTheWarlock, character.Game.Variant);
+
+        reopened.Apply("Bot1", Parse("""
+                                     {"schemaVersion":2,"gameId":"Game#9","updatedAt":1717000010000,
+                                      "player":{"name":"Sorc","classId":1,"lastUsedSkill":35}}
+                                     """));
+        Assert.Equal(35, reopened.GetCharacter(Key("Bot1"))!.Player.LastUsedSkill);
+    }
+
+    /// <summary>
     /// The reason the key is a pair: a mule profile logs into one character after another, and
     /// each keeps its own capture. A snapshot that names no character — the volatile stats alone —
     /// lands on the one the profile is playing NOW, which is the last one named.
@@ -1502,6 +1873,7 @@ public class CaptureStoreTests : IDisposable
     /// </summary>
     private static void DowngradeToVersionTwo(string path)
     {
+        DowngradeToVersionThree(path);
         ExecuteRaw(path,
             """
             PRAGMA foreign_keys = OFF;

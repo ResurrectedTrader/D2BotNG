@@ -6,7 +6,7 @@
  * name, the palette shift and the transform table come from the game's own tables here.
  */
 
-import type { TooltipEngine } from "d2itemtoolkit";
+import type { Tooltip, TooltipEngine } from "d2itemtoolkit";
 import type {
   Container as CapturedContainer,
   Unit,
@@ -15,10 +15,20 @@ import {
   colorForIndex,
   parseD2ColoredText,
   type ColoredTextSegment,
+  type DescribeOptions,
   type HdAppearance,
 } from "@/features/items/item-utils";
-import { toToolkitUnit } from "./toolkitUnit";
+import { asViewer, toToolkitUnit } from "./toolkitUnit";
 import type { DisplayContainer, DisplayItem } from "./contracts";
+import type { TextPalette } from "@/lib/rendering/colors";
+
+/** D2ItemToolkit's `GameVariant.Lod114d`, stated rather than imported to keep the tables chunk lazy. */
+const LOD_114D_VARIANT = 0;
+
+/** Which game's text palette an engine's tooltips are drawn in: 1.14d's, or D2R's for both D2R variants. */
+function paletteOf(engine: TooltipEngine): TextPalette {
+  return engine.variant === LOD_114D_VARIANT ? "lod" : "d2r";
+}
 
 /** `dwFlags` bit 22. v2 carries the fact outright instead of v1's bool. */
 export const ETHEREAL_FLAG = 0x400000;
@@ -28,6 +38,9 @@ export const RUNEWORD_FLAG = 0x4000000;
 export const IDENTIFIED_FLAG = 0x10;
 /** `dwFlags` bit 11. */
 export const SOCKETED_FLAG = 0x800;
+/** dwFlags: broken (durability 0) and cannot-be-equipped — both paint the item red. */
+const BROKEN_FLAG = 0x100;
+const NO_EQUIP_FLAG = 0x4000;
 
 /**
  * ItemStatCost row 194, `item_numsockets` — how many sockets the item HAS.
@@ -55,30 +68,29 @@ const QUALITY_SET = 5;
 const QUALITY_UNIQUE = 7;
 
 /**
- * What the D2R art needs beyond the item code: which graphic it rolled, and what to tint it.
+ * What the D2R art needs beyond the classic sprite name and the palette shift: the item's own code,
+ * the graphic it rolled, and the unique or set row whose art it may draw instead.
  *
- * The colour is the `invtransform` NAME — "lred", "dgld" — off the item's own uniqueitems or
- * setitems row, which is the same column the classic path resolves through colors.txt into a
- * palette index. D2R indexes it by name instead, so this reads the raw cell rather than the
- * resolved shift; there is no converting one into the other.
+ * The tint is NOT here — it is the palette shift `appearance()` already resolved, which is the
+ * colour half of the slot the game's `ITEMS_GetItemPalette` hands its D2R draw too (unique/set
+ * `invtransform`, an affix's `transformcolor`, the gem in socket 0).
  *
- * `file_index` selects that row and is overloaded by quality, so only these two qualities can name
- * one. Everything else draws in its own colours, which is what the game does too.
+ * `file_index` selects the row and is overloaded by quality, and an unidentified item carries none
+ * the client can use, so only an identified unique or set names one.
  */
 function toHdAppearance(unit: Unit, engine: TooltipEngine): HdAppearance {
-  const table =
-    unit.quality === QUALITY_UNIQUE
-      ? engine.data.uniqueItems
-      : unit.quality === QUALITY_SET
-        ? engine.data.setItems
-        : null;
+  const named =
+    (unit.quality === QUALITY_UNIQUE || unit.quality === QUALITY_SET) &&
+    (unit.itemFlags & IDENTIFIED_FLAG) !== 0 &&
+    unit.fileIndex >= 0
+      ? { set: unit.quality === QUALITY_SET, fileIndex: unit.fileIndex }
+      : undefined;
 
-  const colorName =
-    table && unit.fileIndex >= 0 && unit.fileIndex < table.rowCount
-      ? table.getString(unit.fileIndex, "invtransform") || null
-      : null;
-
-  return { gfxIndex: unit.gfxIndex, colorName };
+  return {
+    code: engine.items.code(unit.classId).trim(),
+    variant: unit.gfxIndex + 1,
+    named,
+  };
 }
 
 /**
@@ -174,9 +186,16 @@ function toDetail(unit: Unit, engine: TooltipEngine, viewers: ItemViewers) {
   // rows away, and without this every press paid for the render again, which for an item whose
   // roll ranges have to be reconstructed from the affix tables is long enough to see.
   let rows: RenderedLine[] | null = null;
+  let standaloneRows: RenderedLine[] | null = null;
   return {
-    lines: (): RenderedLine[] =>
-      (rows ??= renderLines(unit, engine, viewers, { breakdown: true })),
+    // Standalone is the breakdown of the item on its own — rendered against nobody and without
+    // the set block, as `describe` does for a copy made to trade it.
+    lines: (options?: DescribeOptions): RenderedLine[] =>
+      options?.standalone
+        ? (standaloneRows ??= withoutSetBlock(
+            renderLines(unit, engine, {}, { breakdown: true }),
+          ))
+        : (rows ??= renderLines(unit, engine, viewers, { breakdown: true })),
   };
 }
 
@@ -251,14 +270,20 @@ export function renderLines(
 ): RenderedLine[] {
   const tooltip = engine.render(
     toToolkitUnit(unit),
-    viewers.wearer ? toToolkitUnit(viewers.wearer) : null,
+    viewers.wearer ? viewerUnit(viewers.wearer, viewers) : null,
     {
       // `ranges: {}` is presence-as-switch with the library's default format and colour, and
       // `[ilvl 67]` after the name belongs to the same view: item level is what decides which
       // affixes an item could have rolled, so it answers the question the spans are being read
       // for. The game draws no such line, which is why it appears here and nowhere else.
       ...(options.breakdown
-        ? { sockets: "separated" as const, ranges: {}, showItemLevel: true }
+        ? {
+            sockets: "separated" as const,
+            ranges: {},
+            // A level of 0 says the item has none worth reading — runes, gems and the like
+            // report it — so "[ilvl 0]" would be noise rather than a fact about its affixes.
+            showItemLevel: unit.itemLevel > 0,
+          }
         : {}),
       ...clientPlayerOption(viewers),
     },
@@ -270,7 +295,12 @@ export function renderLines(
     // `line.color` is only the colour the row STARTS in. Its text can carry markers of its own —
     // the game embeds them, and a range annotation is painted grey and then restores the line's
     // colour behind itself — so the row is split here rather than painted flat.
-    const segments = parseD2ColoredText(raw, colorForIndex(line.color));
+    const palette = paletteOf(engine);
+    const segments = parseD2ColoredText(
+      raw,
+      colorForIndex(line.color, palette),
+      palette,
+    );
     return {
       section: String(line.section),
       segments,
@@ -331,19 +361,69 @@ export function trimBlankRows(rows: RenderedLine[]): RenderedLine[] {
  * twice (0x486201, 0x486250), so a merc's weapon is timed against the CHARACTER. That is not
  * derivable from one unit, which is why both are carried.
  */
-interface ItemViewers {
+export interface ItemViewers {
   /** Whose panel this is: the merc, for merc gear. Requirements and set state read this. */
   wearer?: Unit;
   /** The character, when that is a different unit from the wearer. Only attack speed reads it. */
   clientPlayer?: Unit;
+  /**
+   * Whether the viewers are expansion units, by their character's game (char_flags / game
+   * version) rather than their unit `flagsEx` — see `asViewer`. Unset leaves `flagsEx` as captured.
+   */
+  expansion?: boolean;
+}
+
+/** A viewer unit for the library, with its expansion bit set from the game when that is known. */
+function viewerUnit(unit: Unit, viewers: ItemViewers) {
+  const converted = toToolkitUnit(unit);
+  return viewers.expansion === undefined
+    ? converted
+    : asViewer(converted, viewers.expansion);
 }
 
 function clientPlayerOption(viewers: ItemViewers) {
   // Unset means "same as the viewer", which is right everywhere except the merc panel — so it is
   // only supplied when it genuinely differs.
   return viewers.clientPlayer && viewers.clientPlayer !== viewers.wearer
-    ? { clientPlayer: toToolkitUnit(viewers.clientPlayer) }
+    ? { clientPlayer: viewerUnit(viewers.clientPlayer, viewers) }
     : {};
+}
+
+/**
+ * The set block — the set's name, its piece list and the bonus tiers — which is about a WEARER.
+ *
+ * The piece list colours every sibling by whether that character owns it, the bonus blocks are the
+ * tiers that character has earned, and the name is the heading for those two. So wherever the item
+ * stands alone — a search result, where it may sit on a mule of any class, or a copy made to trade
+ * it, where one piece grants no set bonus — the block is a claim about nobody and is left out. The
+ * item's own name already says which set it belongs to.
+ */
+export const WEARER_SECTIONS: ReadonlySet<string> = new Set([
+  "SetName",
+  "SetPieceList",
+  "PartialSetBonus",
+  "FullSetBonus",
+]);
+
+/**
+ * Rows without the set block, re-trimmed: the game separates the block with a blank row, and
+ * dropping the block would leave that blank as a gap at the bottom.
+ */
+export function withoutSetBlock(rows: RenderedLine[]): RenderedLine[] {
+  return trimBlankRows(rows.filter((l) => !WEARER_SECTIONS.has(l.section)));
+}
+
+/**
+ * A rendered tooltip's coloured text without its set block. The coloured text holds one row per
+ * line, in the same display order as `lines`; should the two ever disagree, the whole text is
+ * returned rather than rows guessed at.
+ */
+function textWithoutSetBlock(tooltip: Tooltip): string {
+  const rows = tooltip.coloredText.split("\n");
+  if (rows.length !== tooltip.lines.length) return tooltip.coloredText;
+  return rows
+    .filter((_, i) => !WEARER_SECTIONS.has(tooltip.lines[i].section))
+    .join("\n");
 }
 
 /**
@@ -388,19 +468,29 @@ export function toDisplayItem(
    * `isEthereal` consults that for every cell it draws, and it needs no help here, since a capture
    * states the flag outright.
    */
-  let rendered: string | null = null;
-  const describe = () => {
-    if (rendered !== null) return rendered;
-    try {
-      rendered = engine.render(
-        toToolkitUnit(unit),
-        viewers.wearer ? toToolkitUnit(viewers.wearer) : null,
-        clientPlayerOption(viewers),
-      ).coloredText;
-    } catch {
-      rendered = "";
+  // Two renders, each made once when first asked for: against the wearer (what the viewer shows),
+  // and standalone — against nobody, as a search result is, and without the set block — which is
+  // what a copy made to trade the item should say.
+  const rendered = new Map<boolean, string>();
+  const describe = (options?: DescribeOptions) => {
+    const standalone = options?.standalone ?? false;
+    let text = rendered.get(standalone);
+    if (text === undefined) {
+      try {
+        const tooltip = engine.render(
+          toToolkitUnit(unit),
+          viewers.wearer && !standalone
+            ? viewerUnit(viewers.wearer, viewers)
+            : null,
+          standalone ? null : clientPlayerOption(viewers),
+        );
+        text = standalone ? textWithoutSetBlock(tooltip) : tooltip.coloredText;
+      } catch {
+        text = "";
+      }
+      rendered.set(standalone, text);
     }
-    return rendered;
+    return text;
   };
 
   return {
@@ -419,6 +509,7 @@ export function toDisplayItem(
     invTrans: appearance.invTrans,
     hd: toHdAppearance(unit, engine),
     ethereal: (unit.itemFlags & ETHEREAL_FLAG) !== 0,
+    palette: paletteOf(engine),
     detail: toDetail(unit, engine, viewers),
     sockets: socketsOf(unit, engine, viewers),
     x: unit.x,
@@ -426,7 +517,32 @@ export function toDisplayItem(
     width: unit.width,
     height: unit.height,
     gid: unit.gid,
+    stackCount: unit.stackCount,
+    identified: (unit.itemFlags & IDENTIFIED_FLAG) !== 0,
+    usable: isUsable(unit, engine, viewers),
   };
+}
+
+/**
+ * Whether the wearer could use the item: the game's own test before it paints an item red in a
+ * grid or a slot (`ITEMS_CheckRequirements`, then the broken and no-equip flags). Without a wearer
+ * — a search result — nothing can be said, and nothing is painted.
+ */
+function isUsable(
+  unit: Unit,
+  engine: TooltipEngine,
+  viewers: ItemViewers,
+): boolean | undefined {
+  if (unit.itemFlags & (BROKEN_FLAG | NO_EQUIP_FLAG)) return false;
+  if (!viewers.wearer) return undefined;
+  try {
+    return engine.requirements(
+      toToolkitUnit(unit),
+      viewerUnit(viewers.wearer, viewers),
+    ).allMet;
+  } catch {
+    return undefined;
+  }
 }
 
 export function toDisplayContainer(

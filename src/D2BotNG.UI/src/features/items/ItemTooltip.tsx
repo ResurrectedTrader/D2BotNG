@@ -21,7 +21,8 @@ import { createPortal } from "react-dom";
 import clsx from "clsx";
 import { useHeldKey } from "@/hooks/useHeldKey";
 import { useSettings } from "@/stores/event-store";
-import { ItemSprite } from "@/lib/rendering";
+import { ItemSprite, useSpriteStyle } from "@/lib/rendering";
+import { SpriteStyle } from "@/generated/settings_pb";
 import {
   isEthereal,
   parseD2ColoredText,
@@ -29,6 +30,22 @@ import {
   type RenderableItem,
 } from "./item-utils";
 import { TooltipLine, useTooltipTextStyle } from "./TooltipText";
+
+/**
+ * The game's `TooltipStyle`, which the item hover uses: the inventory widgets set none of their
+ * own, so the tooltip panel falls back to `GlobalData.defaultTooltipStyle` = `$TooltipStyle`. It
+ * is defined twice and the game swaps profiles with its graphics mode, so it follows the art style:
+ * D2R graphics (`_profilehd.json`) are black at 75% with padding [20, 12, 20, 12] around 36pt
+ * text — kept in proportion to the font here — and legacy graphics (`_profilesd.json`) black at
+ * 50% with no padding at all. Neither draws a border.
+ */
+const TOOLTIP_STYLE = {
+  hd: { backgroundColor: "rgba(0, 0, 0, 0.75)", padding: "0.33em 0.56em" },
+  sd: { backgroundColor: "rgba(0, 0, 0, 0.5)", padding: "0" },
+} as const;
+
+/** A copied image's background: opaque, since nothing shows through a PNG. */
+const IMAGE_BACKGROUND = "rgb(0, 0, 0)";
 
 /** Extra margin when calculating tooltip position (in pixels) */
 const TOOLTIP_MARGIN = 16;
@@ -66,6 +83,7 @@ export const ItemTooltipContent = memo(function ItemTooltipContent({
   item,
   showSprite = true,
   breakdown,
+  forImage = false,
 }: {
   item: RenderableItem;
   showSprite?: boolean;
@@ -79,9 +97,18 @@ export const ItemTooltipContent = memo(function ItemTooltipContent({
    * rasteriser got to it, rather than by what they right-clicked on.
    */
   breakdown?: boolean;
+  /**
+   * Rendered to be copied as an image of the one item: drawn on solid black (a translucent panel
+   * has nothing behind it in a PNG and pastes as grey), and standalone — against no wearer and
+   * without the set block, since a copy is usually made to trade the item and one piece grants
+   * none of the set's bonuses.
+   */
+  forImage?: boolean;
 }) {
   const settings = useSettings();
   const textStyle = useTooltipTextStyle();
+  const panel =
+    useSpriteStyle() === SpriteStyle.D2R ? TOOLTIP_STYLE.hd : TOOLTIP_STYLE.sd;
   const showHeader = settings?.display?.showItemHeader ?? false;
 
   // The alternate view, while Ctrl is down and this item can produce one. Computed inside the
@@ -90,8 +117,11 @@ export const ItemTooltipContent = memo(function ItemTooltipContent({
   const ctrlHeld = useHeldKey("Control");
   const wantsDetail = breakdown ?? ctrlHeld;
   const detailLines = useMemo(
-    () => (wantsDetail && item.detail ? item.detail.lines() : null),
-    [wantsDetail, item.detail],
+    () =>
+      wantsDetail && item.detail
+        ? item.detail.lines({ standalone: forImage })
+        : null,
+    [wantsDetail, item.detail, forImage],
   );
 
   // Parsed once per line, here, rather than once to decide whether the line is blank and again to
@@ -106,14 +136,16 @@ export const ItemTooltipContent = memo(function ItemTooltipContent({
     // `describe` for a source that renders its own text (a v2 capture, which carries none);
     // `description` for one that arrived with it. Asked for here rather than up front, because
     // this component is mounted only while the tooltip is on screen.
-    const text = item.describe?.() ?? item.description;
+    const text = item.describe?.({ standalone: forImage }) ?? item.description;
     if (!text) return [];
     const cleanDesc = text.split("$")[0];
     // Split on literal \n (escaped) or actual newlines
     const raw = cleanDesc.includes(ESCAPED_NEWLINE)
       ? cleanDesc.split(ESCAPED_NEWLINE)
       : cleanDesc.split("\n");
-    const lines = raw.map((line) => parseD2ColoredText(line));
+    const lines = raw.map((line) =>
+      parseD2ColoredText(line, undefined, item.palette),
+    );
     const blank = (segments: ColoredTextSegment[]) =>
       segments.every((s) => !s.text.trim());
     let start = 0;
@@ -125,16 +157,22 @@ export const ItemTooltipContent = memo(function ItemTooltipContent({
       end--;
     }
     return lines.slice(start, end);
-  }, [detailLines, item]);
+  }, [detailLines, item, forImage]);
 
+  // Sections are spaced by the gap only, so nothing pads the top or bottom beyond the style's
+  // own padding. A copied image keeps the D2R padding so its text does not touch the edge.
   return (
     <div
-      className="whitespace-nowrap bg-zinc-900/95 p-3 shadow-xl ring-1 ring-zinc-700"
-      style={textStyle}
+      className="flex flex-col gap-[0.33em] whitespace-nowrap"
+      style={{
+        ...textStyle,
+        backgroundColor: forImage ? IMAGE_BACKGROUND : panel.backgroundColor,
+        padding: forImage ? TOOLTIP_STYLE.hd.padding : panel.padding,
+      }}
     >
       {/* Item header */}
       {showHeader && item.header && (
-        <div className="mb-1 text-center font-medium text-zinc-100">
+        <div className="text-center font-medium text-zinc-100">
           {item.header}
         </div>
       )}
@@ -150,7 +188,7 @@ export const ItemTooltipContent = memo(function ItemTooltipContent({
 
       {/* Item sprite (with sockets overlaid) */}
       {showSprite && (
-        <div className="mt-2 flex justify-center">
+        <div className="flex justify-center">
           <ItemSprite
             code={item.code}
             colorShift={item.itemColor}
@@ -168,12 +206,7 @@ export const ItemTooltipContent = memo(function ItemTooltipContent({
           but has nothing to say still shows the alternate view — silently falling back would read
           as the key not working. */}
       {detailLines !== null && (
-        <div
-          className={clsx(
-            "mt-2",
-            showSprite && "border-t border-zinc-700 pt-2",
-          )}
-        >
+        <div className={clsx(showSprite && "border-t border-zinc-700 pt-2")}>
           {detailLines.map((line, i) => (
             <TooltipLine key={i} segments={line.segments} />
           ))}
@@ -189,12 +222,7 @@ export const ItemTooltipContent = memo(function ItemTooltipContent({
           divides the description from the sprite above, so drop it (and the
           divider padding) when the sprite is hidden. */}
       {descriptionLines !== null && descriptionLines.length > 0 && (
-        <div
-          className={clsx(
-            "mt-2",
-            showSprite && "border-t border-zinc-700 pt-2",
-          )}
-        >
+        <div className={clsx(showSprite && "border-t border-zinc-700 pt-2")}>
           {descriptionLines.map((segments, i) => (
             <TooltipLine key={i} segments={segments} />
           ))}
@@ -208,10 +236,6 @@ export const ItemTooltipContent = memo(function ItemTooltipContent({
 interface Placement {
   top: number;
   left: number;
-  /** Distance from the panel's own left edge to the trigger's centre, for the arrow. */
-  arrowLeft: number;
-  /** Flipped under the trigger because there was no room above it. */
-  below: boolean;
 }
 
 export const ItemTooltip = memo(function ItemTooltip({
@@ -267,22 +291,11 @@ export const ItemTooltip = memo(function ItemTooltip({
         left = viewportWidth - margin - tooltipWidth;
     }
 
-    const next: Placement = {
-      top,
-      left,
-      arrowLeft: triggerCenterX - left,
-      below,
-    };
+    const next: Placement = { top, left };
     // Same position in, same object out: an observed re-measure that changed nothing must not
     // re-render, or every resize notification would schedule another one.
     setPlacement((prev) =>
-      prev &&
-      prev.top === next.top &&
-      prev.left === next.left &&
-      prev.arrowLeft === next.arrowLeft &&
-      prev.below === next.below
-        ? prev
-        : next,
+      prev && prev.top === next.top && prev.left === next.left ? prev : next,
     );
   }, []);
 
@@ -376,21 +389,8 @@ export const ItemTooltip = memo(function ItemTooltip({
             }
             role="tooltip"
           >
+            {/* No pointer arrow: the game draws its tooltip as a bare panel over the item. */}
             <ItemTooltipContent item={item} showSprite={showSprite} />
-
-            {/* Tooltip arrow - points to trigger center */}
-            <div
-              className={clsx(
-                "absolute border-4 border-transparent",
-                placement?.below
-                  ? "bottom-full border-b-zinc-700"
-                  : "top-full border-t-zinc-700",
-              )}
-              style={{
-                left: placement?.arrowLeft ?? 0,
-                transform: "translateX(-50%)",
-              }}
-            />
           </div>,
           document.body,
         )}

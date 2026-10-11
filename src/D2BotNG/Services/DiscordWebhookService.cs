@@ -1,9 +1,11 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using D2BotNG.Capture;
 using D2BotNG.Core.Protos;
 using D2BotNG.Data;
 using D2BotNG.Rendering;
+using GameFlavor = D2BotNG.Core.Protos.Captures.GameFlavor;
 
 namespace D2BotNG.Services;
 
@@ -16,17 +18,20 @@ public class DiscordWebhookService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ItemRenderer _itemRenderer;
     private readonly SettingsRepository _settingsRepository;
+    private readonly CaptureStore _captureStore;
     private readonly ILogger<DiscordWebhookService> _logger;
 
     public DiscordWebhookService(
         IHttpClientFactory httpClientFactory,
         ItemRenderer itemRenderer,
         SettingsRepository settingsRepository,
+        CaptureStore captureStore,
         ILogger<DiscordWebhookService> logger)
     {
         _httpClientFactory = httpClientFactory;
         _itemRenderer = itemRenderer;
         _settingsRepository = settingsRepository;
+        _captureStore = captureStore;
         _logger = logger;
     }
 
@@ -54,7 +59,9 @@ public class DiscordWebhookService
         byte[] png;
         try
         {
-            png = _itemRenderer.RenderItemTooltip(item, itemFont, spriteStyle: spriteStyle);
+            // The profile's game decides the palette and art, as it does for the character in the UI.
+            png = _itemRenderer.RenderItemTooltip(item, itemFont, spriteStyle: spriteStyle,
+                resurrected: _captureStore.CurrentFlavor(profile.Name) == GameFlavor.D2R);
         }
         catch (Exception ex)
         {

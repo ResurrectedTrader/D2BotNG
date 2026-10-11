@@ -111,7 +111,9 @@ export async function captureItemTooltipBlob(
   let root: Root | null = null;
   try {
     root = createRoot(container);
-    root.render(createElement(ItemTooltipContent, { item, breakdown }));
+    root.render(
+      createElement(ItemTooltipContent, { item, breakdown, forImage: true }),
+    );
 
     // Initial commit window: useItemSprite resolves its cached promise (microtask)
     // and React commits the canvas element on the next frame.
@@ -133,7 +135,7 @@ export async function captureItemTooltipBlob(
     const blob = await toBlob(target, {
       pixelRatio: 1,
       cacheBust: true,
-      // Preserve the tooltip's own bg-zinc-900/95 background.
+      // The panel paints its own opaque background in this mode.
       backgroundColor: undefined,
     });
     if (!blob) {

@@ -10,7 +10,7 @@ export interface SkillTab {
   skillIds: number[];
 }
 
-// Keyed by D2 class id (0 Amazon … 6 Assassin).
+// Keyed by D2 class id (0 Amazon … 6 Assassin, 7 Warlock).
 export const CLASS_SKILL_TABS: Record<number, SkillTab[]> = {
   // Amazon (6-35)
   0: [
@@ -100,6 +100,22 @@ export const CLASS_SKILL_TABS: Record<number, SkillTab[]> = {
     {
       name: "Traps",
       skillIds: [251, 256, 257, 261, 262, 266, 271, 272, 276, 277],
+    },
+  ],
+  // Warlock (373-402) — Reign of the Warlock only. From D2R's skilldesc.txt SkillPage, named by
+  // charstats' StrSkillTab1-3 (page N is tab N); listed page 3 first like the classes above.
+  7: [
+    {
+      name: "Chaos",
+      skillIds: [393, 394, 395, 396, 397, 398, 399, 400, 401, 402],
+    },
+    {
+      name: "Eldritch",
+      skillIds: [383, 384, 385, 386, 387, 388, 389, 390, 391, 392],
+    },
+    {
+      name: "Demon",
+      skillIds: [373, 374, 375, 376, 377, 378, 379, 380, 381, 382],
     },
   ],
 };

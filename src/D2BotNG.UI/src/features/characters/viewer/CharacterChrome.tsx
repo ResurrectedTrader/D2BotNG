@@ -17,7 +17,6 @@ import clsx from "clsx";
 import { Card, CardContent } from "@/components/ui";
 import { DIFFICULTY_NAMES, type CharacterFacts } from "./contracts";
 import { AREA_NAMES } from "./data/areaNames";
-import { useGameNames } from "./gameNames";
 
 const TAB_CLASS =
   "rounded-md px-3 py-1.5 text-sm font-medium text-zinc-400 outline-none transition-colors hover:text-zinc-200 data-[selected]:bg-zinc-700 data-[selected]:text-zinc-100";
@@ -223,18 +222,13 @@ export function CharacterChrome({
   progression: ReactNode;
   analytics: ReactNode;
 }) {
-  const names = useGameNames();
-  const className = names.characterClass(facts.charClass);
   const areaName = AREA_NAMES[facts.area];
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        {/* The level and class are named on the character's panel, at the top of its paperdoll. */}
         {selector}
-        <span className="text-sm text-zinc-400">
-          Level {facts.level}
-          {className ? ` ${className}` : ""}
-        </span>
         {DIFFICULTY_NAMES[facts.difficulty] && (
           <span className="text-xs text-zinc-500">
             {DIFFICULTY_NAMES[facts.difficulty]}

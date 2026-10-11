@@ -5,11 +5,21 @@
  */
 
 import { STAT_LABELS } from "./stats";
-import { DIFFICULTY_NAMES, type StatValue } from "./contracts";
+import {
+  DIFFICULTY_NAMES,
+  STAT_EXPERIENCE,
+  STAT_LAST_EXPERIENCE,
+  STAT_LEVEL,
+  STAT_NEXT_EXPERIENCE,
+  levelProgress,
+  type LevelProgress,
+  type StatValue,
+} from "./contracts";
+import { useGameNames } from "./gameNames";
 
 const STAT_GROUPS: { label: string; ids: number[] }[] = [
-  { label: "Attributes", ids: [0, 2, 3, 1] }, // Strength, Dexterity, Vitality, Energy
-  { label: "Life & Mana", ids: [7, 9] },
+  { label: "Attributes", ids: [0, 2, 3, 1, 4] }, // Strength, Dexterity, Vitality, Energy, unspent
+  { label: "Life, Mana & Stamina", ids: [7, 9, 11] },
   { label: "Resistances", ids: [39, 43, 41, 45] }, // Fire, Cold, Lightning, Poison
   { label: "Speed", ids: [105, 96, 99, 93, 102] }, // FCR, FRW, FHR, IAS, FBR
   { label: "Combat", ids: [19, 31, 127] }, // Attack Rating, Defense, +All Skills
@@ -31,6 +41,47 @@ const MAX_RESIST_STAT: Record<number, number> = {
   43: 44,
   45: 46,
 };
+/** Unspent stat and skill points: drawn in amber while there are any, as the game flags them. */
+export const STAT_POINTS = 4;
+export const SKILL_POINTS = 5;
+const UNSPENT_IDS = new Set([STAT_POINTS, SKILL_POINTS]);
+/**
+ * A player's level thresholds come from experience.txt, not the unit: stats 29/30 are a
+ * hireling's (the game keeps them at 0 on a player), so they are only hidden here, never read.
+ */
+const HIDDEN_THRESHOLD_IDS = [STAT_LAST_EXPERIENCE, STAT_NEXT_EXPERIENCE];
+
+/** The progress row: the percentage, a bar like the game's experience bar, the numbers on hover. */
+function LevelProgressRow({
+  progress,
+  level,
+}: {
+  progress: LevelProgress;
+  level: number | undefined;
+}) {
+  const percent = progress.fraction * 100;
+  const title =
+    `${progress.remaining.toLocaleString()} to ` +
+    `${level !== undefined ? `level ${level + 1}` : "the next level"} ` +
+    `(at ${progress.next.toLocaleString()})`;
+  return (
+    <div className="text-sm" title={title}>
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <span className="truncate text-zinc-400">Level Progress</span>
+        <span className="flex-shrink-0 font-medium text-zinc-300">
+          {percent.toFixed(1)}%
+        </span>
+      </div>
+      <div className="mt-0.5 h-1 overflow-hidden rounded-full bg-zinc-800">
+        <div
+          className="h-full rounded-full bg-d2-gold"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 const RESIST_BASE_MAX = 75; // base resistance cap before any +max-resist bonus
 const RESIST_HARD_CAP = 95; // absolute ceiling no amount of +max resist can exceed
 
@@ -71,6 +122,7 @@ export function StatsPanel({
   stats: StatValue[];
   difficulty: number;
 }) {
+  const names = useGameNames();
   if (stats.length === 0) {
     return <p className="text-sm text-zinc-500">No stats reported.</p>;
   }
@@ -78,11 +130,24 @@ export function StatsPanel({
   const byId = new Map<number, bigint>();
   for (const s of stats) byId.set(s.id, s.value);
 
-  // Max-resist stats are consumed by the resistance display, not shown as their own rows.
+  // Max-resist stats are consumed by the resistance display and the level thresholds are not a
+  // player's, so neither is shown as rows of its own; skill points sit on the Skills panel.
   const known = new Set([
     ...STAT_GROUPS.flatMap((g) => g.ids),
     ...Object.values(MAX_RESIST_STAT),
+    ...HIDDEN_THRESHOLD_IDS,
+    SKILL_POINTS,
   ]);
+  const level = byId.has(STAT_LEVEL) ? Number(byId.get(STAT_LEVEL)) : undefined;
+  const exp = byId.get(STAT_EXPERIENCE);
+  const progress =
+    level !== undefined && exp !== undefined
+      ? levelProgress(
+          Number(exp),
+          names.levelExperience(level),
+          names.levelExperience(level + 1),
+        )
+      : null;
   const otherIds = [...byId.keys()].filter((id) => !known.has(id));
   const groups = [
     ...STAT_GROUPS.map((g) => ({
@@ -110,20 +175,31 @@ export function StatsPanel({
                     Number(byId.get(MAX_RESIST_STAT[id]) ?? 0n),
                   )
                 : null;
+              const unspent = UNSPENT_IDS.has(id) && value > 0n;
+              const valueClass = resist
+                ? resist.className
+                : unspent
+                  ? "text-amber-400"
+                  : "text-zinc-400";
               return (
-                <div
-                  key={id}
-                  className="flex min-w-0 items-center justify-between gap-2 text-sm"
-                >
-                  <span className="truncate text-zinc-400" title={label}>
-                    {label}
-                  </span>
-                  <span
-                    className={`flex-shrink-0 font-medium ${resist ? resist.className : "text-zinc-400"}`}
-                    title={resist?.title}
-                  >
-                    {resist ? resist.text : value.toLocaleString()}
-                  </span>
+                <div key={id}>
+                  <div className="flex min-w-0 items-center justify-between gap-2 text-sm">
+                    <span className="truncate text-zinc-400" title={label}>
+                      {label}
+                    </span>
+                    <span
+                      className={`flex-shrink-0 font-medium ${valueClass}`}
+                      title={resist?.title}
+                    >
+                      {resist ? resist.text : value.toLocaleString()}
+                    </span>
+                  </div>
+                  {/* Under Experience: how far through the level that is. */}
+                  {id === STAT_EXPERIENCE && progress && (
+                    <div className="mt-0.5">
+                      <LevelProgressRow progress={progress} level={level} />
+                    </div>
+                  )}
                 </div>
               );
             })}

@@ -141,7 +141,7 @@ public class ItemRenderer
         // Render sockets if present
         if (item.Sockets.Count > 0)
         {
-            RenderSockets(graphics, item, gridSize, itemX, spriteStyle);
+            RenderSockets(graphics, item, gridSize, itemX, itemY, spriteStyle);
         }
 
         return BitmapToPng(bitmap);
@@ -150,9 +150,20 @@ public class ItemRenderer
     /// <summary>
     /// Renders a full item tooltip with background and text
     /// </summary>
+    /// <param name="item">The item, with the description its game wrote.</param>
+    /// <param name="itemFont">The font the text is drawn in.</param>
+    /// <param name="showHeader">Whether to draw the item's header line above the art.</param>
+    /// <param name="spriteStyle">The artwork; a D2R item is drawn in D2R's whatever this says.</param>
+    /// <param name="resurrected">
+    /// The item is from D2R: its colour markers name D2R's palette, and its art is D2R's — the same
+    /// rule the UI applies to a D2R character.
+    /// </param>
     public byte[] RenderItemTooltip(Item item, ItemFont itemFont = ItemFont.Exocet, bool showHeader = false,
-        SpriteStyle spriteStyle = SpriteStyle.Classic)
+        SpriteStyle spriteStyle = SpriteStyle.Classic, bool resurrected = false)
     {
+        var palette = resurrected ? TextPalette.D2R : TextPalette.Lod;
+        if (resurrected) spriteStyle = SpriteStyle.D2R;
+
         // Get item frame for dimensions
         var frame = GetItemFrame(item.Code);
         var gridSize = CalculateGridSize(frame.Width, frame.Height);
@@ -213,7 +224,7 @@ public class ItemRenderer
         }
 
         // Render text (offset by header height)
-        RenderDescription(graphics, description, totalWidth, imageTop + headerHeight, fontFamily, lineHeight);
+        RenderDescription(graphics, description, totalWidth, imageTop + headerHeight, fontFamily, lineHeight, palette);
 
         // Render header LAST so it overlays on top of everything (matches reference implementation)
         if (hasHeader)
@@ -247,8 +258,7 @@ public class ItemRenderer
         // came from: both are drawn at 30 pixels to an inventory cell.
         if (spriteStyle == SpriteStyle.D2R)
         {
-            var hd = _hdSprites.Render(item.Code, HdSpriteSource.ColorNameForShift(item.ItemColor),
-                gfxIndex: 0);
+            var hd = _hdSprites.Render(item.Code, item.ItemColor);
             if (hd != null) return ApplyBackdrop(hd, background, isEthereal);
         }
 
@@ -398,9 +408,11 @@ public class ItemRenderer
         _ => 226
     };
 
-    private void RenderSockets(Graphics graphics, Item item, (int X, int Y) gridSize, int baseX,
+    private void RenderSockets(Graphics graphics, Item item, (int X, int Y) gridSize, int baseX, int baseY,
         SpriteStyle spriteStyle = SpriteStyle.Classic)
     {
+        if (spriteStyle == SpriteStyle.D2R && TryDrawHdSockets(graphics, item, gridSize, baseX, baseY)) return;
+
         const int offsetY = -1;
 
         int x1 = baseX;
@@ -416,6 +428,10 @@ public class ItemRenderer
     private void RenderSocketsOnTooltip(Graphics graphics, Item item, (int X, int Y) gridSize, int itemX,
         int headerOffset = 0, SpriteStyle spriteStyle = SpriteStyle.Classic)
     {
+        // The art is drawn at (itemX, 5 + header) — see RenderItemTooltip.
+        if (spriteStyle == SpriteStyle.D2R && TryDrawHdSockets(graphics, item, gridSize, itemX, 5 + headerOffset))
+            return;
+
         const int offsetY = -1;
 
         int x1 = itemX + 1;
@@ -426,6 +442,44 @@ public class ItemRenderer
 
         var positions = CalculateSocketPositions(item.Sockets.Count, gridSize, x1, SocketSpacing, offsetY, y1, y2, y3, y4);
         DrawSockets(graphics, item, positions, spriteStyle);
+    }
+
+    /// <summary>
+    /// Sockets the way D2R draws them: its own layout, its own marker under EVERY socket at the
+    /// game's alpha, and the filler (if any) over it at the same spot. False when the game has no
+    /// layout for this size and count, or the art is unavailable — the classic layout is used then.
+    /// </summary>
+    private bool TryDrawHdSockets(Graphics graphics, Item item, (int X, int Y) gridSize, int artX, int artY)
+    {
+        if (_hdSprites.SocketLayout(item.Sockets.Count, gridSize.X, gridSize.Y) is not var (positions, alpha))
+            return false;
+        using var marker = _hdSprites.RenderSocketMarker();
+        if (marker == null) return false;
+
+        using var faded = new ImageAttributes();
+        faded.SetColorMatrix(new ColorMatrix { Matrix33 = alpha });
+        var bounds = new Rectangle(0, 0, marker.Width, marker.Height);
+
+        for (var i = 0; i < item.Sockets.Count; i++)
+        {
+            var x = artX + positions[i].X;
+            var y = artY + positions[i].Y;
+            graphics.DrawImage(marker, new Rectangle(x, y, marker.Width, marker.Height),
+                bounds.X, bounds.Y, bounds.Width, bounds.Height, GraphicsUnit.Pixel, faded);
+
+            var socketItem = item.Sockets[i];
+            if (socketItem.Code == HdSpriteSource.EmptySocketCode) continue;
+            using var filler = RenderItemBitmap(new Item
+            {
+                Code = socketItem.Code,
+                ItemColor = socketItem.ItemColor,
+                InvTrans = socketItem.InvTrans,
+                Description = ""
+            }, Color.Transparent, SpriteStyle.D2R);
+            graphics.DrawImage(filler, x, y);
+        }
+
+        return true;
     }
 
     private void DrawSockets(Graphics graphics, Item item, List<Point> positions,
@@ -579,7 +633,8 @@ public class ItemRenderer
         return positions;
     }
 
-    private void RenderDescription(Graphics graphics, string description, int width, int top, string fontFamily, int lineHeight)
+    private void RenderDescription(Graphics graphics, string description, int width, int top, string fontFamily, int lineHeight,
+        TextPalette palette)
     {
         // Convert escape sequences to actual characters
         string normalized = NormalizeColorCodes(description);
@@ -597,7 +652,7 @@ public class ItemRenderer
             float x = (width - lineWidth) / 2;
 
             // Parse and render colored segments
-            RenderColoredLine(graphics, line, font, x, y, ref currentColor);
+            RenderColoredLine(graphics, line, font, x, y, ref currentColor, palette);
             y += lineHeight;
         }
     }
@@ -611,7 +666,8 @@ public class ItemRenderer
         return text.Replace("\\xff", "ÿ").Replace("\\xfF", "ÿ").Replace("\\xFf", "ÿ").Replace("\\xFF", "ÿ");
     }
 
-    private static void RenderColoredLine(Graphics graphics, string line, Font font, float startX, float y, ref Color currentColor)
+    private static void RenderColoredLine(Graphics graphics, string line, Font font, float startX, float y, ref Color currentColor,
+        TextPalette palette)
     {
         // Split by ÿ (0xFF) - the D2 color code delimiter
         string[] segments = line.Split('ÿ');
@@ -629,8 +685,8 @@ public class ItemRenderer
                 {
                     // ÿc[code] format
                     char code = segment[1];
-                    if (code is >= '0' and <= '9' or ':' or ';' or '<')
-                        currentColor = D2Colors.GetTextColor(code);
+                    if (D2Colors.IsColorCode(code))
+                        currentColor = D2Colors.GetTextColor(code, palette);
                     segment = segment.Length > 2 ? segment[2..] : "";
                 }
                 else if (segment[0] == '#' && segment.Length >= 7)
