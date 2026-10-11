@@ -627,6 +627,9 @@ public sealed partial class CaptureStore : IDisposable
     private Cursor ApplyIdentity(long characterId, Identity identity, Cursor state,
         SqliteTransaction transaction)
     {
+        // The section is whole, so an absent game type is the producer's answer — it predates the
+        // field — and NULL says that; 0 would say Classic.
+        int? gameType = identity.HasGameType ? identity.GameType : null;
         Execute(
             """
             UPDATE character
@@ -641,9 +644,7 @@ public sealed partial class CaptureStore : IDisposable
             ("$difficulty", identity.Difficulty),
             ("$flags", (long)identity.CharFlags),
             ("$ladder", identity.Ladder ? 1 : 0),
-            // The section is whole, so an absent game type is the producer's answer — it predates
-            // the field — and NULL says that; 0 would say Classic.
-            ("$gameType", identity.HasGameType ? identity.GameType : null));
+            ("$gameType", gameType));
 
         return state with { Difficulty = identity.Difficulty };
     }
