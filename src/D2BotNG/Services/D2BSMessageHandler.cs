@@ -216,11 +216,11 @@ public class D2BSMessageHandler : BackgroundService
                 break;
 
             case "stop":
-                RunDetached("Stop", profile.Name, () => _profileEngine.StopProfileAsync(profile.Name));
+                await HandleStopAsync(profile, args);
                 break;
 
             case "start":
-                if (args.Length > 0)
+                if (args.Length > 0 && !string.IsNullOrEmpty(args[0]))
                     await HandleStartAsync(args);
                 break;
 
@@ -234,19 +234,21 @@ public class D2BSMessageHandler : BackgroundService
                     HandleSetNotify(args);
                 break;
 
+            // kolbot sends these three with no arguments: the key is the one the sender is running
+            // on, which D2Bot# read off the profile. A key name in args[0] is still honoured.
             case "CDKeyInUse":
-                if (args.Length > 0)
-                    _messageService.AddMessage(profile.Name, $"Key in use: {args[0]}", MessageColor.ColorGold);
+                if (ReportedKeyName(profile, args) is { } inUseKey)
+                    _messageService.AddMessage(profile.Name, $"Key in use: {inUseKey}", MessageColor.ColorGold);
                 break;
 
             case "CDKeyDisabled":
-                if (args.Length > 0)
-                    await HandleCDKeyDisabledAsync(profile, args[0]);
+                if (ReportedKeyName(profile, args) is { } disabledKey)
+                    await HandleCDKeyDisabledAsync(profile, disabledKey);
                 break;
 
             case "CDKeyRD":
-                if (args.Length > 0)
-                    _messageService.AddMessage(profile.Name, $"Realm down on key: {args[0]}", MessageColor.ColorRed);
+                if (ReportedKeyName(profile, args) is { } rdKey)
+                    _messageService.AddMessage(profile.Name, $"Realm down on key: {rdKey}", MessageColor.ColorRed);
                 break;
 
             case "store":
@@ -270,11 +272,11 @@ public class D2BSMessageHandler : BackgroundService
                 break;
 
             case "stopSchedule":
-                await HandleStopScheduleAsync(profile.Name);
+                await HandleSetScheduleEnabledAsync(profile, args, enabled: false);
                 break;
 
             case "startSchedule":
-                await HandleStartScheduleAsync(profile.Name);
+                await HandleSetScheduleEnabledAsync(profile, args, enabled: true);
                 break;
 
             case "winmsg":
@@ -296,8 +298,8 @@ public class D2BSMessageHandler : BackgroundService
     /// <remarks>
     /// Two groups. Lifecycle commands would fight a teardown already in flight — restarting a
     /// profile out from under a stop, which nothing downstream catches because Stopped -> Starting
-    /// is a legal transition. ("start" is handled separately: it names its target, and starting
-    /// some *other* profile is legitimate.) The rest are the high-frequency writes whose value
+    /// is a legal transition. ("start" and "stop" are handled separately: they name their target,
+    /// and starting or stopping some *other* profile is legitimate.) The rest are the high-frequency writes whose value
     /// dies with the run: a counter the run about to be killed would have bumped, or a status the
     /// teardown overwrites moments later. Each costs a rewrite of the whole profiles.json plus
     /// every framework's d2bs.ini, or an EnumWindows sweep of the session to build a status
@@ -313,12 +315,12 @@ public class D2BSMessageHandler : BackgroundService
     /// <para>
     /// Note this window is a strict subset of what was dropped before. Previously the routing
     /// entry was removed before the kill, so every message from a dying game was discarded as
-    /// unattributable; these eight are what remains of that.
+    /// unattributable; these seven, plus a self-targeted "start" or "stop", are what remains of that.
     /// </para>
     /// </remarks>
     private static readonly HashSet<string> IgnoredWhileTearingDown =
     [
-        "restartProfile", "stop",
+        "restartProfile",
         "updateStatus", "updateRuns", "updateChickens", "updateDeaths", "setProfile", "setTag",
     ];
 
@@ -327,10 +329,17 @@ public class D2BSMessageHandler : BackgroundService
         if (function == null) return false;
         if (IgnoredWhileTearingDown.Contains(function)) return true;
 
-        // "start" names its target. Starting another profile is legitimate even from a bot on its
-        // way out; starting *itself* is the same resurrection as "restartProfile", and legal —
-        // Error -> Starting is a valid transition — so it has to be caught here.
-        return function == "start" && args.Length > 0 && args[0] == sender.ProfileName;
+        return function switch
+        {
+            // Starting another profile is legitimate even from a bot on its way out; starting
+            // *itself* is the same resurrection as "restartProfile", and legal — Error -> Starting
+            // is a valid transition — so it has to be caught here.
+            "start" => args.Length > 0 && args[0] == sender.ProfileName,
+            // Stopping another profile is likewise legitimate. Stopping itself (no target names
+            // the sender) would only race the teardown already in flight.
+            "stop" => args.Length == 0 || string.IsNullOrEmpty(args[0]) || args[0] == sender.ProfileName,
+            _ => false,
+        };
     }
 
     private bool HandleWinMsg(Profile profile, string[] args)
@@ -505,16 +514,11 @@ public class D2BSMessageHandler : BackgroundService
         }
     }
 
-    private async Task HandleGetProfileAsync(nint senderHandle, Profile? profile, string[] args)
+    private async Task HandleGetProfileAsync(nint senderHandle, Profile profile, string[] args)
     {
-        // If args[0] specified, get that profile instead
-        var targetProfile = profile;
-        if (args.Length > 0 && !string.IsNullOrEmpty(args[0]))
-        {
-            targetProfile = await _profileRepository.GetByKeyAsync(args[0]);
-        }
-
-        if (targetProfile == null) return;
+        // If args[0] names a profile, get that one instead. An unknown name falls back to the
+        // sender, as in D2Bot#: the script blocks waiting for a reply, so sending none hangs it.
+        var targetProfile = await ResolveTargetAsync(profile, args) ?? profile;
 
         var instance = _profileEngine.GetInstance(targetProfile.Name);
         if (instance == null) return;
@@ -644,25 +648,56 @@ public class D2BSMessageHandler : BackgroundService
         }
     }
 
-    private async Task HandleStopScheduleAsync(string profileName)
+    /// <summary>
+    /// Resolves the profile a command names in <c>args[0]</c>: the sender when it names none
+    /// (absent, null or empty — kolbot sends <c>[null]</c> for an omitted argument), otherwise
+    /// that profile, or null when no profile has that name.
+    /// </summary>
+    private async Task<Profile?> ResolveTargetAsync(Profile sender, string[] args)
     {
-        var profile = await _profileRepository.GetByKeyAsync(profileName);
-        if (profile != null)
-        {
-            profile.ScheduleEnabled = false;
-            _messageService.AddMessage(profileName, "Schedule disabled", MessageColor.ColorGold);
-            await _profileEngine.UpdateProfileAndNotifyAsync(profile);
-        }
+        if (args.Length == 0 || string.IsNullOrEmpty(args[0]))
+            return sender;
+        return await _profileRepository.GetByKeyAsync(args[0]);
     }
 
-    private async Task HandleStartScheduleAsync(string profileName)
+    /// <summary>
+    /// The key a CDKey* report is about: the name in <c>args[0]</c> when one is sent, else the key
+    /// the sender is currently running on. kolbot sends none.
+    /// </summary>
+    private string? ReportedKeyName(Profile profile, string[] args)
     {
-        var profile = await _profileRepository.GetByKeyAsync(profileName);
-        if (profile != null)
-        {
-            profile.ScheduleEnabled = true;
-            _messageService.AddMessage(profileName, "Schedule enabled", MessageColor.ColorGreen);
-            await _profileEngine.UpdateProfileAndNotifyAsync(profile);
-        }
+        if (args.Length > 0 && !string.IsNullOrEmpty(args[0]))
+            return args[0];
+        var keyName = _profileEngine.GetInstance(profile.Name)?.KeyName;
+        return string.IsNullOrEmpty(keyName) ? null : keyName;
+    }
+
+    /// <summary>
+    /// <c>stop [profile, release]</c>. Stops the named profile (the sender when none is named or
+    /// the name is unknown, as in D2Bot#). The key is kept unless <c>release</c> is true — D2Bot#
+    /// left it in use on a plain stop, so the profile resumes on the same key when started again.
+    /// </summary>
+    private async Task HandleStopAsync(Profile sender, string[] args)
+    {
+        var target = await ResolveTargetAsync(sender, args) ?? sender;
+        var release = args.Length > 1 && bool.TryParse(args[1], out var r) && r;
+        RunDetached("Stop", target.Name,
+            () => _profileEngine.StopProfileAsync(target.Name, preserveKey: !release));
+    }
+
+    /// <summary>
+    /// <c>stopSchedule [profile]</c> / <c>startSchedule [profile]</c>. Applies to the named profile,
+    /// or the sender when none is named; an unknown name does nothing, as in D2Bot#.
+    /// </summary>
+    private async Task HandleSetScheduleEnabledAsync(Profile sender, string[] args, bool enabled)
+    {
+        var target = await ResolveTargetAsync(sender, args);
+        if (target == null) return;
+
+        target.ScheduleEnabled = enabled;
+        _messageService.AddMessage(target.Name,
+            enabled ? "Schedule enabled" : "Schedule disabled",
+            enabled ? MessageColor.ColorGreen : MessageColor.ColorGold);
+        await _profileEngine.UpdateProfileAndNotifyAsync(target);
     }
 }
