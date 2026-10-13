@@ -14,16 +14,16 @@ permissions:
 jobs:
   changes:
     name: Detect Changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       ts: ${{ steps.filter.outputs.ts }}
       cs: ${{ steps.filter.outputs.cs }}
       any_code_changed: ${{ steps.filter.outputs.ts == 'true' || steps.filter.outputs.cs == 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 2
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -40,10 +40,10 @@ jobs:
     name: Build TS
     needs: changes
     if: needs.changes.outputs.ts == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -52,7 +52,7 @@ jobs:
         working-directory: src/D2BotNG.UI
       - run: npm run build
         working-directory: src/D2BotNG.UI
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ui-dist
           path: src/D2BotNG/wwwroot
@@ -64,11 +64,11 @@ jobs:
     if: always() && needs.changes.outputs.cs == 'true' && (needs.build-ts.result == 'success' || needs.build-ts.result == 'skipped')
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.x
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: needs.build-ts.result == 'success'
         with:
           name: ui-dist
@@ -83,8 +83,8 @@ jobs:
     if: needs.changes.outputs.cs == 'true'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.x
       # SkipUIBuild: the referenced app project builds the UI by default, which needs npm.
@@ -96,10 +96,10 @@ jobs:
     name: Format TS
     needs: changes
     if: needs.changes.outputs.ts == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -115,8 +115,8 @@ jobs:
     if: needs.changes.outputs.cs == 'true'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.x
       - name: Check formatting
@@ -127,10 +127,10 @@ jobs:
     name: Lint TS
     needs: changes
     if: needs.changes.outputs.ts == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -146,8 +146,8 @@ jobs:
     if: needs.changes.outputs.cs == 'true'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.x
       - name: Restore tools
@@ -176,14 +176,14 @@ jobs:
     name: Prepare Release
     needs: [changes, build-ts, build-cs, test-cs, format-ts, format-cs, lint-ts, lint-cs]
     if: always() && needs.changes.outputs.any_code_changed == 'true' && !contains(needs.*.result, 'failure')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -202,7 +202,7 @@ jobs:
         working-directory: src/D2BotNG.UI
       - run: npm run build
         working-directory: src/D2BotNG.UI
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-ui
           path: src/D2BotNG/wwwroot
@@ -214,11 +214,11 @@ jobs:
     if: ${{ !cancelled() && needs.prepare-release.result == 'success' }}
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.x
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-ui
           path: src/D2BotNG/wwwroot
@@ -227,7 +227,7 @@ jobs:
         env:
           APTABASE_APP_KEY: ${{ secrets.APTABASE_APP_KEY }}
         run: dotnet publish src/D2BotNG/D2BotNG.csproj -c Release --self-contained -p:SkipUIBuild=true -p:Version=${{ needs.prepare-release.outputs.version }} -p:BuildVariant=standalone -p:AptabaseAppKey="$APTABASE_APP_KEY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: exe-standalone
           path: src/D2BotNG/bin/Release/net10.0-windows/win-x64/publish/D2BotNG.exe
@@ -239,11 +239,11 @@ jobs:
     if: ${{ !cancelled() && needs.prepare-release.result == 'success' }}
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.x
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-ui
           path: src/D2BotNG/wwwroot
@@ -252,7 +252,7 @@ jobs:
         env:
           APTABASE_APP_KEY: ${{ secrets.APTABASE_APP_KEY }}
         run: dotnet publish src/D2BotNG/D2BotNG.csproj -c Release --no-self-contained -p:SkipUIBuild=true -p:Version=${{ needs.prepare-release.outputs.version }} -p:BuildVariant=framework -p:AptabaseAppKey="$APTABASE_APP_KEY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: exe-framework
           path: src/D2BotNG/bin/Release/net10.0-windows/win-x64/publish/D2BotNG.exe
@@ -262,13 +262,13 @@ jobs:
     name: Release
     needs: [prepare-release, publish-standalone, publish-framework]
     if: ${{ !cancelled() && needs.publish-standalone.result == 'success' && needs.publish-framework.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
       - name: Rename artifacts

@@ -11,13 +11,13 @@ concurrency:
 jobs:
   changes:
     name: Detect Changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       ts: ${{ steps.filter.outputs.ts }}
       cs: ${{ steps.filter.outputs.cs }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -34,10 +34,10 @@ jobs:
     name: Build TS
     needs: changes
     if: needs.changes.outputs.ts == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -46,7 +46,7 @@ jobs:
         working-directory: src/D2BotNG.UI
       - run: npm run build
         working-directory: src/D2BotNG.UI
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ui-dist
           path: src/D2BotNG/wwwroot
@@ -58,11 +58,11 @@ jobs:
     if: always() && needs.changes.outputs.cs == 'true' && (needs.build-ts.result == 'success' || needs.build-ts.result == 'skipped')
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.x
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: needs.build-ts.result == 'success'
         with:
           name: ui-dist
@@ -77,8 +77,8 @@ jobs:
     if: needs.changes.outputs.cs == 'true'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.x
       # SkipUIBuild: the referenced app project builds the UI by default, which needs npm.
@@ -90,10 +90,10 @@ jobs:
     name: Format TS
     needs: changes
     if: needs.changes.outputs.ts == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -109,8 +109,8 @@ jobs:
     if: needs.changes.outputs.cs == 'true'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.x
       - name: Check formatting
@@ -121,10 +121,10 @@ jobs:
     name: Lint TS
     needs: changes
     if: needs.changes.outputs.ts == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -140,8 +140,8 @@ jobs:
     if: needs.changes.outputs.cs == 'true'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.x
       - name: Restore tools
