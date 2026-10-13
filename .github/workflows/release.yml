@@ -3,6 +3,9 @@ name: Release
 on:
   push:
     branches: [main]
+  # A manual run builds and releases everything, for a push that changed no code
+  # (a CI fix) or a release that failed after its checks passed.
+  workflow_dispatch:
 
 concurrency:
   group: release
@@ -16,14 +19,15 @@ jobs:
     name: Detect Changes
     runs-on: ubuntu-26.04
     outputs:
-      ts: ${{ steps.filter.outputs.ts }}
-      cs: ${{ steps.filter.outputs.cs }}
-      any_code_changed: ${{ steps.filter.outputs.ts == 'true' || steps.filter.outputs.cs == 'true' }}
+      ts: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.ts == 'true' }}
+      cs: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.cs == 'true' }}
+      any_code_changed: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.ts == 'true' || steps.filter.outputs.cs == 'true' }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
       - uses: dorny/paths-filter@v4
+        if: github.event_name == 'push'
         id: filter
         with:
           filters: |
