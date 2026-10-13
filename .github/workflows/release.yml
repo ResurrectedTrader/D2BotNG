@@ -303,18 +303,14 @@ jobs:
               echo "**Full Changelog**: ${repo_url}/compare/${prev}...${v}"
             fi
           } > notes.md
-      - name: Create tag
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "v${{ needs.prepare-release.outputs.version }}"
-          git push origin "v${{ needs.prepare-release.outputs.version }}"
+      # The release creates its own tag through the API. A `git push` of the tag is
+      # rejected whenever the tagged history changes a workflow file, since the
+      # GITHUB_TOKEN can never hold the `workflows` permission.
       - name: Create GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "v${{ needs.prepare-release.outputs.version }}" --notes-file notes.md --title "v${{ needs.prepare-release.outputs.version }}" D2BotNG-standalone.exe D2BotNG-framework.exe
+        run: gh release create "v${{ needs.prepare-release.outputs.version }}" --target "$GITHUB_SHA" --notes-file notes.md --title "v${{ needs.prepare-release.outputs.version }}" D2BotNG-standalone.exe D2BotNG-framework.exe
       - name: Announce on Discord
         # The release is already published by the time this runs, so a Discord
         # outage must not fail the workflow - the message is not worth a retry.
