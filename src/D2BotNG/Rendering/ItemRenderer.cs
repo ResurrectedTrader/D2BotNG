@@ -136,7 +136,7 @@ public class ItemRenderer
         using var itemBitmap = RenderItemBitmap(item, Color.Transparent, spriteStyle);
         int itemX = (width - itemBitmap.Width) / 2;
         int itemY = (height - itemBitmap.Height) / 2;
-        graphics.DrawImage(itemBitmap, itemX, itemY);
+        DrawPixels(graphics, itemBitmap, itemX, itemY);
 
         // Render sockets if present
         if (item.Sockets.Count > 0)
@@ -209,13 +209,13 @@ public class ItemRenderer
         if (bgnd != null)
         {
             int bgndX = totalWidth / 2 - GetImageLeft(gridSize.X);
-            graphics.DrawImage(bgnd, bgndX, -10 + headerHeight);
+            DrawPixels(graphics, bgnd, bgndX, -10 + headerHeight);
         }
 
         // Render item image (offset by header height)
         using var itemBitmap = RenderItemBitmap(item, background: null, spriteStyle);
         int itemX = (totalWidth - itemBitmap.Width) / 2;
-        graphics.DrawImage(itemBitmap, itemX, 5 + headerHeight);
+        DrawPixels(graphics, itemBitmap, itemX, 5 + headerHeight);
 
         // Render sockets (offset by header height)
         if (item.Sockets.Count > 0)
@@ -476,7 +476,7 @@ public class ItemRenderer
                 InvTrans = socketItem.InvTrans,
                 Description = ""
             }, Color.Transparent, SpriteStyle.D2R);
-            graphics.DrawImage(filler, x, y);
+            DrawPixels(graphics, filler, x, y);
         }
 
         return true;
@@ -500,7 +500,7 @@ public class ItemRenderer
             bool isEmpty = socketItem.Code == HdSpriteSource.EmptySocketCode;
             int drawX = isEmpty ? pos.X - 1 : pos.X;
             int drawY = isEmpty ? pos.Y + 1 : pos.Y;
-            graphics.DrawImage(socketBitmap, drawX, drawY);
+            DrawPixels(graphics, socketBitmap, drawX, drawY);
         }
     }
 
@@ -779,4 +779,14 @@ public class ItemRenderer
         bitmap.Save(ms, ImageFormat.Png);
         return ms.ToArray();
     }
+
+    /// <summary>
+    /// Draws an image at its pixel size. <c>DrawImage(image, x, y)</c> scales by the ratio of the
+    /// image's DPI to the target's, and the two differ whenever the display isn't at 100%: a
+    /// <c>new Bitmap</c> takes the screen DPI (120 at 125%) while a loaded PNG keeps the 96 it was
+    /// saved with — which drew the tooltip background 1.25x and off-centre from the sprite.
+    /// </summary>
+    private static void DrawPixels(Graphics graphics, Image image, int x, int y) =>
+        graphics.DrawImage(image, new Rectangle(x, y, image.Width, image.Height),
+            0, 0, image.Width, image.Height, GraphicsUnit.Pixel);
 }
