@@ -25,8 +25,9 @@ namespace D2BotNG.Windows;
 /// <para>
 /// <see cref="GetModuleBase"/> reads the target's own loader list and is meant for use after a module is
 /// mapped (e.g. a patch-target base). Handles must carry <c>PROCESS_QUERY_INFORMATION</c> and
-/// <c>PROCESS_VM_READ</c>. Cold-start caveat: cross-bitness resolution needs at least one accessible WOW64
-/// process to read from; if none is running yet (e.g. the very first 32-bit launch) it returns 0.
+/// <c>PROCESS_VM_READ</c>. Cold start: when no accessible WOW64 process is running (e.g. the very first
+/// 32-bit launch, where the only one is the still-suspended target), a windowless SysWOW64 cmd.exe is
+/// started to read from and killed straight after.
 /// </para>
 /// </summary>
 public static class RemoteModule
@@ -47,7 +48,11 @@ public static class RemoteModule
     /// Finds the base address of a module loaded in the target process, matched by file name
     /// (case-insensitive, e.g. "kernel32.dll"). Returns 0 if it is not currently loaded.
     /// </summary>
-    public static nint GetModuleBase(nint hProcess, string moduleName)
+    public static nint GetModuleBase(nint hProcess, string moduleName) => GetModuleBase(hProcess, moduleName, logFailure: true);
+
+    // A peer scan probes every process on the box, and ERROR_PARTIAL_COPY (299) is the expected answer
+    // from one whose loader has not run yet — a suspended process, including the target being launched.
+    private static nint GetModuleBase(nint hProcess, string moduleName, bool logFailure)
     {
         var capacity = 256;
 
@@ -57,7 +62,8 @@ public static class RemoteModule
             var cb = (uint)(modules.Length * IntPtr.Size);
             if (!EnumProcessModulesEx(hProcess, modules, cb, out var needed, LIST_MODULES_ALL))
             {
-                Logger.Error("EnumProcessModulesEx failed for {Module} (error {Error})", moduleName, Marshal.GetLastWin32Error());
+                if (logFailure)
+                    Logger.Error("EnumProcessModulesEx failed for {Module} (error {Error})", moduleName, Marshal.GetLastWin32Error());
                 return 0;
             }
 
@@ -114,8 +120,8 @@ public static class RemoteModule
 
     /// <summary>
     /// Resolves a 32-bit (WOW64) module export address, identical in every WOW64 process this boot. Read
-    /// once from any accessible peer WOW64 process and cached. Returns 0 if none can be read (e.g. a cold
-    /// start with no other 32-bit process running yet).
+    /// once from any accessible peer WOW64 process (or, on a cold start, a helper started for the purpose)
+    /// and cached. Returns 0 if neither can be read.
     /// </summary>
     private static nint GetWow64Export(string moduleName, string functionName)
     {
@@ -146,7 +152,7 @@ public static class RemoteModule
                 if (handle == 0) continue;
                 if (!IsWow64Process(handle, out var isWow64) || !isWow64) continue;
 
-                var moduleBase = GetModuleBase(handle, moduleName);
+                var moduleBase = GetModuleBase(handle, moduleName, logFailure: false);
                 if (moduleBase == 0) continue; // not loaded here (e.g. a still-suspended process)
 
                 var address = ResolveExport(handle, moduleBase, functionName, depth: 0);
@@ -167,8 +173,70 @@ public static class RemoteModule
             }
         }
 
+        // Cold start: nothing 32-bit is running (the only WOW64 process may be the suspended target
+        // itself, whose loader has not mapped kernel32 yet). Start a 32-bit process of our own to read from.
+        var fromHelper = ResolveFromHelperWow64Process(moduleName, functionName);
+        if (fromHelper != 0) return fromHelper;
+
         Logger.Error("Could not resolve 32-bit {Module}!{Function}: no readable WOW64 process available", moduleName, functionName);
         return 0;
+    }
+
+    /// <summary>
+    /// Starts the system's 32-bit cmd.exe (SysWOW64) windowless, with stdin redirected so it sits waiting
+    /// for input, reads the export out of it once its loader has mapped the module, then kills it.
+    /// </summary>
+    private static nint ResolveFromHelperWow64Process(string moduleName, string functionName)
+    {
+        var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.SystemX86), "cmd.exe");
+        if (!File.Exists(cmd))
+        {
+            Logger.Warning("No 32-bit helper available at {Path}", cmd);
+            return 0;
+        }
+
+        Process? helper = null;
+        try
+        {
+            helper = Process.Start(new ProcessStartInfo(cmd)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardInput = true,
+            });
+            if (helper == null) return 0;
+
+            var elapsed = Stopwatch.StartNew();
+            while (elapsed.Elapsed < TimeSpan.FromSeconds(5) && !helper.HasExited)
+            {
+                var moduleBase = GetModuleBase(helper.Handle, moduleName, logFailure: false);
+                if (moduleBase != 0)
+                {
+                    var address = ResolveExport(helper.Handle, moduleBase, functionName, depth: 0);
+                    if (address != 0)
+                        Logger.Debug("Resolved 32-bit {Module}!{Function} from helper process", moduleName, functionName);
+                    return address;
+                }
+
+                Thread.Sleep(25);
+            }
+
+            Logger.Warning("32-bit helper process did not load {Module} in time", moduleName);
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Failed to resolve 32-bit {Module}!{Function} from a helper process", moduleName, functionName);
+            return 0;
+        }
+        finally
+        {
+            if (helper != null)
+            {
+                try { helper.Kill(); } catch { /* already gone */ }
+                helper.Dispose();
+            }
+        }
     }
 
     private static nint ResolveExport(nint hProcess, nint moduleBase, string functionName, int depth)
