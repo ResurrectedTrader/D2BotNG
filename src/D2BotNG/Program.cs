@@ -453,6 +453,7 @@ internal static class Program
 
         // Add hosted services
         services.AddHostedService<EngineHostedService>();
+        services.AddHostedService<DataFileWatcher>();
         services.AddHostedService<ErrorDialogWatcher>();
         services.AddHostedService<UpdateCheckBackgroundService>();
         services.AddHostedService<GameDirectoryCleanupService>();

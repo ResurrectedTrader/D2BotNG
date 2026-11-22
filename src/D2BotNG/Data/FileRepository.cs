@@ -6,19 +6,41 @@ using ILogger = Serilog.ILogger;
 
 namespace D2BotNG.Data;
 
+/// <summary>A data file the manager reloads when it changes on disk — see <see cref="Services.DataFileWatcher"/>.</summary>
+public interface IReloadableRepository
+{
+    /// <summary>The file's name within the data directory.</summary>
+    string FileName { get; }
+
+    /// <summary>Rereads the file unconditionally, as after a data-directory change.</summary>
+    Task ReloadAsync();
+
+    /// <summary>
+    /// Rereads the file if its contents differ from what this repository last loaded or saved.
+    /// Returns whether anything was reloaded.
+    /// </summary>
+    Task<bool> ReloadIfChangedAsync();
+}
+
 /// <summary>
 /// Base class for protobuf JSON file-backed repositories.
 /// Stores data as a single JSON document using protobuf's JsonFormatter/JsonParser.
 /// </summary>
 /// <typeparam name="TItem">The protobuf message type for individual entities</typeparam>
 /// <typeparam name="TList">The protobuf container message type (e.g., ProfileCollection)</typeparam>
-public abstract class FileRepository<TItem, TList> : IDisposable
+public abstract class FileRepository<TItem, TList> : IReloadableRepository, IDisposable
     where TItem : IMessage<TItem>
     where TList : IMessage<TList>, new()
 {
     protected readonly SemaphoreSlim Lock = new(1, 1);
     private readonly List<TItem> _data = [];
     private volatile bool _loaded;
+
+    /// <summary>
+    /// The file's text as this repository last read or wrote it, so a watcher event raised by
+    /// our own save — or by a tool rewriting identical content — reloads nothing.
+    /// </summary>
+    private string? _lastJson;
 
     private readonly Paths _paths;
     private readonly DataWriteGate _writeGate;
@@ -29,7 +51,7 @@ public abstract class FileRepository<TItem, TList> : IDisposable
     {
         _paths = paths;
         _writeGate = writeGate;
-        FilePath = fileName;
+        FileName = fileName;
     }
 
     /// <summary>
@@ -39,7 +61,9 @@ public abstract class FileRepository<TItem, TList> : IDisposable
     /// </summary>
     protected bool CanWrite => !_writeGate.IsClosed;
 
-    private string FilePath => Path.Combine(_paths.DataDirectory, field);
+    public string FileName { get; }
+
+    private string FilePath => Path.Combine(_paths.DataDirectory, FileName);
 
     /// <summary>
     /// Returns the unique key for the given entity.
@@ -71,7 +95,7 @@ public abstract class FileRepository<TItem, TList> : IDisposable
         try
         {
             if (_loaded) return;
-            var migrated = await LoadAsync();
+            var migrated = await LoadFileIntoAsync(_data, fromWatcher: false) == LoadOutcome.Migrated;
             _loaded = true;
             // Persist the upgraded shape immediately so the migration is one-time
             // (and, e.g., plaintext credentials leave profiles.json) rather than
@@ -83,8 +107,6 @@ public abstract class FileRepository<TItem, TList> : IDisposable
             Lock.Release();
         }
     }
-
-    private Task<bool> LoadAsync() => LoadFileIntoAsync(_data);
 
     private async Task PersistMigrationAsync()
     {
@@ -144,13 +166,31 @@ public abstract class FileRepository<TItem, TList> : IDisposable
     /// quarantined to a ".corrupt" sibling and the repository starts empty rather than
     /// throwing forever: an unparseable file would otherwise wedge <c>EnsureLoadedAsync</c>
     /// on every read and every save. The next save writes a fresh (upgraded) file.
+    /// <para>
+    /// A reload <paramref name="fromWatcher"/> is lenient instead: an external edit may still be
+    /// mid-write, so a file that is missing, locked, unchanged or unparseable is
+    /// <see cref="LoadOutcome.Skipped"/> — the in-memory data stays, and the writer's next
+    /// change event tries again. Quarantining there would throw away a file that is merely
+    /// unfinished.
+    /// </para>
     /// </summary>
-    /// <returns>Whether a versioned migration ran (so the caller can persist the upgrade).</returns>
-    private async Task<bool> LoadFileIntoAsync(List<TItem> target)
+    private async Task<LoadOutcome> LoadFileIntoAsync(List<TItem> target, bool fromWatcher)
     {
-        if (!File.Exists(FilePath)) return false;
+        if (!File.Exists(FilePath)) return fromWatcher ? LoadOutcome.Skipped : LoadOutcome.Loaded;
 
-        var json = await File.ReadAllTextAsync(FilePath);
+        string json;
+        try
+        {
+            json = await File.ReadAllTextAsync(FilePath);
+        }
+        catch (IOException ex) when (fromWatcher)
+        {
+            Logger.Warning(ex, "Could not read {FilePath} after it changed; keeping the loaded data", FilePath);
+            return LoadOutcome.Skipped;
+        }
+
+        if (fromWatcher && json == _lastJson) return LoadOutcome.Skipped;
+
         try
         {
             var fileVersion = SchemaVersion > 0 ? PeekSchemaVersion(json) : 0;
@@ -164,6 +204,7 @@ public abstract class FileRepository<TItem, TList> : IDisposable
                 ? await MigrateAsync(json, fileVersion)
                 : ProtobufJsonConfig.Parser.Parse<TList>(json);
             target.AddRange(GetItems(list));
+            _lastJson = json;
 
             if (migrated)
             {
@@ -171,14 +212,20 @@ public abstract class FileRepository<TItem, TList> : IDisposable
                     FilePath, fileVersion, SchemaVersion);
             }
 
-            return migrated;
+            return migrated ? LoadOutcome.Migrated : LoadOutcome.Loaded;
         }
-        catch (InvalidProtocolBufferException ex)
+        catch (Exception ex) when (ex is InvalidProtocolBufferException or InvalidJsonException)
         {
-            // InvalidJsonException derives from InvalidProtocolBufferException, so this
-            // catches both malformed-JSON and schema-mismatch failures.
+            // Both are needed: InvalidJsonException (malformed JSON — truncated, zero-filled)
+            // derives from IOException, not InvalidProtocolBufferException (schema mismatch).
+            if (fromWatcher)
+            {
+                Logger.Warning(ex, "{FilePath} changed on disk but does not parse; keeping the loaded data", FilePath);
+                return LoadOutcome.Skipped;
+            }
+
             QuarantineCorruptFile(ex);
-            return false;
+            return LoadOutcome.Loaded;
         }
     }
 
@@ -213,6 +260,8 @@ public abstract class FileRepository<TItem, TList> : IDisposable
                 FilePath, SchemaVersion);
         }
     }
+
+    private enum LoadOutcome { Loaded, Migrated, Skipped }
 
     /// <summary>Reads just the schema_version property from raw JSON (0 when absent).</summary>
     private static int PeekSchemaVersion(string json)
@@ -268,28 +317,48 @@ public abstract class FileRepository<TItem, TList> : IDisposable
         var json = ProtobufJsonConfig.Formatter.Format(list);
 
         await AtomicFile.WriteAllTextAsync(FilePath, json);
+        _lastJson = json;
     }
 
     /// <summary>
     /// Forces a reload from disk. Used after migration or path change.
     /// </summary>
-    public async Task ReloadAsync()
+    public Task ReloadAsync() => ReloadCoreAsync(fromWatcher: false);
+
+    public Task<bool> ReloadIfChangedAsync() => ReloadCoreAsync(fromWatcher: true);
+
+    private async Task<bool> ReloadCoreAsync(bool fromWatcher)
     {
         await Lock.WaitAsync();
         try
         {
-            var tempData = new List<TItem>();
-            var migrated = await LoadFileIntoAsync(tempData);
+            // Never loaded: the first read will see the file as it is now anyway.
+            if (fromWatcher && !_loaded) return false;
 
+            var tempData = new List<TItem>();
+            var outcome = await LoadFileIntoAsync(tempData, fromWatcher);
+            if (outcome == LoadOutcome.Skipped) return false;
+
+            CarryOverTransientState(_data, tempData);
             _data.Clear();
             _data.AddRange(tempData);
             _loaded = true;
-            if (migrated) await PersistMigrationAsync();
+            if (outcome == LoadOutcome.Migrated) await PersistMigrationAsync();
+            return true;
         }
         finally
         {
             Lock.Release();
         }
+    }
+
+    /// <summary>
+    /// Copies in-memory-only state from the entities a reload replaces onto their reloaded
+    /// counterparts, since every entity is replaced by one parsed from disk. Runs under
+    /// <see cref="Lock"/>.
+    /// </summary>
+    protected virtual void CarryOverTransientState(IReadOnlyList<TItem> previous, IReadOnlyList<TItem> reloaded)
+    {
     }
 
     // Reads take the lock: an unlocked enumeration racing a structural write

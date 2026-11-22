@@ -21,6 +21,21 @@ public class KeyListRepository : FileRepository<KeyList, KeyListCollection>, IHa
         return list;
     }
 
+    /// <summary>A key is held in memory only; reloading the file must not release it.</summary>
+    protected override void CarryOverTransientState(IReadOnlyList<KeyList> previous, IReadOnlyList<KeyList> reloaded)
+    {
+        var held = previous
+            .SelectMany(list => list.Keys.Where(k => k.Held).Select(k => (List: list.Name, Key: k.Name)))
+            .ToHashSet();
+        foreach (var list in reloaded)
+        {
+            foreach (var key in list.Keys)
+            {
+                if (held.Contains((list.Name, key.Name))) key.Held = true;
+            }
+        }
+    }
+
     public async Task<CDKey?> GetNextAvailableKeyAsync(string keyListName, IReadOnlySet<string> usedKeyNames)
     {
         var keyList = await GetByKeyAsync(keyListName);

@@ -22,7 +22,7 @@ public class ItemRepository : IDisposable
     private readonly EventBroadcaster _eventBroadcaster;
     private readonly ConcurrentDictionary<string, CharacterEntity> _entities = new();
     private readonly SemaphoreSlim _loadLock = new(1, 1);
-    private readonly List<FileSystemWatcher> _watchers = [];
+    private readonly DebouncedWatcher _watcher;
     private volatile string[] _mulesDirs = [];
     private bool _disposed;
 
@@ -31,6 +31,8 @@ public class ItemRepository : IDisposable
         _frameworkRepository = frameworkRepository;
         _logger = logger;
         _eventBroadcaster = eventBroadcaster;
+        // One key for every file: any change reloads every mules directory.
+        _watcher = new DebouncedWatcher(TimeSpan.FromMilliseconds(200), _ => "", _ => ReloadAllAsync(), logger);
     }
 
     /// <summary>
@@ -51,7 +53,7 @@ public class ItemRepository : IDisposable
         {
             _mulesDirs = dirs;
             await LoadAllEntitiesLockedAsync();
-            StartWatchers(dirs);
+            _watcher.Watch(dirs, "*.txt", includeSubdirectories: true);
         }
         finally
         {
@@ -350,6 +352,7 @@ public class ItemRepository : IDisposable
 
     private async Task ReloadAllAsync()
     {
+        _logger.LogInformation("Reloading all entities due to file system change");
         await _loadLock.WaitAsync();
         try
         {
@@ -359,6 +362,8 @@ public class ItemRepository : IDisposable
         {
             _loadLock.Release();
         }
+
+        NotifyEntitiesChanged();
     }
 
     private async Task LoadAllEntitiesLockedAsync()
@@ -526,80 +531,6 @@ public class ItemRepository : IDisposable
         return (displayName, mode);
     }
 
-    private void StartWatchers(string[] dirs)
-    {
-        foreach (var watcher in _watchers)
-        {
-            watcher.EnableRaisingEvents = false;
-            watcher.Dispose();
-        }
-        _watchers.Clear();
-
-        foreach (var dir in dirs)
-        {
-            if (!Directory.Exists(dir))
-            {
-                _logger.LogWarning("Cannot watch - mules directory does not exist: {MulesDir}", dir);
-                continue;
-            }
-
-            var watcher = new FileSystemWatcher(dir)
-            {
-                Filter = "*.txt",
-                IncludeSubdirectories = true,
-                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.CreationTime
-            };
-
-            watcher.Created += OnFileSystemChange;
-            watcher.Changed += OnFileSystemChange;
-            watcher.Deleted += OnFileSystemChange;
-            watcher.Renamed += OnFileSystemChange;
-            watcher.EnableRaisingEvents = true;
-
-            _watchers.Add(watcher);
-            _logger.LogInformation("Started file watcher on {MulesDir}", dir);
-        }
-    }
-
-    private CancellationTokenSource? _reloadCts;
-    private readonly Lock _reloadCtsLock = new();
-
-    private async void OnFileSystemChange(object sender, FileSystemEventArgs e)
-    {
-        _logger.LogDebug("File system change detected: {ChangeType} {FullPath}", e.ChangeType, e.FullPath);
-
-        // Cancel any pending reload and start a new debounce. The swap must be
-        // locked: each watcher raises this handler on its own thread-pool thread,
-        // and a Cancel/Dispose race would throw unhandled out of this async void.
-        CancellationToken token;
-        lock (_reloadCtsLock)
-        {
-            _reloadCts?.Cancel();
-            _reloadCts?.Dispose();
-            _reloadCts = new CancellationTokenSource();
-            token = _reloadCts.Token;
-        }
-
-        try
-        {
-            // Debounce: wait for changes to settle
-            await Task.Delay(200, token);
-
-            _logger.LogInformation("Reloading all entities due to file system change");
-            await ReloadAllAsync();
-
-            NotifyEntitiesChanged();
-        }
-        catch (TaskCanceledException)
-        {
-            // Another change came in, this reload was superseded
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "An error occured while reloading entities");
-        }
-    }
-
     private void NotifyEntitiesChanged()
     {
         _eventBroadcaster.Broadcast(new Event
@@ -614,16 +545,7 @@ public class ItemRepository : IDisposable
         if (_disposed) return;
         _disposed = true;
 
-        lock (_reloadCtsLock)
-        {
-            _reloadCts?.Dispose();
-            _reloadCts = null;
-        }
-        foreach (var watcher in _watchers)
-        {
-            watcher.Dispose();
-        }
-        _watchers.Clear();
+        _watcher.Dispose();
         _loadLock.Dispose();
     }
 
