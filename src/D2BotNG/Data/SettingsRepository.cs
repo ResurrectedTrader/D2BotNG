@@ -12,6 +12,11 @@ public class SettingsRepository
     private static readonly ILogger Logger = TrackingLoggerFactory.ForContext(typeof(SettingsRepository));
 
     private readonly string _filePath = Path.Combine(AppContext.BaseDirectory, "d2botng.json");
+
+    /// <summary>The file's text as last read or written; see <see cref="ReloadIfChangedAsync"/>.</summary>
+    private string? _lastJson;
+
+    public string FilePath => _filePath;
     private readonly SemaphoreSlim _lock = new(1, 1);
     private readonly DataWriteGate _writeGate;
     private Settings? _settings;
@@ -29,7 +34,7 @@ public class SettingsRepository
     public SettingsMigrator.LegacyGameEngine? LegacySettings { get; private set; }
 
     /// <summary>
-    /// Raised when settings are updated via UpdateAsync.
+    /// Raised when settings are updated via UpdateAsync, or reloaded after the file changed.
     /// </summary>
     public event EventHandler<Settings>? SettingsChanged;
 
@@ -48,8 +53,9 @@ public class SettingsRepository
                 try
                 {
                     _settings = ProtobufJsonConfig.Parser.Parse<Settings>(json);
+                    _lastJson = json;
                 }
-                catch (InvalidProtocolBufferException ex)
+                catch (Exception ex) when (ex is InvalidProtocolBufferException or InvalidJsonException)
                 {
                     // Corrupt/truncated settings (see AtomicFile). This is the first
                     // file read at startup, so throwing would make every launch die —
@@ -178,6 +184,49 @@ public class SettingsRepository
         }
     }
 
+    /// <summary>
+    /// Rereads the file after something outside the manager changed it, and raises
+    /// <see cref="SettingsChanged"/> if it differs from what was last read or written — so our
+    /// own saves are ignored. A file that cannot be read or parsed yet (an editor mid-save) is
+    /// left alone rather than quarantined; the in-memory settings stay until it parses.
+    /// </summary>
+    /// <returns>Whether new settings were applied.</returns>
+    public async Task<bool> ReloadIfChangedAsync()
+    {
+        if (!_loaded) return false;
+
+        await _lock.WaitAsync();
+        try
+        {
+            string json;
+            Settings settings;
+            try
+            {
+                json = await File.ReadAllTextAsync(_filePath);
+                if (json == _lastJson) return false;
+                settings = ProtobufJsonConfig.Parser.Parse<Settings>(json);
+            }
+            // IOException covers InvalidJsonException (malformed JSON) as well as a locked file.
+            catch (Exception ex) when (ex is IOException or InvalidProtocolBufferException)
+            {
+                Logger.Warning(ex, "{FilePath} changed on disk but could not be read; keeping the loaded settings", _filePath);
+                return false;
+            }
+
+            _lastJson = json;
+            EnsureDefaults(settings);
+            settings.LegacyApi ??= _settings!.LegacyApi;
+            _settings = settings;
+            Logger.Information("{FilePath} changed on disk; reloaded settings", _filePath);
+            SettingsChanged?.Invoke(this, settings);
+            return true;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     private async Task SaveInternalAsync()
     {
         if (_writeGate.IsClosed)
@@ -192,5 +241,6 @@ public class SettingsRepository
         _settings!.SchemaVersion = SettingsMigrator.CurrentVersion;
         var json = ProtobufJsonConfig.Formatter.Format(_settings);
         await AtomicFile.WriteAllTextAsync(_filePath, json);
+        _lastJson = json;
     }
 }

@@ -98,12 +98,8 @@ public class ProfileEngine
 
     public async Task InitializeAsync()
     {
-        var profiles = await _profileRepository.GetAllAsync();
-        foreach (var profile in profiles)
-        {
-            _instances.TryAdd(profile.Name, new ProfileInstance(profile.Name));
-        }
-        _logger.LogInformation("Loaded {Count} profiles", profiles.Count);
+        await SyncProfilesAsync();
+        _logger.LogInformation("Loaded {Count} profiles", _instances.Count);
     }
 
     public ProfileInstance? GetInstance(string profileName)
@@ -1449,6 +1445,30 @@ public class ProfileEngine
         if (_instances.TryRemove(profileName, out var instance))
         {
             instance.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Brings the instances in line with profiles.json after it was reloaded from disk — a new
+    /// data folder, or an edit made outside the manager. A profile that disappeared while its
+    /// game runs keeps its instance, so the game stays manageable; it is dropped by a later sync
+    /// once stopped. An external rename therefore reads as a delete plus an add: rename through
+    /// the UI to carry a running profile across.
+    /// </summary>
+    public async Task SyncProfilesAsync()
+    {
+        var names = (await _profileRepository.GetAllAsync()).Select(p => p.Name).ToHashSet();
+        foreach (var name in names)
+        {
+            AddProfile(name);
+        }
+
+        foreach (var (name, instance) in _instances)
+        {
+            if (!names.Contains(name) && instance.State == RunState.Stopped)
+            {
+                RemoveProfile(name);
+            }
         }
     }
 
